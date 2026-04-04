@@ -211,7 +211,7 @@ function buildChartUrl(dir, price, sl, tp, stLine, ema200, rsi) {
           fill: false,
         },
         {
-          label: 'EMA200',
+          label: 'EMA50',
           data: ema200Line,
           borderColor: '#ffcc00',
           borderWidth: 1,
@@ -434,15 +434,15 @@ async function checkSignals(consensus=3, cooldownMin=15) {
   }
 
   // ── STEP 3: EMA200 filter
-  const ema200=calcEMA(candles,200);
+  const ema200=calcEMA(candles,50); // EMA50 — più reattivo
   if (dir==='BUY'&&price<ema200) {
-    stats.lastFilter=`❌ Prezzo sotto EMA200 (${price.toFixed(2)} < ${ema200.toFixed(2)})`;
-    console.log('Filtered by EMA200:', stats.lastFilter);
+    stats.lastFilter=`❌ Prezzo sotto EMA50 (${price.toFixed(2)} < ${ema200.toFixed(2)})`;
+    console.log('Filtered by EMA50:', stats.lastFilter);
     return;
   }
   if (dir==='SELL'&&price>ema200) {
-    stats.lastFilter=`❌ Prezzo sopra EMA200 (${price.toFixed(2)} > ${ema200.toFixed(2)})`;
-    console.log('Filtered by EMA200:', stats.lastFilter);
+    stats.lastFilter=`❌ Prezzo sopra EMA50 (${price.toFixed(2)} > ${ema200.toFixed(2)})`;
+    console.log('Filtered by EMA50:', stats.lastFilter);
     return;
   }
 
@@ -497,7 +497,7 @@ async function checkSignals(consensus=3, cooldownMin=15) {
     `\n✅ <b>Filtri passati:</b>\n`+
     `• SuperTrend M15: ${bv>sv?bv:sv}/3\n`+
     `• H1 confermato: ✓\n`+
-    `• EMA200: ✓ (prezzo ${dir==='BUY'?'sopra':'sotto'})\n`+
+    `• EMA50: ✓ (prezzo ${dir==='BUY'?'sopra':'sotto'})\n`+
     `• RSI: ✓ (${rsi.toFixed(1)})\n`+
     `• Volume: ✓\n\n`+
     `⏰ <b>Ora:</b> ${time} UTC\n\n`+
@@ -545,7 +545,7 @@ app.post('/api/start',async(req,res)=>{
   try {
     await fetchCandles(currentSymbol);
     startLoop(refresh||60,consensus||3,cooldown||15);
-    await sendTelegram(`🤖 <b>SuperTrend EA Avviato</b>\n📊 Simbolo: ${currentSymbol}\n🔧 Filtri attivi: RSI + EMA200 + Volume + H1\n⏰ ${new Date().toUTCString().slice(0,25)}`);
+    await sendTelegram(`🤖 <b>SuperTrend EA Avviato</b>\n📊 Simbolo: ${currentSymbol}\n🔧 Filtri attivi: RSI + EMA50 + Volume + H1\n⏰ ${new Date().toUTCString().slice(0,25)}`);
     res.json({ok:true,message:'EA avviato con tutti i filtri attivi'});
   } catch(e){res.json({ok:false,message:e.message});}
 });
@@ -557,7 +557,7 @@ app.post('/api/stop',async(req,res)=>{
 });
 
 app.post('/api/test',async(req,res)=>{
-  const ok=await sendTelegram('🤖 <b>SuperTrend EA — Test OK!</b>\n\nBot connesso ✅\nFiltri attivi: RSI + EMA200 + Volume + H1 MTF');
+  const ok=await sendTelegram('🤖 <b>SuperTrend EA — Test OK!</b>\n\nBot connesso ✅\nFiltri attivi: RSI + EMA50 + Volume + H1 MTF');
   res.json({ok,message:ok?'Messaggio inviato!':'Errore invio'});
 });
 
