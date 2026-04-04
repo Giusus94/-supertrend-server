@@ -110,18 +110,18 @@ async function checkSignals(consensus = 3, cooldownMin = 15) {
   const cooldown = cooldownMin * 60 * 1000;
   if (Date.now() - lastSignalTime < cooldown) return;
 
-  let bv = 0, sv = 0, bs = [], ss = [];
+  let bv = 0, sv = 0;
   strategies.forEach(s => {
     const st = calcST(candles, s.atr, s.mult);
     if (!st.length) return;
-    const last = st[st.length - 1], prev = st[st.length - 2] || last;
-    if (last.dir === 1 && prev.dir === -1) { bv++; bs.push(s); }
-    else if (last.dir === -1 && prev.dir === 1) { sv++; ss.push(s); }
+    const last = st[st.length - 1];
+    if (last.dir === 1) bv++;
+    else sv++;
   });
 
-  let dir = null, strats = [];
-  if (bv >= consensus) { dir = 'BUY'; strats = bs; }
-  else if (sv >= consensus) { dir = 'SELL'; strats = ss; }
+  let dir = null;
+  if (bv >= consensus) dir = 'BUY';
+  else if (sv >= consensus) dir = 'SELL';
   if (!dir) return;
 
   const price = candles[candles.length - 1].close;
