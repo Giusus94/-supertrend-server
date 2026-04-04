@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SuperTrend EA · Cloud</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=Barlow+Condensed:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#03070b;--surface:#06101a;--panel:#081422;--border:#0e2438;--cyan:#00d4ff;--green:#00ff9d;--red:#ff3860;--yellow:#ffcc00;--tg:#29b6f6;--text:#9ec8de;--dim:#2a5470;--bright:#d0eaf8;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--text);font-family:'IBM Plex Mono',monospace;font-size:13px;min-height:100vh;}
+body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,212,255,0.01) 3px,rgba(0,212,255,0.01) 4px);pointer-events:none;z-index:9999;}
+.topbar{display:flex;align-items:center;height:48px;border-bottom:1px solid var(--border);background:var(--surface);padding:0 20px;gap:16px;}
+.logo{font-family:'Barlow Condensed';font-weight:900;font-size:20px;letter-spacing:4px;color:var(--cyan);}
+.logo span{color:var(--tg);}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:5px;}
+.dot.live{background:var(--green);animation:blink 2s infinite;}
+.dot.off{background:var(--dim);}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+#clock{margin-left:auto;font-size:10px;color:var(--dim);}
+.main{max-width:1100px;margin:0 auto;padding:14px;display:flex;flex-direction:column;gap:10px;}
+
+/* STATUS */
+.status-bar{display:flex;gap:16px;padding:10px 14px;background:var(--panel);border:1px solid var(--border);border-radius:3px;font-size:10px;flex-wrap:wrap;align-items:center;}
+.status-item span{color:var(--bright);}
+
+/* STRATEGY CARDS */
+.strats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
+.sc{background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:16px;position:relative;overflow:hidden;transition:border-color .2s;}
+.sc.buy{border-color:#00ff9d50;}
+.sc.buy::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--green);box-shadow:0 0 12px #00ff9d50;}
+.sc.sell{border-color:#ff386050;}
+.sc.sell::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--red);}
+.sc-num{font-family:'Barlow Condensed';font-weight:900;font-size:48px;color:#0a2035;position:absolute;right:10px;top:2px;line-height:1;}
+.sc-name{font-family:'Barlow Condensed';font-weight:900;font-size:16px;letter-spacing:2px;color:var(--cyan);margin-bottom:2px;}
+.sc-desc{font-size:10px;color:var(--dim);margin-bottom:12px;line-height:1.5;}
+.params{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:10px;}
+.p{background:#04101a;border:1px solid var(--border);padding:6px 9px;border-radius:2px;}
+.p-lbl{font-size:8px;letter-spacing:1.5px;color:var(--dim);margin-bottom:1px;}
+.p-val{font-size:13px;color:var(--bright);font-weight:600;}
+.p-val.c{color:var(--cyan);}.p-val.g{color:var(--green);}.p-val.r{color:var(--red);}
+.sig-box{padding:9px;text-align:center;border-radius:2px;font-family:'Barlow Condensed';font-weight:700;font-size:16px;letter-spacing:2px;transition:all .3s;}
+.sig-buy{background:#00ff9d12;border:1px solid #00ff9d40;color:var(--green);}
+.sig-sell{background:#ff386012;border:1px solid #ff386040;color:var(--red);}
+.sig-wait{background:#0e2438;border:1px solid var(--border);color:var(--dim);}
+
+/* CONSENSUS */
+.consensus{background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:14px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;}
+.con-result{font-family:'Barlow Condensed';font-weight:900;font-size:20px;letter-spacing:3px;padding:10px 20px;border-radius:3px;}
+.con-result.buy{background:#00ff9d12;color:var(--green);border:1px solid #00ff9d40;}
+.con-result.sell{background:#ff386012;color:var(--red);border:1px solid #ff386040;}
+.con-result.wait{background:#0e2438;color:var(--dim);border:1px solid var(--border);}
+.votes{display:flex;gap:8px;}
+.vote{background:#04101a;border:1px solid var(--border);padding:8px 14px;border-radius:2px;text-align:center;}
+.vote-n{font-family:'Barlow Condensed';font-weight:900;font-size:20px;}
+.vote-n.g{color:var(--green);}.vote-n.r{color:var(--red);}
+.vote-l{font-size:9px;color:var(--dim);letter-spacing:1px;}
+.con-note{font-size:10px;color:var(--dim);flex:1;}
+
+/* STATS */
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
+.stat{background:#04101a;border:1px solid var(--border);padding:10px 12px;border-radius:2px;}
+.stat-v{font-family:'Barlow Condensed';font-weight:900;font-size:22px;}
+.stat-v.g{color:var(--green);}.stat-v.r{color:var(--red);}.stat-v.c{color:var(--cyan);}.stat-v.y{color:var(--yellow);}
+.stat-l{font-size:9px;letter-spacing:1px;color:var(--dim);margin-top:2px;}
+
+/* CONTROLS */
+.card{background:var(--panel);border:1px solid var(--border);border-radius:3px;padding:14px;}
+.card-head{font-family:'Barlow Condensed';font-weight:700;font-size:11px;letter-spacing:3px;color:var(--dim);margin-bottom:12px;}
+.ctrl-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;}
+.cf{background:#03090f;border:1px solid var(--border);padding:7px 10px;border-radius:2px;flex:1;min-width:120px;}
+.cf-lbl{font-size:8px;letter-spacing:1.5px;color:var(--dim);margin-bottom:3px;}
+.cf-inp{width:100%;background:transparent;border:none;color:var(--bright);font-family:'IBM Plex Mono';font-size:12px;outline:none;}
+select.cf-inp{cursor:pointer;}
+select.cf-inp option{background:#06101a;}
+.btn-row{display:flex;gap:8px;}
+.btn{font-family:'Barlow Condensed';font-weight:700;font-size:13px;letter-spacing:2px;padding:10px 20px;border-radius:3px;cursor:pointer;border:1px solid;transition:all .2s;}
+.btn-start{background:#00ff9d12;border-color:#00ff9d50;color:var(--green);flex:1;}
+.btn-start:hover{background:#00ff9d22;}
+.btn-stop{background:#ff386012;border-color:#ff386050;color:var(--red);flex:1;}
+.btn-stop:hover{background:#ff386022;}
+.btn-test{background:#29b6f612;border-color:#29b6f650;color:var(--tg);}
+.btn-test:hover{background:#29b6f622;}
+
+/* TG FEED */
+.tg-feed{display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto;}
+.tg-msg{background:#29b6f610;border:1px solid #29b6f625;border-radius:3px;padding:8px 10px;font-size:11px;line-height:1.6;}
+.tg-msg.buy{border-left:3px solid var(--green);}
+.tg-msg.sell{border-left:3px solid var(--red);}
+.tg-time{color:var(--dim);font-size:9px;}
+.tg-body{color:var(--bright);margin-top:2px;}
+.tg-empty{color:var(--dim);font-size:11px;padding:20px;text-align:center;}
+
+.result{padding:8px 12px;border-radius:3px;font-size:11px;margin-top:8px;display:none;}
+.result.ok{background:#00ff9d10;border:1px solid #00ff9d30;color:var(--green);}
+.result.err{background:#ff386010;border:1px solid #ff386030;color:var(--red);}
+
+::-webkit-scrollbar{width:3px;}::-webkit-scrollbar-track{background:var(--bg);}::-webkit-scrollbar-thumb{background:var(--border);}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="logo">ST·EA <span>☁</span> CLOUD</div>
+  <span><span class="dot live" id="serverDot"></span><span id="serverLbl" style="font-size:10px;color:var(--green)">ONLINE</span></span>
+  <span><span class="dot off" id="tgDot"></span><span id="tgLbl" style="font-size:10px;color:var(--dim)">TG —</span></span>
+  <span id="clock"></span>
+</div>
+
+<div class="main">
+
+  <!-- STATUS BAR -->
+  <div class="status-bar">
+    <span>Stato: <span id="stRun" style="color:var(--dim)">FERMO</span></span>
+    <span>Simbolo: <span id="stSym" style="color:var(--cyan)">—</span></span>
+    <span>Prezzo: <span id="stPrice" style="color:var(--bright)">—</span></span>
+    <span>Candele: <span id="stCandles" style="color:var(--bright)">—</span></span>
+    <span>Ultimo segnale: <span id="stLast" style="color:var(--bright)">—</span></span>
+  </div>
+
+  <!-- STRATEGY CARDS -->
+  <div class="strats">
+    <div class="sc" id="sc1">
+      <div class="sc-num">1</div>
+      <div class="sc-name">ST · FAST</div>
+      <div class="sc-desc">ATR(7)×2.0 · Scalping</div>
+      <div class="params">
+        <div class="p"><div class="p-lbl">ATR</div><div class="p-val">7</div></div>
+        <div class="p"><div class="p-lbl">MULT</div><div class="p-val">2.0</div></div>
+        <div class="p"><div class="p-lbl">LINEA ST</div><div class="p-val c" id="l1">—</div></div>
+        <div class="p"><div class="p-lbl">DIREZIONE</div><div class="p-val" id="d1">—</div></div>
+      </div>
+      <div class="sig-box sig-wait" id="s1">◈ WAIT</div>
+    </div>
+    <div class="sc" id="sc2">
+      <div class="sc-num">2</div>
+      <div class="sc-name">ST · MID</div>
+      <div class="sc-desc">ATR(14)×3.0 · Trend</div>
+      <div class="params">
+        <div class="p"><div class="p-lbl">ATR</div><div class="p-val">14</div></div>
+        <div class="p"><div class="p-lbl">MULT</div><div class="p-val">3.0</div></div>
+        <div class="p"><div class="p-lbl">LINEA ST</div><div class="p-val c" id="l2">—</div></div>
+        <div class="p"><div class="p-lbl">DIREZIONE</div><div class="p-val" id="d2">—</div></div>
+      </div>
+      <div class="sig-box sig-wait" id="s2">◈ WAIT</div>
+    </div>
+    <div class="sc" id="sc3">
+      <div class="sc-num">3</div>
+      <div class="sc-name">ST · SLOW</div>
+      <div class="sc-desc">ATR(21)×4.5 · Wide band</div>
+      <div class="params">
+        <div class="p"><div class="p-lbl">ATR</div><div class="p-val">21</div></div>
+        <div class="p"><div class="p-lbl">MULT</div><div class="p-val">4.5</div></div>
+        <div class="p"><div class="p-lbl">LINEA ST</div><div class="p-val c" id="l3">—</div></div>
+        <div class="p"><div class="p-lbl">DIREZIONE</div><div class="p-val" id="d3">—</div></div>
+      </div>
+      <div class="sig-box sig-wait" id="s3">◈ WAIT</div>
+    </div>
+  </div>
+
+  <!-- CONSENSUS -->
+  <div class="consensus">
+    <div class="con-result wait" id="conBox">◈ NESSUN SEGNALE</div>
+    <div class="votes">
+      <div class="vote"><div class="vote-n g" id="vB">0</div><div class="vote-l">BUY</div></div>
+      <div class="vote"><div class="vote-n r" id="vS">0</div><div class="vote-l">SELL</div></div>
+      <div class="vote"><div class="vote-n" style="color:var(--dim)" id="vW">3</div><div class="vote-l">WAIT</div></div>
+    </div>
+    <div class="con-note" id="conNote">Il segnale viene inviato su Telegram quando il consenso raggiunge la soglia impostata.</div>
+  </div>
+
+  <!-- STATS -->
+  <div class="card">
+    <div class="card-head">STATISTICHE SEGNALI</div>
+    <div class="stats-grid">
+      <div class="stat"><div class="stat-v c" id="statTotal">0</div><div class="stat-l">TOTALE</div></div>
+      <div class="stat"><div class="stat-v g" id="statBuys">0</div><div class="stat-l">BUY</div></div>
+      <div class="stat"><div class="stat-v r" id="statSells">0</div><div class="stat-l">SELL</div></div>
+      <div class="stat"><div class="stat-v y" id="statLast">—</div><div class="stat-l">ULTIMO</div></div>
+    </div>
+  </div>
+
+  <!-- CONTROLS -->
+  <div class="card">
+    <div class="card-head">CONTROLLI EA</div>
+    <div class="ctrl-row">
+      <div class="cf">
+        <div class="cf-lbl">SIMBOLO</div>
+        <select class="cf-inp" id="ctrlSym">
+          <option>XAUUSD</option><option>EURUSD</option><option selected>BTCUSD</option>
+          <option>ETHUSD</option><option>NAS100</option><option>GBPJPY</option>
+        </select>
+      </div>
+      <div class="cf">
+        <div class="cf-lbl">CONSENSO</div>
+        <select class="cf-inp" id="ctrlConsensus">
+          <option value="1">1 strategia</option>
+          <option value="2">2 concordano</option>
+          <option value="3" selected>Tutte e 3</option>
+        </select>
+      </div>
+      <div class="cf">
+        <div class="cf-lbl">COOLDOWN (min)</div>
+        <input class="cf-inp" id="ctrlCooldown" type="number" value="1" min="1">
+      </div>
+      <div class="cf">
+        <div class="cf-lbl">REFRESH (sec)</div>
+        <input class="cf-inp" id="ctrlRefresh" type="number" value="60" min="10">
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-start" onclick="startEA()">▶ AVVIA</button>
+      <button class="btn btn-stop" onclick="stopEA()">■ FERMA</button>
+      <button class="btn btn-test" onclick="testTG()">✈ TEST TG</button>
+    </div>
+    <div class="result" id="actionResult"></div>
+  </div>
+
+  <!-- TG FEED -->
+  <div class="card">
+    <div class="card-head">✈ SEGNALI INVIATI SU TELEGRAM</div>
+    <div class="tg-feed" id="tgFeed">
+      <div class="tg-empty">Nessun segnale ancora.<br>Avvia l'EA per iniziare.</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+setInterval(()=>{document.getElementById('clock').textContent=new Date().toUTCString().slice(17,25)+' UTC';},1000);
+
+// SuperTrend calc (client-side for display only)
+function calcATR(c,p){const t=[];for(let i=1;i<c.length;i++)t.push(Math.max(c[i].high-c[i].low,Math.abs(c[i].high-c[i-1].close),Math.abs(c[i].low-c[i-1].close)));const a=[t[0]];for(let i=1;i<t.length;i++)a.push((a[i-1]*(p-1)+t[i])/p);return a;}
+function calcST(candles,period,mult){const atrs=calcATR(candles,period);const res=[];let dir=1,pu=0,pl=0;for(let i=1;i<candles.length;i++){const atr=atrs[i-1]||atrs[0],hl2=(candles[i].high+candles[i].low)/2;let u=hl2+mult*atr,l=hl2-mult*atr;if(i>1){u=u<pu||candles[i-1].close>pu?u:pu;l=l>pl||candles[i-1].close<pl?l:pl;}const cl=candles[i].close;if(dir===1&&cl<l)dir=-1;else if(dir===-1&&cl>u)dir=1;res.push({dir,line:dir===1?l:u,atr});pu=u;pl=l;}return res;}
+
+let lastLogCount=0, cachedCandles=[];
+
+async function fetchStatus(){
+  try{
+    const res=await fetch('/api/status');
+    const d=await res.json();
+    // Status bar
+    document.getElementById('stRun').textContent=d.isRunning?'IN ESECUZIONE':'FERMO';
+    document.getElementById('stRun').style.color=d.isRunning?'var(--green)':'var(--dim)';
+    document.getElementById('stSym').textContent=d.symbol;
+    document.getElementById('stPrice').textContent=d.lastPrice?(d.lastPrice>100?d.lastPrice.toFixed(2):d.lastPrice.toFixed(5)):'—';
+    document.getElementById('stCandles').textContent=d.candleCount;
+    document.getElementById('stLast').textContent=d.stats.lastSignal;
+    // Stats
+    document.getElementById('statTotal').textContent=d.stats.total;
+    document.getElementById('statBuys').textContent=d.stats.buys;
+    document.getElementById('statSells').textContent=d.stats.sells;
+    document.getElementById('statLast').textContent=d.stats.lastSignal;
+    document.getElementById('statLast').className='stat-v '+(d.stats.lastSignal==='BUY'?'g':d.stats.lastSignal==='SELL'?'r':'y');
+    // TG
+    document.getElementById('tgDot').className='dot '+(d.tgConnected?'live':'off');
+    document.getElementById('tgLbl').textContent=d.tgConnected?'TG ✓':'TG ✗';
+    document.getElementById('tgLbl').style.color=d.tgConnected?'var(--tg)':'var(--red)';
+    // Feed
+    if(d.signalLog.length!==lastLogCount){lastLogCount=d.signalLog.length;renderFeed(d.signalLog);}
+    // Fetch candles for strategy display
+    fetchCandles();
+  }catch(e){
+    document.getElementById('serverDot').className='dot off';
+    document.getElementById('serverLbl').textContent='OFFLINE';
+    document.getElementById('serverLbl').style.color='var(--red)';
+  }
+}
+
+async function fetchCandles(){
+  try{
+    const res=await fetch('/api/candles');
+    const d=await res.json();
+    if(d.candles&&d.candles.length){cachedCandles=d.candles;updateStrategyCards(d.candles);}
+  }catch{}
+}
+
+function updateStrategyCards(candles){
+  if(!candles.length)return;
+  const cfgs=[{a:7,m:2.0},{a:14,m:3.0},{a:21,m:4.5}];
+  const dec=candles[candles.length-1].close>100?2:5;
+  let buys=0,sells=0;
+  cfgs.forEach((cfg,i)=>{
+    const st=calcST(candles,cfg.a,cfg.m);if(!st.length)return;
+    const last=st[st.length-1],sig=last.dir===1?'BUY':'SELL';
+    // Card
+    document.getElementById(`sc${i+1}`).className='sc '+sig.toLowerCase();
+    // Signal box
+    const sb=document.getElementById(`s${i+1}`);
+    sb.className='sig-box '+(sig==='BUY'?'sig-buy':'sig-sell');
+    sb.textContent=sig==='BUY'?'▲ BUY':'▼ SELL';
+    // Line & direction
+    document.getElementById(`l${i+1}`).textContent=last.line.toFixed(dec);
+    const de=document.getElementById(`d${i+1}`);
+    de.textContent=sig;de.className='p-val '+(sig==='BUY'?'g':'r');
+    if(sig==='BUY')buys++;else sells++;
+  });
+  // Consensus
+  document.getElementById('vB').textContent=buys;
+  document.getElementById('vS').textContent=sells;
+  document.getElementById('vW').textContent=3-buys-sells;
+  const cb=document.getElementById('conBox');
+  const consensus=parseInt(document.getElementById('ctrlConsensus').value||3);
+  if(buys>=consensus){cb.className='con-result buy';cb.textContent='▲ BUY — '+buys+'/3';}
+  else if(sells>=consensus){cb.className='con-result sell';cb.textContent='▼ SELL — '+sells+'/3';}
+  else{cb.className='con-result wait';cb.textContent='◈ NESSUN SEGNALE — BUY:'+buys+' SELL:'+sells;}
+}
+
+function renderFeed(log){
+  const feed=document.getElementById('tgFeed');
+  if(!log.length){feed.innerHTML='<div class="tg-empty">Nessun segnale ancora.<br>Avvia l\'EA per iniziare.</div>';return;}
+  feed.innerHTML=log.map(s=>`<div class="tg-msg ${s.dir.toLowerCase()}"><div class="tg-time">✈ ${s.time} UTC</div><div class="tg-body">${s.dir==='BUY'?'🟢':'🔴'} <b>${s.dir}</b> ${s.symbol} @ ${s.price}</div></div>`).join('');
+}
+
+async function startEA(){
+  const body={symbol:document.getElementById('ctrlSym').value,consensus:parseInt(document.getElementById('ctrlConsensus').value),cooldown:parseInt(document.getElementById('ctrlCooldown').value),refresh:parseInt(document.getElementById('ctrlRefresh').value)};
+  showResult('loading','⏳ Avvio...');
+  const res=await fetch('/api/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d=await res.json();
+  showResult(d.ok?'ok':'err',d.ok?'✅ EA avviato! Segnali in arrivo su Telegram.':'❌ '+d.message);
+}
+async function stopEA(){
+  showResult('loading','⏳ Arresto...');
+  const res=await fetch('/api/stop',{method:'POST'});
+  const d=await res.json();
+  showResult(d.ok?'ok':'err',d.ok?'⏹ EA fermato.':'❌ Errore');
+}
+async function testTG(){
+  showResult('loading','⏳ Invio test...');
+  const res=await fetch('/api/test',{method:'POST'});
+  const d=await res.json();
+  showResult(d.ok?'ok':'err',d.ok?'✅ Messaggio test inviato! Controlla Telegram.':'❌ Errore: controlla le variabili TG_TOKEN e TG_CHAT_ID su Render.');
+}
+
+function showResult(type,msg){
+  const el=document.getElementById('actionResult');
+  el.style.display='block';
+  el.className='result '+(type==='loading'?'':type);
+  el.style.color=type==='loading'?'var(--tg)':'';
+  el.textContent=msg;
+}
+
+fetchStatus();
+setInterval(fetchStatus,5000);
+</script>
+</body>
+</html>
