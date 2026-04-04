@@ -177,6 +177,7 @@ select.cf-inp option{background:#06101a;}
       <div class="stat"><div class="stat-v g" id="statBuys">0</div><div class="stat-l">BUY</div></div>
       <div class="stat"><div class="stat-v r" id="statSells">0</div><div class="stat-l">SELL</div></div>
       <div class="stat"><div class="stat-v y" id="statLast">—</div><div class="stat-l">ULTIMO</div></div>
+      <div class="stat" style="grid-column:1/-1"><div class="stat-v" style="font-size:13px;color:var(--text)" id="statFilter">In attesa...</div><div class="stat-l">ULTIMO FILTRO</div></div>
     </div>
   </div>
 
@@ -260,6 +261,7 @@ async function fetchStatus(){
     document.getElementById('statBuys').textContent=d.stats.buys;
     document.getElementById('statSells').textContent=d.stats.sells;
     document.getElementById('statLast').textContent=d.stats.lastSignal;
+    document.getElementById("statFilter").textContent=d.stats.lastFilter||"—";
     document.getElementById('statLast').className='stat-v '+(d.stats.lastSignal==='BUY'?'g':d.stats.lastSignal==='SELL'?'r':'y');
     // TG
     document.getElementById('tgDot').className='dot '+(d.tgConnected?'live':'off');
