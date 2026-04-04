@@ -20,6 +20,7 @@ let candles = [];
 let stats = { total: 0, buys: 0, sells: 0, lastSignal: '—' };
 let signalLog = [];
 let refreshInterval = null;
+let lastDirection = null; // Track last sent direction to avoid duplicates
 
 // ═══════════════════════════════
 // SUPERTREND CALC
@@ -51,19 +52,50 @@ function calcST(candles, period, mult) {
 }
 
 // ═══════════════════════════════
-// FETCH CANDLES
 // ═══════════════════════════════
-const SYM_MAP = {
-  XAUUSD: 'XAU/USD', EURUSD: 'EUR/USD', BTCUSD: 'BTC/USD',
-  ETHUSD: 'ETH/USD', NAS100: 'IXIC', GBPJPY: 'GBP/JPY',
+// SYMBOL CONFIG
+// ═══════════════════════════════
+const CRYPTO_SYMBOLS = ['BTCUSD','ETHUSD','BNBUSD','SOLUSD','XRPUSD','ADAUSD','DOTUSD','MATICUSD'];
+const BINANCE_MAP = {
+  BTCUSD:'BTCUSDT', ETHUSD:'ETHUSDT', BNBUSD:'BNBUSDT',
+  SOLUSD:'SOLUSDT', XRPUSD:'XRPUSDT', ADAUSD:'ADAUSDT',
+  DOTUSD:'DOTUSDT', MATICUSD:'MATICUSDT',
+};
+const TD_MAP = {
+  XAUUSD:'XAU/USD', EURUSD:'EUR/USD', GBPUSD:'GBP/USD',
+  USDJPY:'USD/JPY', GBPJPY:'GBP/JPY', AUDUSD:'AUD/USD',
+  NAS100:'IXIC', SPX500:'SPX', AAPL:'AAPL', TSLA:'TSLA',
+  AMZN:'AMZN', GOOGL:'GOOGL', MSFT:'MSFT',
 };
 
 let currentSymbol = 'XAUUSD';
 
+// ═══════════════════════════════
+// FETCH CANDLES — auto source
+// ═══════════════════════════════
 async function fetchCandles(symbol) {
+  if (CRYPTO_SYMBOLS.includes(symbol)) {
+    await fetchBinance(symbol);
+  } else {
+    await fetchTwelveData(symbol);
+  }
+}
+
+async function fetchBinance(symbol) {
+  const pair = BINANCE_MAP[symbol] || symbol;
+  const url = `https://api.binance.com/api/v3/klines?symbol=${pair}&interval=15m&limit=120`;
+  const res = await fetch(url);
+  const data = await res.json();
+  if (!Array.isArray(data)) throw new Error('Binance error');
+  candles = data.map(k => ({
+    open: +k[1], high: +k[2], low: +k[3], close: +k[4]
+  }));
+}
+
+async function fetchTwelveData(symbol) {
   if (!TD_KEY) {
     // Demo candles
-    let p = symbol.includes('BTC') ? 68000 : symbol.includes('XAU') ? 2340 : 1.082;
+    let p = symbol.includes('XAU') ? 2340 : symbol.includes('NAS') ? 17800 : 1.082;
     candles = [];
     for (let i = 0; i < 120; i++) {
       const ch = (Math.random() - 0.488) * p * 0.003, o = p, c = p + ch;
@@ -72,7 +104,7 @@ async function fetchCandles(symbol) {
     }
     return;
   }
-  const sym = SYM_MAP[symbol] || symbol;
+  const sym = TD_MAP[symbol] || symbol;
   const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=15min&outputsize=120&apikey=${TD_KEY}`;
   const res = await fetch(url);
   const data = await res.json();
@@ -123,6 +155,9 @@ async function checkSignals(consensus = 3, cooldownMin = 15) {
   if (bv >= consensus) dir = 'BUY';
   else if (sv >= consensus) dir = 'SELL';
   if (!dir) return;
+  // Only send if direction changed
+  if (dir === lastDirection) return;
+
 
   const price = candles[candles.length - 1].close;
   const atr = calcATR(candles, 14)[candles.length - 2] || 0;
@@ -139,6 +174,7 @@ async function checkSignals(consensus = 3, cooldownMin = 15) {
     if (dir === 'BUY') stats.buys++; else stats.sells++;
     stats.lastSignal = dir;
     lastSignalTime = Date.now();
+    lastDirection = dir;
     signalLog.unshift({ dir, price: price.toFixed(dec), time, symbol: currentSymbol });
     if (signalLog.length > 50) signalLog.pop();
     console.log(`✅ Signal sent: ${dir} ${currentSymbol} @ ${price.toFixed(dec)}`);
