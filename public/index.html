@@ -95,6 +95,9 @@ select.cf-inp option{background:#06101a;}
 .result.ok{background:#00ff9d10;border:1px solid #00ff9d30;color:var(--green);}
 .result.err{background:#ff386010;border:1px solid #ff386030;color:var(--red);}
 
+.sym-tab{font-family:'Barlow Condensed';font-weight:700;font-size:12px;letter-spacing:2px;padding:5px 14px;border-radius:3px;border:1px solid var(--border);background:transparent;color:var(--dim);cursor:pointer;transition:all .2s;}
+.sym-tab.active{background:#00d4ff18;border-color:var(--cyan);color:var(--cyan);}
+.sym-tab:hover{border-color:var(--border2);color:var(--text);}
 ::-webkit-scrollbar{width:3px;}::-webkit-scrollbar-track{background:var(--bg);}::-webkit-scrollbar-thumb{background:var(--border);}
 </style>
 </head>
@@ -117,6 +120,9 @@ select.cf-inp option{background:#06101a;}
     <span>Candele: <span id="stCandles" style="color:var(--bright)">—</span></span>
     <span>Ultimo segnale: <span id="stLast" style="color:var(--bright)">—</span></span>
   </div>
+
+  <!-- SYMBOL TABS -->
+  <div id="symTabs" style="display:flex;gap:6px;margin-bottom:2px;"></div>
 
   <!-- STRATEGY CARDS -->
   <div class="strats">
@@ -280,20 +286,24 @@ async function fetchStatus(){
       });
     }
     // Stats
-    document.getElementById('statTotal').textContent=d.stats.total;
-    document.getElementById('statBuys').textContent=d.stats.buys;
-    document.getElementById('statSells').textContent=d.stats.sells;
-    document.getElementById('statLast').textContent=d.stats.lastSignal;
-    document.getElementById("statFilter").textContent=d.stats.lastFilter||"—";
-    document.getElementById('statLast').className='stat-v '+(d.stats.lastSignal==='BUY'?'g':d.stats.lastSignal==='SELL'?'r':'y');
+    if(d.globalStats){
+      document.getElementById('statTotal').textContent=d.globalStats.total;
+      document.getElementById('statBuys').textContent=d.globalStats.buys;
+      document.getElementById('statSells').textContent=d.globalStats.sells;
+    }
+    if(d.globalLog&&d.globalLog.length){
+      const last=d.globalLog[0];
+      document.getElementById('statLast').textContent=last.symbol+' '+last.dir;
+      document.getElementById('statLast').className='stat-v '+(last.dir==='BUY'?'g':'r');
+    }
     // TG
     document.getElementById('tgDot').className='dot '+(d.tgConnected?'live':'off');
     document.getElementById('tgLbl').textContent=d.tgConnected?'TG ✓':'TG ✗';
     document.getElementById('tgLbl').style.color=d.tgConnected?'var(--tg)':'var(--red)';
     // Feed
     if(d.globalLog&&d.globalLog.length!==lastLogCount){lastLogCount=d.globalLog.length;renderFeed(d.globalLog);}
-    // Fetch candles for strategy display
-    fetchCandles();
+    // Fetch candles for ALL active symbols
+    if(d.activeSymbols) fetchAllCandles(d.activeSymbols);
   }catch(e){
     document.getElementById('serverDot').className='dot off';
     document.getElementById('serverLbl').textContent='OFFLINE';
@@ -301,12 +311,42 @@ async function fetchStatus(){
   }
 }
 
-async function fetchCandles(){
+let currentDisplaySymbol = 'XAUUSD';
+
+async function fetchAllCandles(symbols){
+  if(!symbols||!symbols.length) return;
+  // Update symbol tabs
+  updateSymbolTabs(symbols);
+  // Fetch first/current symbol for display
+  const sym = symbols.includes(currentDisplaySymbol) ? currentDisplaySymbol : symbols[0];
+  await fetchCandles(sym);
+}
+
+function updateSymbolTabs(symbols){
+  const existing = document.getElementById('symTabs');
+  if(!existing) return;
+  existing.innerHTML = symbols.map(s=>`<button onclick="switchSymbol('${s}')" class="sym-tab${s===currentDisplaySymbol?' active':''}">${s}</button>`).join('');
+}
+
+function switchSymbol(sym){
+  currentDisplaySymbol = sym;
+  fetchCandles(sym);
+  document.querySelectorAll('.sym-tab').forEach(b=>{
+    b.classList.toggle('active', b.textContent===sym);
+  });
+}
+
+async function fetchCandles(sym){
   try{
-    const res=await fetch('/api/candles');
+    const res=await fetch('/api/candles/'+sym);
     const d=await res.json();
-    if(d.candles&&d.candles.length){cachedCandles=d.candles;updateStrategyCards(d.candles);updateSRLevels(d.candles);if(d.candlesH1&&d.candlesH1.length)updateH1Indicator(d.candlesH1);}
-  }catch{}
+    if(d.candles&&d.candles.length){
+      cachedCandles=d.candles;
+      updateStrategyCards(d.candles);
+      updateSRLevels(d.candles);
+      if(d.candlesH1&&d.candlesH1.length)updateH1Indicator(d.candlesH1);
+    }
+  }catch(e){console.log('fetchCandles error:',e);}
 }
 
 
