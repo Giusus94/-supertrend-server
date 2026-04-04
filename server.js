@@ -8,30 +8,35 @@ app.use(express.static('public'));
 
 const PORT = process.env.PORT || 3000;
 
-// Config da variabili d'ambiente
-const TG_TOKEN = process.env.TG_TOKEN || '';
+const TG_TOKEN   = process.env.TG_TOKEN   || '';
 const TG_CHAT_ID = process.env.TG_CHAT_ID || '';
-const TD_KEY = process.env.TD_KEY || '';
+const TD_KEY     = process.env.TD_KEY     || '';
 
-// Stato bot
-let isRunning = false;
+let isRunning      = false;
 let lastSignalTime = 0;
-let candles = [];
-let stats = { total: 0, buys: 0, sells: 0, lastSignal: '—' };
-let signalLog = [];
+let lastDirection  = null;
+let candles        = [];
+let currentSymbol  = 'XAUUSD';
+let stats          = { total: 0, buys: 0, sells: 0, lastSignal: '—' };
+let signalLog      = [];
 let refreshInterval = null;
-let lastDirection = null; // Track last sent direction to avoid duplicates
 
-// ═══════════════════════════════
-// SUPERTREND CALC
-// ═══════════════════════════════
+const CRYPTO_SYMBOLS = ['BTCUSD','ETHUSD','BNBUSD','SOLUSD','XRPUSD','ADAUSD','DOTUSD','MATICUSD'];
+
+const TD_MAP = {
+  XAUUSD:'XAU/USD', XAGUSD:'XAG/USD',
+  EURUSD:'EUR/USD', GBPUSD:'GBP/USD', USDJPY:'USD/JPY',
+  GBPJPY:'GBP/JPY', AUDUSD:'AUD/USD', USDCAD:'USD/CAD',
+  USDCHF:'USD/CHF', NZDUSD:'NZD/USD', EURGBP:'EUR/GBP',
+};
+
 function calcATR(c, p) {
   const t = [];
   for (let i = 1; i < c.length; i++) {
-    t.push(Math.max(c[i].high - c[i].low, Math.abs(c[i].high - c[i-1].close), Math.abs(c[i].low - c[i-1].close)));
+    t.push(Math.max(c[i].high-c[i].low, Math.abs(c[i].high-c[i-1].close), Math.abs(c[i].low-c[i-1].close)));
   }
   const a = [t[0]];
-  for (let i = 1; i < t.length; i++) a.push((a[i-1] * (p-1) + t[i]) / p);
+  for (let i = 1; i < t.length; i++) a.push((a[i-1]*(p-1)+t[i])/p);
   return a;
 }
 
@@ -39,195 +44,152 @@ function calcST(candles, period, mult) {
   const atrs = calcATR(candles, period);
   const res = []; let dir = 1, pu = 0, pl = 0;
   for (let i = 1; i < candles.length; i++) {
-    const atr = atrs[i-1] || atrs[0];
-    const hl2 = (candles[i].high + candles[i].low) / 2;
-    let u = hl2 + mult * atr, l = hl2 - mult * atr;
-    if (i > 1) { u = u < pu || candles[i-1].close > pu ? u : pu; l = l > pl || candles[i-1].close < pl ? l : pl; }
+    const atr = atrs[i-1]||atrs[0], hl2 = (candles[i].high+candles[i].low)/2;
+    let u = hl2+mult*atr, l = hl2-mult*atr;
+    if (i > 1) { u = (u<pu||candles[i-1].close>pu)?u:pu; l = (l>pl||candles[i-1].close<pl)?l:pl; }
     const cl = candles[i].close;
-    if (dir === 1 && cl < l) dir = -1; else if (dir === -1 && cl > u) dir = 1;
-    res.push({ dir, line: dir === 1 ? l : u, atr });
-    pu = u; pl = l;
+    if (dir===1&&cl<l) dir=-1; else if (dir===-1&&cl>u) dir=1;
+    res.push({ dir, line: dir===1?l:u, atr }); pu=u; pl=l;
   }
   return res;
 }
 
-// ═══════════════════════════════
-// ═══════════════════════════════
-// SYMBOL CONFIG
-// ═══════════════════════════════
-const CRYPTO_SYMBOLS = ['BTCUSD','ETHUSD','BNBUSD','SOLUSD','XRPUSD','ADAUSD','DOTUSD','MATICUSD'];
-
-// Bybit — free, no key, no geo-block, precise prices
 async function fetchCandles(symbol) {
-  if (CRYPTO_SYMBOLS.includes(symbol)) {
-    await fetchCrypto(symbol);
-  } else {
-    await fetchTwelveData(symbol);
-  }
+  if (CRYPTO_SYMBOLS.includes(symbol)) await fetchBybit(symbol);
+  else await fetchTwelveData(symbol);
 }
 
-async function fetchCrypto(symbol) {
-  const pair = symbol.replace('USD', 'USDT');
+async function fetchBybit(symbol) {
+  const pair = symbol.replace('USD','USDT');
   const url = `https://api.bybit.com/v5/market/kline?category=spot&symbol=${pair}&interval=15&limit=120`;
   const res = await fetch(url);
   const data = await res.json();
-  if (data.retCode !== 0) throw new Error('Bybit error: ' + data.retMsg);
-  // Bybit returns newest first — reverse it
-  candles = data.result.list.reverse().map(k => ({
-    open: +k[1], high: +k[2], low: +k[3], close: +k[4]
-  }));
+  if (!data || data.retCode !== 0) throw new Error('Bybit error: '+(data&&data.retMsg));
+  candles = data.result.list.reverse().map(k => ({ open:+k[1], high:+k[2], low:+k[3], close:+k[4] }));
   if (candles.length < 10) throw new Error('Not enough candles from Bybit');
 }
 
 async function fetchTwelveData(symbol) {
   if (!TD_KEY) {
-    let p = symbol.includes('XAU') ? 2340 : symbol.includes('XAG') ? 28 : 1.082;
+    let p = symbol.includes('XAU')?2340:symbol.includes('XAG')?28:1.082;
     candles = [];
-    for (let i = 0; i < 120; i++) {
-      const ch = (Math.random() - 0.488) * p * 0.003, o = p, c = p + ch;
-      candles.push({ open: o, high: Math.max(o,c)*1.001, low: Math.min(o,c)*0.999, close: c });
-      p = c;
+    for (let i=0;i<120;i++) {
+      const ch=(Math.random()-.488)*p*.003,o=p,c=p+ch;
+      candles.push({open:o,high:Math.max(o,c)*1.001,low:Math.min(o,c)*.999,close:c}); p=c;
     }
     return;
   }
-  const sym = TD_MAP[symbol] || symbol;
+  const sym = TD_MAP[symbol]||symbol;
   const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=15min&outputsize=120&apikey=${TD_KEY}`;
   const res = await fetch(url);
   const data = await res.json();
-  if (data.status === 'error') throw new Error(data.message);
-  candles = data.values.reverse().map(c => ({ open: +c.open, high: +c.high, low: +c.low, close: +c.close }));
+  if (data.status==='error') throw new Error(data.message);
+  candles = data.values.reverse().map(c => ({ open:+c.open, high:+c.high, low:+c.low, close:+c.close }));
 }
 
-// ═══════════════════════════════
-// SEND TELEGRAM
-// ═══════════════════════════════
 async function sendTelegram(text) {
-  if (!TG_TOKEN || !TG_CHAT_ID) return false;
+  if (!TG_TOKEN||!TG_CHAT_ID) return false;
   try {
     const res = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: TG_CHAT_ID, text, parse_mode: 'HTML' })
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ chat_id:TG_CHAT_ID, text, parse_mode:'HTML' })
     });
-    const d = await res.json();
-    return d.ok;
-  } catch (e) { return false; }
+    const d = await res.json(); return d.ok;
+  } catch(e) { return false; }
 }
 
-// ═══════════════════════════════
-// CHECK SIGNALS
-// ═══════════════════════════════
 const strategies = [
-  { id: 1, atr: 7,  mult: 2.0 },
-  { id: 2, atr: 14, mult: 3.0 },
-  { id: 3, atr: 21, mult: 4.5 },
+  { id:1, atr:7,  mult:2.0 },
+  { id:2, atr:14, mult:3.0 },
+  { id:3, atr:21, mult:4.5 },
 ];
 
-async function checkSignals(consensus = 3, cooldownMin = 15) {
-  if (!candles.length || !isRunning) return;
-  const cooldown = cooldownMin * 60 * 1000;
-  if (Date.now() - lastSignalTime < cooldown) return;
+async function checkSignals(consensus=3, cooldownMin=15) {
+  if (!candles.length||!isRunning) return;
+  if (Date.now()-lastSignalTime < cooldownMin*60*1000) return;
 
-  let bv = 0, sv = 0;
+  let bv=0, sv=0;
   strategies.forEach(s => {
     const st = calcST(candles, s.atr, s.mult);
     if (!st.length) return;
-    const last = st[st.length - 1];
-    if (last.dir === 1) bv++;
-    else sv++;
+    if (st[st.length-1].dir===1) bv++; else sv++;
   });
 
   let dir = null;
-  if (bv >= consensus) dir = 'BUY';
-  else if (sv >= consensus) dir = 'SELL';
-  if (!dir) return;
-  // Only send if direction changed
-  if (dir === lastDirection) return;
+  if (bv>=consensus) dir='BUY';
+  else if (sv>=consensus) dir='SELL';
+  if (!dir || dir===lastDirection) return;
 
+  const price = candles[candles.length-1].close;
+  const atr   = calcATR(candles,14)[candles.length-2]||0;
+  const dec   = price>100?2:5;
+  const sl    = (dir==='BUY'?price-atr*1.5:price+atr*1.5).toFixed(dec);
+  const tp    = (dir==='BUY'?price+atr*3.0:price-atr*3.0).toFixed(dec);
+  const time  = new Date().toUTCString().slice(0,25);
 
-  const price = candles[candles.length - 1].close;
-  const atr = calcATR(candles, 14)[candles.length - 2] || 0;
-  const dec = price > 100 ? 2 : 5;
-  const sl = (dir === 'BUY' ? price - atr * 1.5 : price + atr * 1.5).toFixed(dec);
-  const tp = (dir === 'BUY' ? price + atr * 3.0 : price - atr * 3.0).toFixed(dec);
-  const time = new Date().toUTCString().slice(0, 25);
-
-  const msg = `${dir === 'BUY' ? '🟢' : '🔴'} <b>SuperTrend Signal</b>\n\n📊 <b>Simbolo:</b> ${currentSymbol}\n📡 <b>Direzione:</b> <b>${dir}</b>\n💰 <b>Prezzo:</b> ${price.toFixed(dec)}\n🛑 <b>SL:</b> ${sl}\n🎯 <b>TP:</b> ${tp}\n⏰ <b>Ora:</b> ${time} UTC\n\n⚠️ <i>Non è consulenza finanziaria.</i>`;
+  const msg =
+    `${dir==='BUY'?'🟢':'🔴'} <b>SuperTrend Signal</b>\n\n` +
+    `📊 <b>Simbolo:</b> ${currentSymbol}\n` +
+    `📡 <b>Direzione:</b> <b>${dir}</b>\n` +
+    `💰 <b>Prezzo:</b> ${price.toFixed(dec)}\n` +
+    `🛑 <b>SL:</b> ${sl}\n` +
+    `🎯 <b>TP:</b> ${tp}\n` +
+    `⏰ <b>Ora:</b> ${time} UTC\n\n` +
+    `⚠️ <i>Non è consulenza finanziaria.</i>`;
 
   const ok = await sendTelegram(msg);
   if (ok) {
-    stats.total++; 
-    if (dir === 'BUY') stats.buys++; else stats.sells++;
-    stats.lastSignal = dir;
-    lastSignalTime = Date.now();
-    lastDirection = dir;
-    signalLog.unshift({ dir, price: price.toFixed(dec), time, symbol: currentSymbol });
-    if (signalLog.length > 50) signalLog.pop();
+    stats.total++; if (dir==='BUY') stats.buys++; else stats.sells++;
+    stats.lastSignal=dir; lastSignalTime=Date.now(); lastDirection=dir;
+    signalLog.unshift({ dir, price:price.toFixed(dec), time, symbol:currentSymbol });
+    if (signalLog.length>50) signalLog.pop();
     console.log(`✅ Signal sent: ${dir} ${currentSymbol} @ ${price.toFixed(dec)}`);
   }
 }
 
-// ═══════════════════════════════
-// LOOP
-// ═══════════════════════════════
-function startLoop(refreshSec = 60, consensus = 3, cooldown = 15) {
+function startLoop(refreshSec=60, consensus=3, cooldown=15) {
   if (refreshInterval) clearInterval(refreshInterval);
   refreshInterval = setInterval(async () => {
-    try {
-      await fetchCandles(currentSymbol);
-      await checkSignals(consensus, cooldown);
-    } catch (e) { console.error('Loop error:', e.message); }
-  }, refreshSec * 1000);
+    try { await fetchCandles(currentSymbol); await checkSignals(consensus, cooldown); }
+    catch(e) { console.error('Loop error:', e.message); }
+  }, refreshSec*1000);
 }
 
-// ═══════════════════════════════
-// API ROUTES
-// ═══════════════════════════════
-app.get('/api/status', (req, res) => {
-  res.json({
-    isRunning, stats, signalLog: signalLog.slice(0, 20),
-    symbol: currentSymbol, tgConnected: !!(TG_TOKEN && TG_CHAT_ID),
-    dataConnected: !!TD_KEY, candleCount: candles.length,
-    lastPrice: candles.length ? candles[candles.length-1].close : 0
-  });
+app.get('/api/status', (req,res) => {
+  res.json({ isRunning, stats, signalLog:signalLog.slice(0,20), symbol:currentSymbol,
+    tgConnected:!!(TG_TOKEN&&TG_CHAT_ID), dataConnected:!!TD_KEY,
+    candleCount:candles.length, lastPrice:candles.length?candles[candles.length-1].close:0 });
 });
 
-app.post('/api/start', async (req, res) => {
+app.post('/api/start', async (req,res) => {
   const { symbol, consensus, cooldown, refresh } = req.body;
-  if (symbol) currentSymbol = symbol;
-  isRunning = true;
+  if (symbol) { currentSymbol=symbol; lastDirection=null; }
+  isRunning=true;
   try {
     await fetchCandles(currentSymbol);
-    startLoop(refresh || 60, consensus || 3, cooldown || 15);
+    startLoop(refresh||60, consensus||3, cooldown||15);
     await sendTelegram(`🤖 <b>SuperTrend EA Avviato</b>\n📊 Simbolo: ${currentSymbol}\n⏰ ${new Date().toUTCString().slice(0,25)}`);
-    res.json({ ok: true, message: 'EA avviato' });
-  } catch (e) {
-    res.json({ ok: false, message: e.message });
-  }
+    res.json({ ok:true, message:'EA avviato' });
+  } catch(e) { res.json({ ok:false, message:e.message }); }
 });
 
-app.post('/api/stop', async (req, res) => {
-  isRunning = false;
-  if (refreshInterval) clearInterval(refreshInterval);
+app.post('/api/stop', async (req,res) => {
+  isRunning=false; if (refreshInterval) clearInterval(refreshInterval);
   await sendTelegram('⏹ <b>SuperTrend EA Fermato</b>');
-  res.json({ ok: true, message: 'EA fermato' });
+  res.json({ ok:true, message:'EA fermato' });
 });
 
-app.post('/api/test', async (req, res) => {
-  const ok = await sendTelegram('🤖 <b>SuperTrend EA — Test OK!</b>\n\nBot connesso correttamente ✅\nI segnali BUY/SELL arriveranno qui.');
-  res.json({ ok, message: ok ? 'Messaggio inviato!' : 'Errore invio' });
+app.post('/api/test', async (req,res) => {
+  const ok = await sendTelegram('🤖 <b>SuperTrend EA — Test OK!</b>\n\nBot connesso ✅\nI segnali BUY/SELL arriveranno qui.');
+  res.json({ ok, message:ok?'Messaggio inviato!':'Errore invio' });
 });
 
-app.get('/api/candles', (req, res) => {
-  res.json({ candles: candles.slice(-60) });
+app.get('/api/candles', (req,res) => {
+  res.json({ candles:candles.slice(-60) });
 });
 
-// ═══════════════════════════════
-// START SERVER
-// ═══════════════════════════════
 app.listen(PORT, () => {
   console.log(`SuperTrend EA running on port ${PORT}`);
-  console.log(`TG: ${TG_TOKEN ? '✅' : '❌'} | TD: ${TD_KEY ? '✅' : '❌'}`);
-  // Auto-fetch candles on start
+  console.log(`TG: ${TG_TOKEN?'✅':'❌'} | TD: ${TD_KEY?'✅':'❌'}`);
   fetchCandles(currentSymbol).catch(console.error);
 });
