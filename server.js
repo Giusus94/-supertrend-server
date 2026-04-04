@@ -389,7 +389,7 @@ function startLoop(refreshSec=60, consensus=3, cooldown=15) {
         await checkSignalsForSymbol(symbol,consensus,cooldown);
         await checkPreSignalForSymbol(symbol,consensus);
         // Small delay between symbols to avoid rate limiting
-        await new Promise(r=>setTimeout(r,2000));
+        await new Promise(r=>setTimeout(r,5000));
       } catch(e){console.error(`Error ${symbol}:`,e.message);}
     }
   }, refreshSec*1000);
@@ -430,8 +430,8 @@ app.post('/api/start',async(req,res)=>{
   isRunning=true;
   try {
     // Fetch all symbols
-    for(const s of activeSymbols){await fetchCandles(s);await new Promise(r=>setTimeout(r,1000));}
-    startLoop(refresh||60,consensus||3,cooldown||15);
+    for(const s of activeSymbols){await fetchCandles(s);await new Promise(r=>setTimeout(r,3000));}
+    startLoop(refresh||300,consensus||3,cooldown||15);
     await sendTelegram(`🤖 <b>SuperTrend EA Avviato</b>\n📊 Simboli: ${activeSymbols.join(', ')}\n🔧 Filtri: RSI + EMA50 + Volume + H1\n⏰ ${new Date().toUTCString().slice(0,25)}`);
     res.json({ok:true,message:`EA avviato su ${activeSymbols.join(', ')}`});
   } catch(e){res.json({ok:false,message:e.message});}
@@ -468,7 +468,7 @@ app.listen(PORT,()=>{
   (async()=>{
     for(const s of DEFAULT_SYMBOLS){
       try{await fetchCandles(s);}catch(e){console.error(s,e.message);}
-      await new Promise(r=>setTimeout(r,1500));
+      await new Promise(r=>setTimeout(r,4000));
     }
   })();
 });
