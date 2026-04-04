@@ -171,7 +171,7 @@ select.cf-inp option{background:#06101a;}
       <div class="vote" style="padding:10px;"><div style="font-size:9px;letter-spacing:1px;color:var(--dim);margin-bottom:4px;">M15 TREND</div><div class="vote-n" id="m15trend" style="font-size:16px;">—</div></div>
       <div class="vote" style="padding:10px;"><div style="font-size:9px;letter-spacing:1px;color:var(--dim);margin-bottom:4px;">H1 TREND</div><div class="vote-n" id="h1trend" style="font-size:16px;">—</div></div>
       <div class="vote" style="padding:10px;"><div style="font-size:9px;letter-spacing:1px;color:var(--dim);margin-bottom:4px;">RSI (14)</div><div class="vote-n" id="rsiVal" style="font-size:16px;">—</div></div>
-      <div class="vote" style="padding:10px;"><div style="font-size:9px;letter-spacing:1px;color:var(--dim);margin-bottom:4px;">EMA200</div><div class="vote-n" id="emaVal" style="font-size:16px;">—</div></div>
+      <div class="vote" style="padding:10px;"><div style="font-size:9px;letter-spacing:1px;color:var(--dim);margin-bottom:4px;">EMA50</div><div class="vote-n" id="emaVal" style="font-size:16px;">—</div></div>
     </div>
   </div>
 
@@ -410,8 +410,8 @@ function updateStrategyCards(candles){
     rsiEl.style.color = rsi>70?'var(--red)':rsi<30?'var(--green)':'var(--text)';
   }
 
-  // EMA200
-  const ema200 = calcEMA(candles, 200);
+  // EMA50
+  const ema200 = calcEMA(candles, 50);
   const price = candles[candles.length-1].close;
   const emaEl = document.getElementById('emaVal');
   if(emaEl){
