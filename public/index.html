@@ -187,8 +187,20 @@ select.cf-inp option{background:#06101a;}
       <div class="cf">
         <div class="cf-lbl">SIMBOLO</div>
         <select class="cf-inp" id="ctrlSym">
-          <option>XAUUSD</option><option>EURUSD</option><option selected>BTCUSD</option>
-          <option>ETHUSD</option><option>NAS100</option><option>GBPJPY</option>
+          <optgroup label="── FOREX">
+            <option selected>XAUUSD</option><option>EURUSD</option><option>GBPUSD</option>
+            <option>USDJPY</option><option>GBPJPY</option><option>AUDUSD</option>
+          </optgroup>
+          <optgroup label="── CRYPTO">
+            <option>BTCUSD</option><option>ETHUSD</option><option>SOLUSD</option>
+            <option>XRPUSD</option><option>BNBUSD</option><option>ADAUSD</option>
+          </optgroup>
+          <optgroup label="── INDICES">
+            <option>NAS100</option><option>SPX500</option>
+          </optgroup>
+          <optgroup label="── STOCKS">
+            <option>AAPL</option><option>TSLA</option><option>AMZN</option><option>GOOGL</option><option>MSFT</option>
+          </optgroup>
         </select>
       </div>
       <div class="cf">
