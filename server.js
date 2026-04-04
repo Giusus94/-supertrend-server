@@ -57,49 +57,26 @@ function calcST(candles, period, mult) {
 // ═══════════════════════════════
 const CRYPTO_SYMBOLS = ['BTCUSD','ETHUSD','BNBUSD','SOLUSD','XRPUSD','ADAUSD','DOTUSD','MATICUSD'];
 
-// CoinGecko IDs for crypto
-const COINGECKO_MAP = {
-  BTCUSD:'bitcoin', ETHUSD:'ethereum', BNBUSD:'binancecoin',
-  SOLUSD:'solana', XRPUSD:'ripple', ADAUSD:'cardano',
-  DOTUSD:'polkadot', MATICUSD:'matic-network',
-};
-
-// Twelve Data symbols for Forex/Gold only
-const TD_MAP = {
-  XAUUSD:'XAU/USD', XAGUSD:'XAG/USD',
-  EURUSD:'EUR/USD', GBPUSD:'GBP/USD', USDJPY:'USD/JPY',
-  GBPJPY:'GBP/JPY', AUDUSD:'AUD/USD', USDCAD:'USD/CAD',
-  USDCHF:'USD/CHF', NZDUSD:'NZD/USD', EURGBP:'EUR/GBP',
-};
-
-let currentSymbol = 'XAUUSD';
-
-// ═══════════════════════════════
-// FETCH CANDLES — auto source
-// ═══════════════════════════════
+// Bybit — free, no key, no geo-block, precise prices
 async function fetchCandles(symbol) {
   if (CRYPTO_SYMBOLS.includes(symbol)) {
-    await fetchCoinGecko(symbol);
+    await fetchCrypto(symbol);
   } else {
     await fetchTwelveData(symbol);
   }
 }
 
-// CoinGecko — free, no key needed, no geo-block
-async function fetchCoinGecko(symbol) {
-  const id = COINGECKO_MAP[symbol];
-  if (!id) throw new Error('Unknown crypto symbol: ' + symbol);
-  // Get 1 day of 15min data (CoinGecko free: hourly for >1day, so we use 1day = 15min intervals)
-  const url = `https://api.coingecko.com/api/v3/coins/${id}/ohlc?vs_currency=usd&days=2`;
-  const res = await fetch(url, { headers: { 'accept': 'application/json' } });
+async function fetchCrypto(symbol) {
+  const pair = symbol.replace('USD', 'USDT');
+  const url = `https://api.bybit.com/v5/market/kline?category=spot&symbol=${pair}&interval=15&limit=120`;
+  const res = await fetch(url);
   const data = await res.json();
-  if (!Array.isArray(data)) throw new Error('CoinGecko error');
-  // CoinGecko returns [timestamp, open, high, low, close] — 4h candles on free tier
-  // We use them as-is (less granular but correct direction)
-  candles = data.map(k => ({
+  if (data.retCode !== 0) throw new Error('Bybit error: ' + data.retMsg);
+  // Bybit returns newest first — reverse it
+  candles = data.result.list.reverse().map(k => ({
     open: +k[1], high: +k[2], low: +k[3], close: +k[4]
   }));
-  if (candles.length < 10) throw new Error('Not enough candles from CoinGecko');
+  if (candles.length < 10) throw new Error('Not enough candles from Bybit');
 }
 
 async function fetchTwelveData(symbol) {
