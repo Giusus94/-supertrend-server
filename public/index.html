@@ -167,6 +167,12 @@ select.cf-inp option{background:#06101a;}
       <div class="vote"><div class="vote-n" style="color:var(--dim)" id="vW">3</div><div class="vote-l">WAIT</div></div>
     </div>
     <div class="con-note" id="conNote">Il segnale viene inviato su Telegram quando il consenso raggiunge la soglia impostata.</div>
+    <div style="margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+      <div class="vote" style="padding:10px;"><div style="font-size:9px;letter-spacing:1px;color:var(--dim);margin-bottom:4px;">M15 TREND</div><div class="vote-n" id="m15trend" style="font-size:16px;">—</div></div>
+      <div class="vote" style="padding:10px;"><div style="font-size:9px;letter-spacing:1px;color:var(--dim);margin-bottom:4px;">H1 TREND</div><div class="vote-n" id="h1trend" style="font-size:16px;">—</div></div>
+      <div class="vote" style="padding:10px;"><div style="font-size:9px;letter-spacing:1px;color:var(--dim);margin-bottom:4px;">RSI (14)</div><div class="vote-n" id="rsiVal" style="font-size:16px;">—</div></div>
+      <div class="vote" style="padding:10px;"><div style="font-size:9px;letter-spacing:1px;color:var(--dim);margin-bottom:4px;">EMA200</div><div class="vote-n" id="emaVal" style="font-size:16px;">—</div></div>
+    </div>
   </div>
 
   <!-- STATS -->
@@ -282,8 +288,29 @@ async function fetchCandles(){
   try{
     const res=await fetch('/api/candles');
     const d=await res.json();
-    if(d.candles&&d.candles.length){cachedCandles=d.candles;updateStrategyCards(d.candles);}
+    if(d.candles&&d.candles.length){cachedCandles=d.candles;updateStrategyCards(d.candles);if(d.candlesH1&&d.candlesH1.length)updateH1Indicator(d.candlesH1);}
   }catch{}
+}
+
+
+function calcRSI(c, period=14){
+  if(c.length<period+1) return 50;
+  let gains=0,losses=0;
+  for(let i=c.length-period;i<c.length;i++){
+    const diff=c[i].close-c[i-1].close;
+    if(diff>0)gains+=diff;else losses+=Math.abs(diff);
+  }
+  const avgG=gains/period,avgL=losses/period;
+  if(avgL===0)return 100;
+  return 100-(100/(1+avgG/avgL));
+}
+
+function calcEMA(c, period){
+  if(c.length<period) return c[c.length-1].close;
+  const k=2/(period+1);
+  let ema=c.slice(0,period).reduce((s,x)=>s+x.close,0)/period;
+  for(let i=period;i<c.length;i++) ema=c[i].close*k+ema*(1-k);
+  return ema;
 }
 
 function updateStrategyCards(candles){
@@ -315,6 +342,46 @@ function updateStrategyCards(candles){
   if(buys>=consensus){cb.className='con-result buy';cb.textContent='▲ BUY — '+buys+'/3';}
   else if(sells>=consensus){cb.className='con-result sell';cb.textContent='▼ SELL — '+sells+'/3';}
   else{cb.className='con-result wait';cb.textContent='◈ NESSUN SEGNALE — BUY:'+buys+' SELL:'+sells;}
+
+  // Update M15 trend indicator
+  const m15dir = buys >= 2 ? 'BUY' : sells >= 2 ? 'SELL' : 'WAIT';
+  const m15El = document.getElementById('m15trend');
+  if(m15El){
+    m15El.textContent = m15dir === 'BUY' ? '▲ BUY' : m15dir === 'SELL' ? '▼ SELL' : '◈ MIX';
+    m15El.className = 'vote-n ' + (m15dir==='BUY'?'g':m15dir==='SELL'?'r':'');
+    m15El.style.color = m15dir==='WAIT'?'var(--dim)':'';
+  }
+
+  // RSI
+  const rsi = calcRSI(candles, 14);
+  const rsiEl = document.getElementById('rsiVal');
+  if(rsiEl){
+    rsiEl.textContent = rsi.toFixed(1);
+    rsiEl.style.color = rsi>70?'var(--red)':rsi<30?'var(--green)':'var(--text)';
+  }
+
+  // EMA200
+  const ema200 = calcEMA(candles, 200);
+  const price = candles[candles.length-1].close;
+  const emaEl = document.getElementById('emaVal');
+  if(emaEl){
+    const above = price > ema200;
+    emaEl.textContent = above ? '▲ SOPRA' : '▼ SOTTO';
+    emaEl.style.color = above ? 'var(--green)' : 'var(--red)';
+  }
+}
+
+// Called separately with H1 candles
+function updateH1Indicator(candlesH1){
+  if(!candlesH1||!candlesH1.length) return;
+  const st = calcST(candlesH1, 14, 3.0);
+  if(!st.length) return;
+  const h1dir = st[st.length-1].dir===1 ? 'BUY' : 'SELL';
+  const h1El = document.getElementById('h1trend');
+  if(h1El){
+    h1El.textContent = h1dir === 'BUY' ? '▲ BUY' : '▼ SELL';
+    h1El.className = 'vote-n ' + (h1dir==='BUY'?'g':'r');
+  }
 }
 
 function renderFeed(log){
