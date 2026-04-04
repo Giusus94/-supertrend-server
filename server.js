@@ -60,13 +60,37 @@ async function fetchCandles(symbol) {
 }
 
 async function fetchBybit(symbol) {
-  const pair = symbol.replace('USD','USDT');
-  const url = `https://api.bybit.com/v5/market/kline?category=spot&symbol=${pair}&interval=15&limit=120`;
-  const res = await fetch(url);
-  const data = await res.json();
-  if (!data || data.retCode !== 0) throw new Error('Bybit error: '+(data&&data.retMsg));
-  candles = data.result.list.reverse().map(k => ({ open:+k[1], high:+k[2], low:+k[3], close:+k[4] }));
-  if (candles.length < 10) throw new Error('Not enough candles from Bybit');
+  // Try KuCoin first (works from cloud servers)
+  try {
+    const pair = symbol.replace('USD', '-USDT');
+    const url = `https://api.kucoin.com/api/v1/market/candles?type=15min&symbol=${pair}&pageSize=120`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.code === '200000' && Array.isArray(data.data) && data.data.length > 10) {
+      // KuCoin returns newest first: [time, open, close, high, low, volume, turnover]
+      candles = data.data.reverse().map(k => ({
+        open:+k[1], high:+k[3], low:+k[4], close:+k[2]
+      }));
+      return;
+    }
+  } catch(e) { console.log('KuCoin failed, trying OKX...'); }
+
+  // Fallback: OKX
+  try {
+    const pair = symbol.replace('USD', '-USDT');
+    const url = `https://www.okx.com/api/v5/market/candles?instId=${pair}&bar=15m&limit=120`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.code === '0' && Array.isArray(data.data) && data.data.length > 10) {
+      // OKX returns newest first: [ts, open, high, low, close, ...]
+      candles = data.data.reverse().map(k => ({
+        open:+k[1], high:+k[2], low:+k[3], close:+k[4]
+      }));
+      return;
+    }
+  } catch(e) { console.log('OKX failed too'); }
+
+  throw new Error('All crypto APIs blocked. Try Twelve Data key for crypto too.');
 }
 
 async function fetchTwelveData(symbol) {
