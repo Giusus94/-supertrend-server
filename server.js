@@ -160,6 +160,239 @@ async function sendTelegram(text) {
   } catch(e) { return false; }
 }
 
+
+// ═══════════════════════════════
+// CHART GENERATION via QuickChart
+// ═══════════════════════════════
+function buildChartUrl(dir, price, sl, tp, stLine, ema200, rsi) {
+  const last30 = candles.slice(-30);
+  const closes = last30.map(c => +c.close.toFixed(2));
+  const labels = last30.map((_, i) => i === 29 ? 'NOW' : '');
+  const dec = price > 100 ? 2 : 5;
+
+  // SuperTrend line
+  const stLines = candles.slice(-30).map((_, i) => {
+    const st = calcST(candles.slice(0, candles.length - 29 + i), 14, 3.0);
+    return st.length ? +st[st.length-1].line.toFixed(dec) : null;
+  });
+
+  // EMA200 flat line
+  const ema200Line = closes.map(() => +ema200.toFixed(dec));
+
+  // SL and TP lines
+  const slLine = closes.map(() => +sl);
+  const tpLine = closes.map(() => +tp);
+
+  const color = dir === 'BUY' ? 'rgb(0,255,157)' : 'rgb(255,56,96)';
+
+  const chartConfig = {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Prezzo',
+          data: closes,
+          borderColor: '#00d4ff',
+          backgroundColor: 'rgba(0,212,255,0.08)',
+          borderWidth: 2,
+          pointRadius: closes.map((_, i) => i === 29 ? 6 : 0),
+          pointBackgroundColor: closes.map((_, i) => i === 29 ? color : 'transparent'),
+          fill: false,
+          tension: 0.1,
+        },
+        {
+          label: 'SuperTrend',
+          data: stLines,
+          borderColor: color,
+          borderWidth: 1.5,
+          borderDash: [4, 2],
+          pointRadius: 0,
+          fill: false,
+        },
+        {
+          label: 'EMA200',
+          data: ema200Line,
+          borderColor: '#ffcc00',
+          borderWidth: 1,
+          borderDash: [6, 3],
+          pointRadius: 0,
+          fill: false,
+        },
+        {
+          label: 'TP',
+          data: tpLine,
+          borderColor: 'rgba(0,255,157,0.6)',
+          borderWidth: 1,
+          borderDash: [3, 3],
+          pointRadius: 0,
+          fill: false,
+        },
+        {
+          label: 'SL',
+          data: slLine,
+          borderColor: 'rgba(255,56,96,0.6)',
+          borderWidth: 1,
+          borderDash: [3, 3],
+          pointRadius: 0,
+          fill: false,
+        },
+      ]
+    },
+    options: {
+      plugins: {
+        title: {
+          display: true,
+          text: `${dir === 'BUY' ? '▲ BUY' : '▼ SELL'} ${currentSymbol} @ ${price.toFixed(dec)} | RSI: ${rsi.toFixed(1)}`,
+          color: color,
+          font: { size: 14, weight: 'bold' }
+        },
+        legend: { labels: { color: '#9ec8de', font: { size: 10 } } }
+      },
+      scales: {
+        x: { ticks: { color: '#2a5470' }, grid: { color: '#0e2438' } },
+        y: { ticks: { color: '#9ec8de' }, grid: { color: '#0e2438' } }
+      },
+      backgroundColor: '#03070b',
+    }
+  };
+
+  const encoded = encodeURIComponent(JSON.stringify(chartConfig));
+  return `https://quickchart.io/chart?c=${encoded}&w=600&h=350&bkg=%2303070b`;
+}
+
+async function sendTelegramPhoto(caption, chartUrl) {
+  if (!TG_TOKEN||!TG_CHAT_ID) return false;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendPhoto`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        chat_id: TG_CHAT_ID,
+        photo: chartUrl,
+        caption,
+        parse_mode: 'HTML'
+      })
+    });
+    const d = await res.json();
+    if (!d.ok) {
+      // Fallback to text if photo fails
+      return sendTelegram(caption);
+    }
+    return d.ok;
+  } catch(e) { return sendTelegram(caption); }
+}
+
+
+// ═══════════════════════════════
+// SUPPORT & RESISTANCE
+// ═══════════════════════════════
+function calcSupportResistance(c, lookback=50) {
+  const recent = c.slice(-lookback);
+  const levels = [];
+
+  // Find swing highs and lows
+  for (let i=2; i<recent.length-2; i++) {
+    // Swing high
+    if (recent[i].high > recent[i-1].high &&
+        recent[i].high > recent[i-2].high &&
+        recent[i].high > recent[i+1].high &&
+        recent[i].high > recent[i+2].high) {
+      levels.push({ price: recent[i].high, type: 'R', strength: 1 });
+    }
+    // Swing low
+    if (recent[i].low < recent[i-1].low &&
+        recent[i].low < recent[i-2].low &&
+        recent[i].low < recent[i+1].low &&
+        recent[i].low < recent[i+2].low) {
+      levels.push({ price: recent[i].low, type: 'S', strength: 1 });
+    }
+  }
+
+  // Merge nearby levels (within 0.3%)
+  const merged = [];
+  levels.forEach(l => {
+    const nearby = merged.find(m => Math.abs(m.price-l.price)/l.price < 0.003);
+    if (nearby) nearby.strength++;
+    else merged.push({...l});
+  });
+
+  // Sort by strength and return top levels
+  return merged.sort((a,b) => b.strength-a.strength).slice(0,6);
+}
+
+function findNearestLevels(price, levels) {
+  const supports = levels.filter(l => l.type==='S' && l.price < price)
+    .sort((a,b) => b.price-a.price);
+  const resistances = levels.filter(l => l.type==='R' && l.price > price)
+    .sort((a,b) => a.price-b.price);
+  return {
+    nearestSupport: supports[0]||null,
+    nearestResistance: resistances[0]||null,
+    allLevels: levels
+  };
+}
+
+// ═══════════════════════════════
+// PRE-SIGNAL ALERT
+// ═══════════════════════════════
+let lastPreAlertTime = 0;
+let lastPreAlertDir = null;
+
+async function checkPreSignal(consensus=3) {
+  if (!candles.length || !isRunning) return;
+  // Only send pre-alert every 30 min max
+  if (Date.now()-lastPreAlertTime < 30*60*1000) return;
+
+  // Count M15 votes
+  let bv=0, sv=0;
+  strategies.forEach(s=>{
+    const st=calcST(candles,s.atr,s.mult);
+    if(!st.length) return;
+    if(st[st.length-1].dir===1) bv++; else sv++;
+  });
+
+  // Check H1
+  let h1Dir = null;
+  if (candlesH1.length>=2) {
+    const stH1=calcST(candlesH1,14,3.0);
+    if(stH1.length) h1Dir=stH1[stH1.length-1].dir===1?'BUY':'SELL';
+  }
+
+  const m15Dir = bv>=consensus?'BUY':sv>=consensus?'SELL':null;
+  if (!m15Dir || !h1Dir) return;
+
+  // Pre-alert: M15 has consensus but H1 is opposite — getting close
+  if (m15Dir !== h1Dir && m15Dir !== lastPreAlertDir) {
+    const price = candles[candles.length-1].close;
+    const rsi = calcRSI(candles,14);
+    const dec = price>100?2:5;
+
+    const msg =
+      `⚡ <b>Pre-Segnale — Allineamento in corso!</b>
+
+`+
+      `📊 <b>Simbolo:</b> ${currentSymbol}
+`+
+      `📈 <b>M15:</b> ${m15Dir} (${Math.max(bv,sv)}/3 strategie)
+`+
+      `⏰ <b>H1:</b> ${h1Dir} (ancora opposto)
+`+
+      `💰 <b>Prezzo attuale:</b> ${price.toFixed(dec)}
+`+
+      `📉 <b>RSI:</b> ${rsi.toFixed(1)}
+
+`+
+      `⏳ <i>Aspetta che H1 si allinei con M15 prima di entrare!</i>`;
+
+    const ok = await sendTelegram(msg);
+    if (ok) {
+      lastPreAlertTime = Date.now();
+      lastPreAlertDir = m15Dir;
+      console.log(`⚡ Pre-alert sent: M15=${m15Dir} H1=${h1Dir}`);
+    }
+  }
+}
+
 // ═══════════════════════════════
 // CHECK SIGNALS — with all filters
 // ═══════════════════════════════
@@ -243,6 +476,14 @@ async function checkSignals(consensus=3, cooldownMin=15) {
   const rr=(Math.abs(+tp-price)/Math.abs(price-+sl)).toFixed(2);
   const time=new Date().toUTCString().slice(0,25);
 
+  // Calculate S/R levels
+  const srLevels = calcSupportResistance(candles, 50);
+  const { nearestSupport, nearestResistance } = findNearestLevels(price, srLevels);
+  const dec2 = price>100?2:5;
+  const srText = 
+    (nearestResistance ? `🔴 Resistenza: ${nearestResistance.price.toFixed(dec2)} (forza: ${nearestResistance.strength})\n` : '') +
+    (nearestSupport    ? `🟢 Supporto:   ${nearestSupport.price.toFixed(dec2)} (forza: ${nearestSupport.strength})\n` : '');
+
   const msg=
     `${dir==='BUY'?'🟢':'🔴'} <b>SuperTrend Signal</b>\n\n`+
     `📊 <b>Simbolo:</b> ${currentSymbol}\n`+
@@ -251,7 +492,9 @@ async function checkSignals(consensus=3, cooldownMin=15) {
     `🛑 <b>SL:</b> ${sl}\n`+
     `🎯 <b>TP:</b> ${tp}\n`+
     `⚖️ <b>R:R:</b> 1:${rr}\n\n`+
-    `✅ <b>Filtri passati:</b>\n`+
+    `📐 <b>Livelli chiave:</b>\n`+
+    srText+
+    `\n✅ <b>Filtri passati:</b>\n`+
     `• SuperTrend M15: ${bv>sv?bv:sv}/3\n`+
     `• H1 confermato: ✓\n`+
     `• EMA200: ✓ (prezzo ${dir==='BUY'?'sopra':'sotto'})\n`+
@@ -260,7 +503,9 @@ async function checkSignals(consensus=3, cooldownMin=15) {
     `⏰ <b>Ora:</b> ${time} UTC\n\n`+
     `⚠️ <i>Non è consulenza finanziaria.</i>`;
 
-  const ok=await sendTelegram(msg);
+  // Build chart and send as photo
+  const chartUrl = buildChartUrl(dir, price, +sl, +tp, 0, ema200, rsi);
+  const ok = await sendTelegramPhoto(msg, chartUrl);
   if (ok) {
     stats.total++; if (dir==='BUY') stats.buys++; else stats.sells++;
     stats.lastSignal=dir;
@@ -278,7 +523,7 @@ async function checkSignals(consensus=3, cooldownMin=15) {
 function startLoop(refreshSec=60, consensus=3, cooldown=15) {
   if (refreshInterval) clearInterval(refreshInterval);
   refreshInterval=setInterval(async()=>{
-    try { await fetchCandles(currentSymbol); await checkSignals(consensus,cooldown); }
+    try { await fetchCandles(currentSymbol); await checkSignals(consensus,cooldown); await checkPreSignal(consensus); }
     catch(e) { console.error('Loop error:',e.message); }
   }, refreshSec*1000);
 }
