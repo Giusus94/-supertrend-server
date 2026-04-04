@@ -175,6 +175,15 @@ select.cf-inp option{background:#06101a;}
     </div>
   </div>
 
+  <!-- S/R LEVELS -->
+  <div class="card" id="srCard">
+    <div class="card-head">SUPPORTO &amp; RESISTENZA AUTOMATICI</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;" id="srLevels">
+      <div style="color:var(--dim);font-size:10px;grid-column:1/-1;text-align:center;padding:10px;">Caricamento livelli...</div>
+    </div>
+  </div>
+
+
   <!-- STATS -->
   <div class="card">
     <div class="card-head">STATISTICHE SEGNALI</div>
@@ -288,10 +297,51 @@ async function fetchCandles(){
   try{
     const res=await fetch('/api/candles');
     const d=await res.json();
-    if(d.candles&&d.candles.length){cachedCandles=d.candles;updateStrategyCards(d.candles);if(d.candlesH1&&d.candlesH1.length)updateH1Indicator(d.candlesH1);}
+    if(d.candles&&d.candles.length){cachedCandles=d.candles;updateStrategyCards(d.candles);updateSRLevels(d.candles);if(d.candlesH1&&d.candlesH1.length)updateH1Indicator(d.candlesH1);}
   }catch{}
 }
 
+
+
+function calcSR(candles, lookback=50) {
+  const recent = candles.slice(-lookback);
+  const levels = [];
+  for (let i=2;i<recent.length-2;i++) {
+    if (recent[i].high>recent[i-1].high&&recent[i].high>recent[i-2].high&&
+        recent[i].high>recent[i+1].high&&recent[i].high>recent[i+2].high)
+      levels.push({price:recent[i].high,type:'R',strength:1});
+    if (recent[i].low<recent[i-1].low&&recent[i].low<recent[i-2].low&&
+        recent[i].low<recent[i+1].low&&recent[i].low<recent[i+2].low)
+      levels.push({price:recent[i].low,type:'S',strength:1});
+  }
+  const merged=[];
+  levels.forEach(l=>{
+    const nb=merged.find(m=>Math.abs(m.price-l.price)/l.price<0.003);
+    if(nb) nb.strength++; else merged.push({...l});
+  });
+  return merged.sort((a,b)=>b.strength-a.strength).slice(0,6);
+}
+
+function updateSRLevels(candles) {
+  const el = document.getElementById('srLevels');
+  if (!el||!candles.length) return;
+  const price = candles[candles.length-1].close;
+  const dec = price>100?2:5;
+  const levels = calcSR(candles);
+  if (!levels.length) { el.innerHTML='<div style="color:var(--dim);font-size:10px;grid-column:1/-1;text-align:center;padding:10px;">Nessun livello trovato</div>'; return; }
+  const sorted = levels.sort((a,b)=>b.price-a.price);
+  el.innerHTML = sorted.map(l=>{
+    const isR = l.type==='R';
+    const dist = ((l.price-price)/price*100).toFixed(2);
+    const distStr = (isR?'+':'')+dist+'%';
+    const isNear = Math.abs(+dist)<0.5;
+    return `<div style="background:#04101a;border:1px solid ${isR?'#ff386040':'#00ff9d40'};border-left:3px solid ${isR?'var(--red)':'var(--green)'};padding:8px 10px;border-radius:3px;${isNear?'box-shadow:0 0 8px '+(isR?'#ff386050':'#00ff9d50'):''}">
+      <div style="font-size:9px;color:${isR?'var(--red)':'var(--green)'};letter-spacing:1px;margin-bottom:2px;">${isR?'RESISTENZA':'SUPPORTO'} ${isNear?'⚡ VICINO':''}</div>
+      <div style="font-family:Barlow Condensed;font-weight:900;font-size:16px;color:var(--bright)">${l.price.toFixed(dec)}</div>
+      <div style="font-size:9px;color:var(--dim)">Distanza: ${distStr} · Forza: ${'★'.repeat(Math.min(l.strength,5))}</div>
+    </div>`;
+  }).join('');
+}
 
 function calcRSI(c, period=14){
   if(c.length<period+1) return 50;
