@@ -472,3 +472,16 @@ app.listen(PORT,()=>{
     }
   })();
 });
+
+// ═══════════════════════════════
+// KEEP-ALIVE — prevent Render sleep
+// ═══════════════════════════════
+const RENDER_URL = process.env.RENDER_URL || '';
+if (RENDER_URL) {
+  setInterval(async () => {
+    try {
+      await fetch(`${RENDER_URL}/api/status`);
+      console.log('💓 Keep-alive ping sent');
+    } catch(e) { console.log('Keep-alive failed:', e.message); }
+  }, 14 * 60 * 1000); // every 14 minutes
+}
