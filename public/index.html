@@ -202,19 +202,18 @@ select.cf-inp option{background:#06101a;}
     <div class="ctrl-row">
       <div class="cf">
         <div class="cf-lbl">SIMBOLO</div>
-        <select class="cf-inp" id="ctrlSym">
+        <select class="cf-inp" id="ctrlSym" multiple style="height:80px;font-size:11px;">
           <optgroup label="── FOREX / GOLD">
             <option selected>XAUUSD</option><option>XAGUSD</option>
-            <option>EURUSD</option><option>GBPUSD</option><option>USDJPY</option>
+            <option selected>EURUSD</option><option>GBPUSD</option><option>USDJPY</option>
             <option>GBPJPY</option><option>AUDUSD</option><option>USDCAD</option>
-            <option>USDCHF</option><option>NZDUSD</option><option>EURGBP</option>
           </optgroup>
           <optgroup label="── CRYPTO (24/7)">
-            <option>BTCUSD</option><option>ETHUSD</option><option>SOLUSD</option>
+            <option selected>BTCUSD</option><option>ETHUSD</option><option>SOLUSD</option>
             <option>XRPUSD</option><option>BNBUSD</option><option>ADAUSD</option>
-            <option>DOTUSD</option><option>MATICUSD</option>
           </optgroup>
         </select>
+        <div style="font-size:9px;color:var(--dim);margin-top:3px;">Tieni CTRL per selezionare più simboli (max 3)</div>
       </div>
       <div class="cf">
         <div class="cf-lbl">CONSENSO</div>
@@ -267,10 +266,19 @@ async function fetchStatus(){
     // Status bar
     document.getElementById('stRun').textContent=d.isRunning?'IN ESECUZIONE':'FERMO';
     document.getElementById('stRun').style.color=d.isRunning?'var(--green)':'var(--dim)';
-    document.getElementById('stSym').textContent=d.symbol;
-    document.getElementById('stPrice').textContent=d.lastPrice?(d.lastPrice>100?d.lastPrice.toFixed(2):d.lastPrice.toFixed(5)):'—';
-    document.getElementById('stCandles').textContent=d.candleCount;
-    document.getElementById('stLast').textContent=d.stats.lastSignal;
+    document.getElementById('stSym').textContent=(d.activeSymbols||[]).join(' · ');
+    const firstSym=d.activeSymbols&&d.activeSymbols[0];
+    const firstSt=firstSym&&d.perSymbol&&d.perSymbol[firstSym];
+    document.getElementById('stPrice').textContent=firstSt&&firstSt.lastPrice?(firstSt.lastPrice>100?firstSt.lastPrice.toFixed(2):firstSt.lastPrice.toFixed(5)):'—';
+    document.getElementById('stCandles').textContent=firstSt?firstSt.candleCount:'—';
+    document.getElementById('stLast').textContent=d.globalStats?d.globalStats.total+' segnali':'—';
+    // Update per-symbol filter status
+    if(d.perSymbol){
+      Object.entries(d.perSymbol).forEach(([sym,data])=>{
+        const el=document.getElementById('statFilter');
+        if(el&&data.stats)el.textContent=Object.entries(d.perSymbol).map(([s,d2])=>`${s}: ${d2.stats.lastFilter||'—'}`).join(' | ');
+      });
+    }
     // Stats
     document.getElementById('statTotal').textContent=d.stats.total;
     document.getElementById('statBuys').textContent=d.stats.buys;
@@ -283,7 +291,7 @@ async function fetchStatus(){
     document.getElementById('tgLbl').textContent=d.tgConnected?'TG ✓':'TG ✗';
     document.getElementById('tgLbl').style.color=d.tgConnected?'var(--tg)':'var(--red)';
     // Feed
-    if(d.signalLog.length!==lastLogCount){lastLogCount=d.signalLog.length;renderFeed(d.signalLog);}
+    if(d.globalLog&&d.globalLog.length!==lastLogCount){lastLogCount=d.globalLog.length;renderFeed(d.globalLog);}
     // Fetch candles for strategy display
     fetchCandles();
   }catch(e){
@@ -441,7 +449,9 @@ function renderFeed(log){
 }
 
 async function startEA(){
-  const body={symbol:document.getElementById('ctrlSym').value,consensus:parseInt(document.getElementById('ctrlConsensus').value),cooldown:parseInt(document.getElementById('ctrlCooldown').value),refresh:parseInt(document.getElementById('ctrlRefresh').value)};
+  const sel=document.getElementById('ctrlSym');
+  const symbols=Array.from(sel.selectedOptions).map(o=>o.value).slice(0,3);
+  const body={symbols,consensus:parseInt(document.getElementById('ctrlConsensus').value),cooldown:parseInt(document.getElementById('ctrlCooldown').value),refresh:parseInt(document.getElementById('ctrlRefresh').value)};
   showResult('loading','⏳ Avvio...');
   const res=await fetch('/api/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const d=await res.json();
