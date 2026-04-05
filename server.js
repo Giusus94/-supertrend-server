@@ -1,6 +1,6 @@
 const express = require('express');
 const fetch = require('node-fetch');
-const yahooFinance = require('yahoo-finance2').default;
+let yahooFinance; (async()=>{ try{ yahooFinance=(await import('yahoo-finance2')).default; }catch(e){ console.error('yahoo-finance2 load error:',e.message); } })();
 
 const app = express();
 app.use(express.json());
