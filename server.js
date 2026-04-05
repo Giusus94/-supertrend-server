@@ -1,5 +1,6 @@
 const express = require('express');
 const fetch = require('node-fetch');
+const yahooFinance = require('yahoo-finance2').default;
 
 const app = express();
 app.use(express.json());
@@ -41,6 +42,30 @@ const TD_MAP = {
   EURUSD:'EUR/USD', GBPUSD:'GBP/USD', USDJPY:'USD/JPY',
   GBPJPY:'GBP/JPY', AUDUSD:'AUD/USD', USDCAD:'USD/CAD',
   USDCHF:'USD/CHF', NZDUSD:'NZD/USD', EURGBP:'EUR/GBP',
+};
+
+// Stock symbols — Yahoo Finance tickers
+const STOCK_SYMBOLS = [
+  // USA
+  'AAPL','TSLA','NVDA','AMZN','MSFT','GOOGL','META','NFLX','AMD','INTC',
+  // Europa
+  'ENI.MI','ENEL.MI','RACE.MI','ISP.MI','UCG.MI', // Italia
+  'SIE.DE','BMW.DE','VOW3.DE',                     // Germania
+  'LVMH.PA','TTE.PA',                              // Francia
+  'SHEL.L','HSBA.L',                               // UK
+];
+
+const YAHOO_MAP = {
+  // USA stocks use ticker directly
+  AAPL:'AAPL', TSLA:'TSLA', NVDA:'NVDA', AMZN:'AMZN',
+  MSFT:'MSFT', GOOGL:'GOOGL', META:'META', NFLX:'NFLX',
+  AMD:'AMD', INTC:'INTC',
+  // European stocks
+  'ENI.MI':'ENI.MI', 'ENEL.MI':'ENEL.MI', 'RACE.MI':'RACE.MI',
+  'ISP.MI':'ISP.MI', 'UCG.MI':'UCG.MI',
+  'SIE.DE':'SIE.DE', 'BMW.DE':'BMW.DE', 'VOW3.DE':'VOW3.DE',
+  'LVMH.PA':'MC.PA', 'TTE.PA':'TTE.PA',
+  'SHEL.L':'SHEL.L', 'HSBA.L':'HSBA.L',
 };
 
 // ═══════════════════════════════
@@ -127,9 +152,50 @@ async function fetchCandles(symbol) {
   if(CRYPTO_SYMBOLS.includes(symbol)){
     await fetchKuCoin(symbol,'15min',120,false,st);
     await fetchKuCoin(symbol,'1hour',100,true,st);
+  } else if(STOCK_SYMBOLS.includes(symbol)||YAHOO_MAP[symbol]) {
+    await fetchYahoo(symbol,'15m',120,false,st);
+    await fetchYahoo(symbol,'1h',100,true,st);
   } else {
     await fetchTD(symbol,'15min',200,false,st);
     await fetchTD(symbol,'1h',100,true,st);
+  }
+}
+
+// Yahoo Finance — stocks USA and Europe
+async function fetchYahoo(symbol, interval, limit, isH1, st) {
+  try {
+    const ticker = YAHOO_MAP[symbol] || symbol;
+    const period2 = new Date();
+    const period1 = new Date();
+    // Go back enough to get enough candles
+    period1.setDate(period1.getDate() - (isH1 ? 30 : 7));
+
+    const result = await yahooFinance.chart(ticker, {
+      period1: period1.toISOString().split('T')[0],
+      period2: period2.toISOString().split('T')[0],
+      interval: interval, // '15m' or '1h'
+    });
+
+    if(!result||!result.quotes||!result.quotes.length) throw new Error('No data from Yahoo');
+
+    const parsed = result.quotes
+      .filter(q => q.open && q.high && q.low && q.close)
+      .slice(-limit)
+      .map(q => ({
+        open:  +q.open.toFixed(4),
+        high:  +q.high.toFixed(4),
+        low:   +q.low.toFixed(4),
+        close: +q.close.toFixed(4),
+        vol:   q.volume || 0,
+      }));
+
+    if(parsed.length < 10) throw new Error('Not enough candles from Yahoo');
+    if(isH1) st.candlesH1 = parsed; else st.candles = parsed;
+    console.log(`📈 Yahoo ${ticker} ${interval}: ${parsed.length} candles`);
+  } catch(e) {
+    console.error(`Yahoo error ${symbol}:`, e.message);
+    // Fallback to TD if available
+    if(TD_KEY) await fetchTD(symbol, isH1?'1h':'15min', limit, isH1, st);
   }
 }
 
