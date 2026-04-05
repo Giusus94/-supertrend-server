@@ -1,6 +1,5 @@
 const express = require(‘express’);
 const fetch = require(‘node-fetch’);
-let yahooFinance; (async()=>{ try{ yahooFinance=(await import(‘yahoo-finance2’)).default; }catch(e){ console.error(‘yahoo-finance2 load error:’,e.message); } })();
 
 const app = express();
 app.use(express.json());
@@ -10,33 +9,19 @@ const PORT = process.env.PORT || 3000;
 const TG_TOKEN   = process.env.TG_TOKEN   || ‘’;
 const TG_CHAT_ID = process.env.TG_CHAT_ID || ‘’;
 const TD_KEY     = process.env.TD_KEY     || ‘’;
+const RENDER_URL = process.env.RENDER_URL || ‘’;
 
 // ═══════════════════════════════
-// MULTI-SYMBOL STATE
+// SYMBOL CONFIG
 // ═══════════════════════════════
-const DEFAULT_SYMBOLS = [‘XAUUSD’, ‘BTCUSD’, ‘EURUSD’];
-
-let isRunning       = false;
-let activeSymbols   = […DEFAULT_SYMBOLS];
-let refreshInterval = null;
-
-// Per-symbol state
-const symbolState = {};
-DEFAULT_SYMBOLS.forEach(s => {
-symbolState[s] = {
-candles: [], candlesH1: [],
-lastDirection: null, lastSignalTime: 0,
-lastPreAlertTime: 0, lastPreAlertDir: null,
-stats: { total:0, buys:0, sells:0, lastSignal:’—’, lastFilter:’—’ },
-signalLog: [],
-};
-});
-
-// Global stats
-let globalStats = { total:0, buys:0, sells:0 };
-let globalLog   = [];
-
 const CRYPTO_SYMBOLS = [‘BTCUSD’,‘ETHUSD’,‘BNBUSD’,‘SOLUSD’,‘XRPUSD’,‘ADAUSD’,‘DOTUSD’,‘MATICUSD’];
+
+const STOCK_SYMBOLS = [
+‘AAPL’,‘TSLA’,‘NVDA’,‘AMZN’,‘MSFT’,‘GOOGL’,‘META’,‘NFLX’,‘AMD’,
+‘ENI.MI’,‘ENEL.MI’,‘RACE.MI’,‘ISP.MI’,‘UCG.MI’,
+‘SIE.DE’,‘BMW.DE’,‘VOW3.DE’,‘MC.PA’,‘TTE.PA’,‘SHEL.L’,‘HSBA.L’,
+];
+
 const TD_MAP = {
 XAUUSD:‘XAU/USD’, XAGUSD:‘XAG/USD’,
 EURUSD:‘EUR/USD’, GBPUSD:‘GBP/USD’, USDJPY:‘USD/JPY’,
@@ -44,29 +29,27 @@ GBPJPY:‘GBP/JPY’, AUDUSD:‘AUD/USD’, USDCAD:‘USD/CAD’,
 USDCHF:‘USD/CHF’, NZDUSD:‘NZD/USD’, EURGBP:‘EUR/GBP’,
 };
 
-// Stock symbols — Yahoo Finance tickers
-const STOCK_SYMBOLS = [
-// USA
-‘AAPL’,‘TSLA’,‘NVDA’,‘AMZN’,‘MSFT’,‘GOOGL’,‘META’,‘NFLX’,‘AMD’,‘INTC’,
-// Europa
-‘ENI.MI’,‘ENEL.MI’,‘RACE.MI’,‘ISP.MI’,‘UCG.MI’, // Italia
-‘SIE.DE’,‘BMW.DE’,‘VOW3.DE’,                     // Germania
-‘LVMH.PA’,‘TTE.PA’,                              // Francia
-‘SHEL.L’,‘HSBA.L’,                               // UK
-];
+// ═══════════════════════════════
+// STATE
+// ═══════════════════════════════
+const DEFAULT_SYMBOLS = [‘XAUUSD’,‘BTCUSD’,‘EURUSD’];
+let isRunning      = false;
+let activeSymbols  = […DEFAULT_SYMBOLS];
+let refreshInterval = null;
+let globalStats    = { total:0, buys:0, sells:0 };
+let globalLog      = [];
 
-const YAHOO_MAP = {
-// USA stocks use ticker directly
-AAPL:‘AAPL’, TSLA:‘TSLA’, NVDA:‘NVDA’, AMZN:‘AMZN’,
-MSFT:‘MSFT’, GOOGL:‘GOOGL’, META:‘META’, NFLX:‘NFLX’,
-AMD:‘AMD’, INTC:‘INTC’,
-// European stocks
-‘ENI.MI’:‘ENI.MI’, ‘ENEL.MI’:‘ENEL.MI’, ‘RACE.MI’:‘RACE.MI’,
-‘ISP.MI’:‘ISP.MI’, ‘UCG.MI’:‘UCG.MI’,
-‘SIE.DE’:‘SIE.DE’, ‘BMW.DE’:‘BMW.DE’, ‘VOW3.DE’:‘VOW3.DE’,
-‘LVMH.PA’:‘MC.PA’, ‘TTE.PA’:‘TTE.PA’,
-‘SHEL.L’:‘SHEL.L’, ‘HSBA.L’:‘HSBA.L’,
+const symbolState = {};
+function initSymbol(s) {
+symbolState[s] = {
+candles:[], candlesH1:[],
+lastDirection:null, lastSignalTime:0,
+lastPreAlertTime:0, lastPreAlertDir:null,
+stats:{ total:0, buys:0, sells:0, lastSignal:’—’, lastFilter:’—’ },
+signalLog:[],
 };
+}
+DEFAULT_SYMBOLS.forEach(initSymbol);
 
 // ═══════════════════════════════
 // INDICATORS
@@ -95,15 +78,15 @@ return res;
 }
 
 function calcRSI(c, period=14) {
-if(c.length<period+1) return 50;
+if(c.length<period+1)return 50;
 let gains=0,losses=0;
 for(let i=c.length-period;i<c.length;i++){
-const diff=c[i].close-c[i-1].close;
-if(diff>0)gains+=diff;else losses+=Math.abs(diff);
+const d=c[i].close-c[i-1].close;
+if(d>0)gains+=d;else losses+=Math.abs(d);
 }
-const avgG=gains/period,avgL=losses/period;
-if(avgL===0)return 100;
-return 100-(100/(1+avgG/avgL));
+const ag=gains/period,al=losses/period;
+if(al===0)return 100;
+return 100-(100/(1+ag/al));
 }
 
 function calcEMA(c, period) {
@@ -114,20 +97,17 @@ for(let i=period;i<c.length;i++) ema=c[i].close*k+ema*(1-k);
 return ema;
 }
 
-function calcAvgVolume(c, period=20) {
+function calcAvgVolume(c,period=20){
 return c.slice(-period).reduce((s,x)=>s+(x.vol||0),0)/period;
 }
 
-function calcSupportResistance(c, lookback=50) {
-const recent=c.slice(-lookback);
-const levels=[];
-for(let i=2;i<recent.length-2;i++){
-if(recent[i].high>recent[i-1].high&&recent[i].high>recent[i-2].high&&
-recent[i].high>recent[i+1].high&&recent[i].high>recent[i+2].high)
-levels.push({price:recent[i].high,type:‘R’,strength:1});
-if(recent[i].low<recent[i-1].low&&recent[i].low<recent[i-2].low&&
-recent[i].low<recent[i+1].low&&recent[i].low<recent[i+2].low)
-levels.push({price:recent[i].low,type:‘S’,strength:1});
+function calcSR(c,lookback=50){
+const r=c.slice(-lookback),levels=[];
+for(let i=2;i<r.length-2;i++){
+if(r[i].high>r[i-1].high&&r[i].high>r[i-2].high&&r[i].high>r[i+1].high&&r[i].high>r[i+2].high)
+levels.push({price:r[i].high,type:‘R’,strength:1});
+if(r[i].low<r[i-1].low&&r[i].low<r[i-2].low&&r[i].low<r[i+1].low&&r[i].low<r[i+2].low)
+levels.push({price:r[i].low,type:‘S’,strength:1});
 }
 const merged=[];
 levels.forEach(l=>{
@@ -137,97 +117,38 @@ if(nb)nb.strength++;else merged.push({…l});
 return merged.sort((a,b)=>b.strength-a.strength).slice(0,6);
 }
 
-function findNearestLevels(price, levels) {
-const supports=levels.filter(l=>l.type===‘S’&&l.price<price).sort((a,b)=>b.price-a.price);
-const resistances=levels.filter(l=>l.type===‘R’&&l.price>price).sort((a,b)=>a.price-b.price);
-return {nearestSupport:supports[0]||null,nearestResistance:resistances[0]||null};
-}
-
 // ═══════════════════════════════
-// FETCH CANDLES
+// FETCH — Crypto (KuCoin/OKX)
 // ═══════════════════════════════
-async function fetchCandles(symbol) {
-const st = symbolState[symbol];
-if (!st) return;
-if(CRYPTO_SYMBOLS.includes(symbol)){
-await fetchKuCoin(symbol,‘15min’,120,false,st);
-await fetchKuCoin(symbol,‘1hour’,100,true,st);
-} else if(STOCK_SYMBOLS.includes(symbol)||YAHOO_MAP[symbol]) {
-await fetchYahoo(symbol,‘15m’,120,false,st);
-await fetchYahoo(symbol,‘1h’,100,true,st);
-} else {
-await fetchTD(symbol,‘15min’,200,false,st);
-await fetchTD(symbol,‘1h’,100,true,st);
-}
-}
-
-// Yahoo Finance — stocks USA and Europe
-async function fetchYahoo(symbol, interval, limit, isH1, st) {
-try {
-const ticker = YAHOO_MAP[symbol] || symbol;
-const period2 = new Date();
-const period1 = new Date();
-// Go back enough to get enough candles
-period1.setDate(period1.getDate() - (isH1 ? 30 : 7));
-
-```
-const result = await yahooFinance.chart(ticker, {
-  period1: period1.toISOString().split('T')[0],
-  period2: period2.toISOString().split('T')[0],
-  interval: interval, // '15m' or '1h'
-});
-
-if(!result||!result.quotes||!result.quotes.length) throw new Error('No data from Yahoo');
-
-const parsed = result.quotes
-  .filter(q => q.open && q.high && q.low && q.close)
-  .slice(-limit)
-  .map(q => ({
-    open:  +q.open.toFixed(4),
-    high:  +q.high.toFixed(4),
-    low:   +q.low.toFixed(4),
-    close: +q.close.toFixed(4),
-    vol:   q.volume || 0,
-  }));
-
-if(parsed.length < 10) throw new Error('Not enough candles from Yahoo');
-if(isH1) st.candlesH1 = parsed; else st.candles = parsed;
-console.log(`📈 Yahoo ${ticker} ${interval}: ${parsed.length} candles`);
-```
-
-} catch(e) {
-console.error(`Yahoo error ${symbol}:`, e.message);
-// Fallback to TD if available
-if(TD_KEY) await fetchTD(symbol, isH1?‘1h’:‘15min’, limit, isH1, st);
-}
-}
-
-async function fetchKuCoin(symbol,interval,limit,isH1,st) {
-try {
+async function fetchKuCoin(symbol,interval,limit,isH1,st){
+try{
 const pair=symbol.replace(‘USD’,’-USDT’);
 const url=`https://api.kucoin.com/api/v1/market/candles?type=${interval}&symbol=${pair}&pageSize=${limit}`;
 const res=await fetch(url);
 const data=await res.json();
 if(data.code===‘200000’&&Array.isArray(data.data)&&data.data.length>10){
-const parsed=data.data.reverse().map(k=>({open:+k[1],high:+k[3],low:+k[4],close:+k[2],vol:+k[5]}));
-if(isH1)st.candlesH1=parsed;else st.candles=parsed;
+const p=data.data.reverse().map(k=>({open:+k[1],high:+k[3],low:+k[4],close:+k[2],vol:+k[5]}));
+if(isH1)st.candlesH1=p;else st.candles=p;
 return;
 }
-} catch(e){}
-try {
+}catch(e){}
+try{
 const pair=symbol.replace(‘USD’,’-USDT’);
 const bar=isH1?‘1H’:‘15m’;
 const url=`https://www.okx.com/api/v5/market/candles?instId=${pair}&bar=${bar}&limit=${limit}`;
 const res=await fetch(url);
 const data=await res.json();
 if(data.code===‘0’&&Array.isArray(data.data)&&data.data.length>10){
-const parsed=data.data.reverse().map(k=>({open:+k[1],high:+k[2],low:+k[3],close:+k[4],vol:+k[5]}));
-if(isH1)st.candlesH1=parsed;else st.candles=parsed;
+const p=data.data.reverse().map(k=>({open:+k[1],high:+k[2],low:+k[3],close:+k[4],vol:+k[5]}));
+if(isH1)st.candlesH1=p;else st.candles=p;
 }
-} catch(e){}
+}catch(e){}
 }
 
-async function fetchTD(symbol,interval,limit,isH1,st) {
+// ═══════════════════════════════
+// FETCH — Forex/Gold (Twelve Data)
+// ═══════════════════════════════
+async function fetchTD(symbol,interval,limit,isH1,st){
 if(!TD_KEY){
 let p=symbol.includes(‘XAU’)?2340:symbol.includes(‘XAG’)?28:1.082;
 const arr=[];
@@ -244,27 +165,88 @@ const url=`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sy
 const res=await fetch(url);
 const data=await res.json();
 if(data.status===‘error’)throw new Error(data.message);
-const parsed=data.values.reverse().map(c=>({open:+c.open,high:+c.high,low:+c.low,close:+c.close,vol:+(c.volume||0)}));
+const p=data.values.reverse().map(c=>({open:+c.open,high:+c.high,low:+c.low,close:+c.close,vol:+(c.volume||0)}));
+if(isH1)st.candlesH1=p;else st.candles=p;
+}
+
+// ═══════════════════════════════
+// FETCH — Stocks (Yahoo Finance query2)
+// ═══════════════════════════════
+async function fetchYahoo(symbol,interval,limit,isH1,st){
+try{
+const range = isH1 ? ‘1mo’ : ‘5d’;
+const intv  = isH1 ? ‘1h’  : ‘15m’;
+const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${intv}&range=${range}&includePrePost=false`;
+const res = await fetch(url, {
+headers:{
+‘User-Agent’:‘Mozilla/5.0’,
+‘Accept’:‘application/json’,
+}
+});
+const data = await res.json();
+const chart = data&&data.chart&&data.chart.result&&data.chart.result[0];
+if(!chart)throw new Error(’No Yahoo data for ’+symbol);
+const timestamps = chart.timestamp;
+const q = chart.indicators.quote[0];
+const parsed = timestamps.map((ts,i)=>({
+open:  q.open[i]  ? +q.open[i].toFixed(4)  : null,
+high:  q.high[i]  ? +q.high[i].toFixed(4)  : null,
+low:   q.low[i]   ? +q.low[i].toFixed(4)   : null,
+close: q.close[i] ? +q.close[i].toFixed(4) : null,
+vol:   q.volume[i]||0,
+})).filter(c=>c.open&&c.high&&c.low&&c.close).slice(-limit);
+if(parsed.length<10)throw new Error(‘Not enough Yahoo candles’);
 if(isH1)st.candlesH1=parsed;else st.candles=parsed;
+console.log(`📈 Yahoo ${symbol} ${intv}: ${parsed.length} candles`);
+}catch(e){
+console.error(‘Yahoo error ‘+symbol+’:’,e.message);
+// Demo fallback
+let p=100;
+const arr=[];
+for(let i=0;i<limit;i++){
+const ch=(Math.random()-.488)*p*.01,o=p,c=p+ch;
+arr.push({open:o,high:Math.max(o,c)*1.002,low:Math.min(o,c)*.998,close:c,vol:Math.random()*1000000});
+p=c;
+}
+if(isH1)st.candlesH1=arr;else st.candles=arr;
+}
+}
+
+// ═══════════════════════════════
+// FETCH CANDLES — auto source
+// ═══════════════════════════════
+async function fetchCandles(symbol){
+const st=symbolState[symbol];
+if(!st)return;
+if(CRYPTO_SYMBOLS.includes(symbol)){
+await fetchKuCoin(symbol,‘15min’,120,false,st);
+await fetchKuCoin(symbol,‘1hour’,100,true,st);
+} else if(STOCK_SYMBOLS.includes(symbol)){
+await fetchYahoo(symbol,‘15m’,120,false,st);
+await fetchYahoo(symbol,‘1h’,100,true,st);
+} else {
+await fetchTD(symbol,‘15min’,200,false,st);
+await fetchTD(symbol,‘1h’,100,true,st);
+}
 }
 
 // ═══════════════════════════════
 // TELEGRAM
 // ═══════════════════════════════
-async function sendTelegram(text) {
+async function sendTelegram(text){
 if(!TG_TOKEN||!TG_CHAT_ID)return false;
-try {
+try{
 const res=await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`,{
 method:‘POST’,headers:{‘Content-Type’:‘application/json’},
 body:JSON.stringify({chat_id:TG_CHAT_ID,text,parse_mode:‘HTML’})
 });
 const d=await res.json();return d.ok;
-} catch(e){return false;}
+}catch(e){return false;}
 }
 
-async function sendTelegramPhoto(caption,chartUrl) {
+async function sendTelegramPhoto(caption,chartUrl){
 if(!TG_TOKEN||!TG_CHAT_ID)return false;
-try {
+try{
 const res=await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendPhoto`,{
 method:‘POST’,headers:{‘Content-Type’:‘application/json’},
 body:JSON.stringify({chat_id:TG_CHAT_ID,photo:chartUrl,caption,parse_mode:‘HTML’})
@@ -272,37 +254,34 @@ body:JSON.stringify({chat_id:TG_CHAT_ID,photo:chartUrl,caption,parse_mode:‘HTM
 const d=await res.json();
 if(!d.ok)return sendTelegram(caption);
 return d.ok;
-} catch(e){return sendTelegram(caption);}
+}catch(e){return sendTelegram(caption);}
 }
 
 // ═══════════════════════════════
 // CHART
 // ═══════════════════════════════
-function buildChartUrl(symbol, dir, price, sl, tp, ema50, rsi, candles) {
+function buildChartUrl(symbol,dir,price,sl,tp,ema50,rsi,candles){
 const last30=candles.slice(-30);
-const closes=last30.map(c=>+c.close.toFixed(price>100?2:5));
+const dec=price>100?2:price>10?3:4;
+const closes=last30.map(c=>+c.close.toFixed(dec));
 const labels=last30.map((*,i)=>i===29?‘NOW’:’’);
-const dec=price>100?2:5;
 const stLines=last30.map((*,i)=>{
 const st=calcST(candles.slice(0,candles.length-29+i),14,3.0);
 return st.length?+st[st.length-1].line.toFixed(dec):null;
 });
-const ema50Line=closes.map(()=>+ema50.toFixed(dec));
-const slLine=closes.map(()=>+sl);
-const tpLine=closes.map(()=>+tp);
 const color=dir===‘BUY’?‘rgb(0,255,157)’:‘rgb(255,56,96)’;
 const cfg={
 type:‘line’,
 data:{labels,datasets:[
-{label:‘Prezzo’,data:closes,borderColor:’#00d4ff’,backgroundColor:‘rgba(0,212,255,0.08)’,borderWidth:2,pointRadius:closes.map((*,i)=>i===29?6:0),pointBackgroundColor:closes.map((*,i)=>i===29?color:‘transparent’),fill:false,tension:0.1},
+{label:‘Price’,data:closes,borderColor:’#00d4ff’,backgroundColor:‘rgba(0,212,255,0.08)’,borderWidth:2,pointRadius:closes.map((*,i)=>i===29?6:0),pointBackgroundColor:closes.map((*,i)=>i===29?color:‘transparent’),fill:false,tension:0.1},
 {label:‘SuperTrend’,data:stLines,borderColor:color,borderWidth:1.5,borderDash:[4,2],pointRadius:0,fill:false},
-{label:‘EMA50’,data:ema50Line,borderColor:’#ffcc00’,borderWidth:1,borderDash:[6,3],pointRadius:0,fill:false},
-{label:‘TP’,data:tpLine,borderColor:‘rgba(0,255,157,0.6)’,borderWidth:1,borderDash:[3,3],pointRadius:0,fill:false},
-{label:‘SL’,data:slLine,borderColor:‘rgba(255,56,96,0.6)’,borderWidth:1,borderDash:[3,3],pointRadius:0,fill:false},
+{label:‘EMA50’,data:closes.map(()=>+ema50.toFixed(dec)),borderColor:’#ffcc00’,borderWidth:1,borderDash:[6,3],pointRadius:0,fill:false},
+{label:‘TP’,data:closes.map(()=>+tp),borderColor:‘rgba(0,255,157,0.6)’,borderWidth:1,borderDash:[3,3],pointRadius:0,fill:false},
+{label:‘SL’,data:closes.map(()=>+sl),borderColor:‘rgba(255,56,96,0.6)’,borderWidth:1,borderDash:[3,3],pointRadius:0,fill:false},
 ]},
 options:{
 plugins:{
-title:{display:true,text:`${dir==='BUY'?'▲ BUY':'▼ SELL'} ${symbol} @ ${price.toFixed(dec)} | RSI:${rsi.toFixed(1)}`,color,font:{size:14,weight:‘bold’}},
+title:{display:true,text:`${dir==='BUY'?'BUY':'SELL'} ${symbol} @ ${price.toFixed(dec)} | RSI:${rsi.toFixed(1)}`,color,font:{size:14,weight:‘bold’}},
 legend:{labels:{color:’#9ec8de’,font:{size:10}}}
 },
 scales:{x:{ticks:{color:’#2a5470’},grid:{color:’#0e2438’}},y:{ticks:{color:’#9ec8de’},grid:{color:’#0e2438’}}},
@@ -313,21 +292,78 @@ return `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify(cfg))}
 }
 
 // ═══════════════════════════════
-// CHECK SIGNALS — per symbol
+// MARKET HOURS CHECK (New York ET)
+// ═══════════════════════════════
+function getNYTime() {
+// New York is UTC-5 (EST) or UTC-4 (EDT summer)
+// We detect DST automatically using Intl
+const now = new Date();
+const nyStr = now.toLocaleString(‘en-US’, { timeZone: ‘America/New_York’ });
+const nyDate = new Date(nyStr);
+return {
+day:  nyDate.getDay(),   // 0=Sun, 6=Sat
+hour: nyDate.getHours(),
+min:  nyDate.getMinutes(),
+time: nyDate.getHours() * 100 + nyDate.getMinutes(),
+};
+}
+
+const USA_STOCKS = [‘AAPL’,‘TSLA’,‘NVDA’,‘AMZN’,‘MSFT’,‘GOOGL’,‘META’,‘NFLX’,‘AMD’,‘INTC’];
+const EU_STOCKS  = [‘ENI.MI’,‘ENEL.MI’,‘RACE.MI’,‘ISP.MI’,‘UCG.MI’,‘SIE.DE’,‘BMW.DE’,‘VOW3.DE’,‘MC.PA’,‘TTE.PA’,‘SHEL.L’,‘HSBA.L’];
+
+function isMarketOpen(symbol) {
+// Crypto — always open 24/7
+if (CRYPTO_SYMBOLS.includes(symbol)) return true;
+
+const { day, time } = getNYTime();
+
+// Weekend — all non-crypto closed
+if (day === 0 || day === 6) return false;
+
+// NYSE/NASDAQ — 09:30 to 16:00 NY time
+if (USA_STOCKS.includes(symbol)) return time >= 930 && time <= 1600;
+
+// European stocks — use UTC for EU exchanges
+// Euronext/Xetra/LSE: 09:00 to 17:30 CET (approx 03:00 to 11:30 NY)
+if (EU_STOCKS.includes(symbol)) return time >= 300 && time <= 1130;
+
+// Forex & Gold — Mon-Fri, 17:00 Sun NY to 17:00 Fri NY
+// Simplified: open all weekdays
+return true;
+}
+
+function getMarketStatus(symbol) {
+if (isMarketOpen(symbol)) return null;
+const { day } = getNYTime();
+if (day === 0 || day === 6) return ‘Mercato chiuso (weekend)’;
+if (USA_STOCKS.includes(symbol)) return ‘NYSE/NASDAQ chiusa (09:30-16:00 NY)’;
+if (EU_STOCKS.includes(symbol))  return ‘Borsa EU chiusa (09:00-17:30 CET)’;
+return ‘Mercato chiuso’;
+}
+
+// ═══════════════════════════════
+// CHECK SIGNALS
 // ═══════════════════════════════
 const strategies=[{id:1,atr:7,mult:2.0},{id:2,atr:14,mult:3.0},{id:3,atr:21,mult:4.5}];
 
-async function checkSignalsForSymbol(symbol, consensus=3, cooldownMin=15) {
+async function checkSignalsForSymbol(symbol,consensus=3,cooldownMin=15){
 const st=symbolState[symbol];
 if(!st||!st.candles.length||!isRunning)return;
-if(Date.now()-st.lastSignalTime < cooldownMin*60*1000)return;
+if(Date.now()-st.lastSignalTime<cooldownMin*60*1000)return;
+
+// Market hours check
+const marketStatus=getMarketStatus(symbol);
+if(marketStatus){
+st.stats.lastFilter=`Mercato chiuso: ${marketStatus}`;
+return;
+}
 
 // Step 1: SuperTrend M15
 let bv=0,sv=0;
 strategies.forEach(s=>{
-const res=calcST(st.candles,s.atr,s.mult);
-if(!res.length)return;
-if(res[res.length-1].dir===1)bv++;else sv++;
+const r=calcST(st.candles,s.atr,s.mult);
+if(!r.length)return;
+if(r[r.length-1].dir===1)bv++;else sv++;
 });
 let dir=null;
 if(bv>=consensus)dir=‘BUY’;
@@ -341,49 +377,45 @@ if(st.candlesH1.length>=2){
 const stH1=calcST(st.candlesH1,14,3.0);
 if(stH1.length){
 const h1Dir=stH1[stH1.length-1].dir===1?‘BUY’:‘SELL’;
-if(h1Dir!==dir){
-st.stats.lastFilter=`❌ H1 contro trend (H1=${h1Dir})`;
-return;
-}
+if(h1Dir!==dir){st.stats.lastFilter=`H1 contro trend (H1=${h1Dir})`;return;}
 }
 }
 
-// Step 3: EMA50 filter
+// Step 3: EMA50
 const ema50=calcEMA(st.candles,50);
-if(dir===‘BUY’&&price<ema50){st.stats.lastFilter=`❌ Prezzo sotto EMA50`;return;}
-if(dir===‘SELL’&&price>ema50){st.stats.lastFilter=`❌ Prezzo sopra EMA50`;return;}
+if(dir===‘BUY’&&price<ema50){st.stats.lastFilter=‘Prezzo sotto EMA50’;return;}
+if(dir===‘SELL’&&price>ema50){st.stats.lastFilter=‘Prezzo sopra EMA50’;return;}
 
-// Step 4: RSI filter
+// Step 4: RSI
 const rsi=calcRSI(st.candles,14);
-if(dir===‘BUY’&&rsi>70){st.stats.lastFilter=`❌ RSI ipercomprato (${rsi.toFixed(1)})`;return;}
-if(dir===‘SELL’&&rsi<30){st.stats.lastFilter=`❌ RSI ipervenduto (${rsi.toFixed(1)})`;return;}
+if(dir===‘BUY’&&rsi>70){st.stats.lastFilter=`RSI ipercomprato (${rsi.toFixed(1)})`;return;}
+if(dir===‘SELL’&&rsi<30){st.stats.lastFilter=`RSI ipervenduto (${rsi.toFixed(1)})`;return;}
 
-// Step 5: Volume filter
+// Step 5: Volume
 const avgVol=calcAvgVolume(st.candles,20);
 const lastVol=st.candles[st.candles.length-1].vol||0;
-if(avgVol>0&&lastVol<avgVol*0.8){st.stats.lastFilter=`❌ Volume basso`;return;}
+if(avgVol>0&&lastVol<avgVol*0.8){st.stats.lastFilter=‘Volume basso’;return;}
 
-// All filters passed!
+// ── ALL PASSED ──
 const atr=calcATR(st.candles,14)[st.candles.length-2]||0;
-const dec=price>100?2:5;
-// SL = ATR x1.5 with minimum 0.5% guaranteed
-const minDist = price * 0.005; // 0.5% minimum
-const atrDist = atr * 1.5;
-const slDist = Math.max(atrDist, minDist);
-// TP = SL x2 (R:R 1:2)
-const tpDist = slDist * 2;
-const sl = (dir===‘BUY’ ? price-slDist : price+slDist).toFixed(dec);
-const tp = (dir===‘BUY’ ? price+tpDist : price-tpDist).toFixed(dec);
-const rr = (tpDist/slDist).toFixed(2); // Always 2.00
-const time=new Date().toUTCString().slice(0,25);
+const dec=price>100?2:price>10?3:4;
+
+// SL = ATR x1.5 with minimum 0.5%
+const minDist=price*0.005;
+const slDist=Math.max(atr*1.5,minDist);
+const tpDist=slDist*2; // R:R 1:2
+const sl=(dir===‘BUY’?price-slDist:price+slDist).toFixed(dec);
+const tp=(dir===‘BUY’?price+tpDist:price-tpDist).toFixed(dec);
 
 // S/R levels
-const srLevels=calcSupportResistance(st.candles,50);
-const {nearestSupport,nearestResistance}=findNearestLevels(price,srLevels);
+const srLevels=calcSR(st.candles,50);
+const supports=srLevels.filter(l=>l.type===‘S’&&l.price<price).sort((a,b)=>b.price-a.price);
+const resistances=srLevels.filter(l=>l.type===‘R’&&l.price>price).sort((a,b)=>a.price-b.price);
 const srText=
-(nearestResistance?`🔴 Resistenza: ${nearestResistance.price.toFixed(dec)}\n`:’’)+
-(nearestSupport?`🟢 Supporto: ${nearestSupport.price.toFixed(dec)}\n`:’’);
+(resistances[0]?`Resistenza: ${resistances[0].price.toFixed(dec)} (${resistances[0].strength})\n`:’’)+
+(supports[0]?`Supporto: ${supports[0].price.toFixed(dec)} (${supports[0].strength})\n`:’’);
 
+const time=new Date().toUTCString().slice(0,25);
 const msg=
 `${dir==='BUY'?'🟢':'🔴'} <b>SuperTrend Signal</b>\n\n`+
 `📊 <b>Simbolo:</b> ${symbol}\n`+
@@ -391,83 +423,83 @@ const msg=
 `💰 <b>Prezzo:</b> ${price.toFixed(dec)}\n`+
 `🛑 <b>SL:</b> ${sl}\n`+
 `🎯 <b>TP:</b> ${tp}\n`+
-`⚖️ <b>R:R:</b> 1:${rr}\n\n`+
-`📐 <b>Livelli chiave:</b>\n`+srText+
-`\n✅ <b>Filtri:</b> ST ${Math.max(bv,sv)}/3 · H1 ✓ · EMA50 ✓ · RSI ${rsi.toFixed(1)} · Vol ✓\n`+
+`⚖️ <b>R:R:</b> 1:2\n\n`+
+(srText?`📐 <b>Livelli:</b>\n${srText}\n`:’’)+
+`✅ ST ${Math.max(bv,sv)}/3 · H1 · EMA50 · RSI ${rsi.toFixed(1)} · Vol\n`+
 `⏰ ${time} UTC\n\n`+
-`⚠️ <i>Non è consulenza finanziaria.</i>`;
+`⚠️ <i>Non consulenza finanziaria.</i>`;
 
 const chartUrl=buildChartUrl(symbol,dir,price,+sl,+tp,ema50,rsi,st.candles);
 const ok=await sendTelegramPhoto(msg,chartUrl);
-
 if(ok){
 st.stats.total++;if(dir===‘BUY’)st.stats.buys++;else st.stats.sells++;
 st.stats.lastSignal=dir;
-st.stats.lastFilter=`✅ Segnale inviato: ${dir} @ ${price.toFixed(dec)}`;
+st.stats.lastFilter=`Segnale inviato: ${dir} @ ${price.toFixed(dec)}`;
 st.lastSignalTime=Date.now();st.lastDirection=dir;
-st.signalLog.unshift({dir,price:price.toFixed(dec),time,symbol,rsi:rsi.toFixed(1),rr});
+st.signalLog.unshift({dir,price:price.toFixed(dec),time,symbol,rsi:rsi.toFixed(1)});
 if(st.signalLog.length>20)st.signalLog.pop();
 globalStats.total++;if(dir===‘BUY’)globalStats.buys++;else globalStats.sells++;
 globalLog.unshift({dir,price:price.toFixed(dec),time,symbol,rsi:rsi.toFixed(1)});
 if(globalLog.length>50)globalLog.pop();
-console.log(`✅ ${symbol} ${dir} @ ${price.toFixed(dec)}`);
+console.log(`Signal: ${symbol} ${dir} @ ${price.toFixed(dec)}`);
 }
 }
 
-// Pre-signal alert per symbol
-async function checkPreSignalForSymbol(symbol, consensus=3) {
+async function checkPreSignalForSymbol(symbol,consensus=3){
 const st=symbolState[symbol];
 if(!st||!st.candles.length||!isRunning)return;
 if(Date.now()-st.lastPreAlertTime<30*60*1000)return;
-
 let bv=0,sv=0;
 strategies.forEach(s=>{
-const res=calcST(st.candles,s.atr,s.mult);
-if(!res.length)return;
-if(res[res.length-1].dir===1)bv++;else sv++;
+const r=calcST(st.candles,s.atr,s.mult);
+if(!r.length)return;
+if(r[r.length-1].dir===1)bv++;else sv++;
 });
-
 let h1Dir=null;
 if(st.candlesH1.length>=2){
 const stH1=calcST(st.candlesH1,14,3.0);
 if(stH1.length)h1Dir=stH1[stH1.length-1].dir===1?‘BUY’:‘SELL’;
 }
-
 const m15Dir=bv>=consensus?‘BUY’:sv>=consensus?‘SELL’:null;
-if(!m15Dir||!h1Dir)return;
-
-if(m15Dir!==h1Dir&&m15Dir!==st.lastPreAlertDir){
+if(!m15Dir||!h1Dir||m15Dir===h1Dir||m15Dir===st.lastPreAlertDir)return;
 const price=st.candles[st.candles.length-1].close;
 const rsi=calcRSI(st.candles,14);
-const dec=price>100?2:5;
-const msg=
+const dec=price>100?2:price>10?3:4;
+const ok=await sendTelegram(
 `⚡ <b>Pre-Segnale — ${symbol}</b>\n\n`+
-`📈 M15: ${m15Dir} (${Math.max(bv,sv)}/3)\n`+
-`⏰ H1: ${h1Dir} (opposto)\n`+
-`💰 Prezzo: ${price.toFixed(dec)}\n`+
-`📉 RSI: ${rsi.toFixed(1)}\n\n`+
-`⏳ <i>Aspetta allineamento H1!</i>`;
-const ok=await sendTelegram(msg);
+`M15: ${m15Dir} (${Math.max(bv,sv)}/3)\n`+
+`H1: ${h1Dir} (opposto)\n`+
+`Prezzo: ${price.toFixed(dec)} · RSI: ${rsi.toFixed(1)}\n\n`+
+`⏳ <i>Aspetta allineamento H1!</i>`
+);
 if(ok){st.lastPreAlertTime=Date.now();st.lastPreAlertDir=m15Dir;}
-}
 }
 
 // ═══════════════════════════════
-// LOOP — all symbols
+// LOOP
 // ═══════════════════════════════
-function startLoop(refreshSec=60, consensus=3, cooldown=15) {
+function startLoop(refreshSec=300,consensus=3,cooldown=15){
 if(refreshInterval)clearInterval(refreshInterval);
 refreshInterval=setInterval(async()=>{
 for(const symbol of activeSymbols){
-try {
+try{
 await fetchCandles(symbol);
 await checkSignalsForSymbol(symbol,consensus,cooldown);
 await checkPreSignalForSymbol(symbol,consensus);
-// Small delay between symbols to avoid rate limiting
 await new Promise(r=>setTimeout(r,5000));
-} catch(e){console.error(`Error ${symbol}:`,e.message);}
+}catch(e){console.error(‘Loop error’,symbol,e.message);}
 }
-}, refreshSec*1000);
+},refreshSec*1000);
+}
+
+// ═══════════════════════════════
+// KEEP-ALIVE
+// ═══════════════════════════════
+if(RENDER_URL){
+setInterval(async()=>{
+try{await fetch(`${RENDER_URL}/api/status`);console.log(‘Keep-alive OK’);}
+catch(e){console.log(‘Keep-alive failed’);}
+},14*60*1000);
 }
 
 // ═══════════════════════════════
@@ -484,43 +516,34 @@ candleCount:st.candles.length,
 signalLog:st.signalLog.slice(0,5),
 };
 });
-res.json({
-isRunning, activeSymbols, globalStats,
-globalLog:globalLog.slice(0,20),
-tgConnected:!!(TG_TOKEN&&TG_CHAT_ID),
-dataConnected:!!TD_KEY,
-perSymbol,
-});
+res.json({isRunning,activeSymbols,globalStats,globalLog:globalLog.slice(0,20),
+tgConnected:!!(TG_TOKEN&&TG_CHAT_ID),dataConnected:!!TD_KEY,perSymbol});
 });
 
 app.post(’/api/start’,async(req,res)=>{
 const{symbols,consensus,cooldown,refresh}=req.body;
 if(symbols&&Array.isArray(symbols)){
-activeSymbols=symbols;
-// Init state for new symbols
-symbols.forEach(s=>{
-if(!symbolState[s])symbolState[s]={candles:[],candlesH1:[],lastDirection:null,lastSignalTime:0,lastPreAlertTime:0,lastPreAlertDir:null,stats:{total:0,buys:0,sells:0,lastSignal:’—’,lastFilter:’—’},signalLog:[]};
-});
+activeSymbols=symbols.slice(0,5);
+activeSymbols.forEach(s=>{if(!symbolState[s])initSymbol(s);});
 }
 isRunning=true;
-try {
-// Fetch all symbols
+try{
 for(const s of activeSymbols){await fetchCandles(s);await new Promise(r=>setTimeout(r,3000));}
 startLoop(refresh||300,consensus||3,cooldown||15);
-await sendTelegram(`🤖 <b>SuperTrend EA Avviato</b>\n📊 Simboli: ${activeSymbols.join(', ')}\n🔧 Filtri: RSI + EMA50 + Volume + H1\n⏰ ${new Date().toUTCString().slice(0,25)}`);
+await sendTelegram(`🤖 <b>SuperTrend EA Avviato</b>\nSimbolii: ${activeSymbols.join(', ')}\nFiltri: RSI + EMA50 + Vol + H1\n${new Date().toUTCString().slice(0,25)}`);
 res.json({ok:true,message:`EA avviato su ${activeSymbols.join(', ')}`});
-} catch(e){res.json({ok:false,message:e.message});}
+}catch(e){res.json({ok:false,message:e.message});}
 });
 
 app.post(’/api/stop’,async(req,res)=>{
 isRunning=false;if(refreshInterval)clearInterval(refreshInterval);
-await sendTelegram(‘⏹ <b>SuperTrend EA Fermato</b>’);
-res.json({ok:true,message:‘EA fermato’});
+await sendTelegram(‘EA Fermato’);
+res.json({ok:true});
 });
 
 app.post(’/api/test’,async(req,res)=>{
-const ok=await sendTelegram(’🤖 <b>SuperTrend EA — Test OK!</b>\n\nBot connesso ✅\nMonitora: ‘+activeSymbols.join(’, ’));
-res.json({ok,message:ok?‘Messaggio inviato!’:‘Errore invio’});
+const ok=await sendTelegram(`Test OK! Monitora: ${activeSymbols.join(', ')}`);
+res.json({ok,message:ok?‘Inviato!’:‘Errore’});
 });
 
 app.get(’/api/candles/:symbol’,(req,res)=>{
@@ -530,16 +553,12 @@ res.json({candles:st.candles.slice(-60),candlesH1:st.candlesH1.slice(-50)});
 });
 
 app.get(’/api/candles’,(req,res)=>{
-const first=activeSymbols[0];
-const st=symbolState[first]||{candles:[],candlesH1:[]};
+const st=symbolState[activeSymbols[0]]||{candles:[],candlesH1:[]};
 res.json({candles:st.candles.slice(-60),candlesH1:st.candlesH1.slice(-50)});
 });
 
 app.listen(PORT,()=>{
-console.log(`SuperTrend EA Multi-Symbol on port ${PORT}`);
-console.log(`TG: ${TG_TOKEN?'✅':'❌'} | TD: ${TD_KEY?'✅':'❌'}`);
-console.log(`Symbols: ${DEFAULT_SYMBOLS.join(', ')}`);
-// Fetch all on start
+console.log(`SuperTrend EA on port ${PORT}`);
 (async()=>{
 for(const s of DEFAULT_SYMBOLS){
 try{await fetchCandles(s);}catch(e){console.error(s,e.message);}
@@ -547,16 +566,3 @@ await new Promise(r=>setTimeout(r,4000));
 }
 })();
 });
-
-// ═══════════════════════════════
-// KEEP-ALIVE — prevent Render sleep
-// ═══════════════════════════════
-const RENDER_URL = process.env.RENDER_URL || ‘’;
-if (RENDER_URL) {
-setInterval(async () => {
-try {
-await fetch(`${RENDER_URL}/api/status`);
-console.log(‘💓 Keep-alive ping sent’);
-} catch(e) { console.log(‘Keep-alive failed:’, e.message); }
-}, 14 * 60 * 1000); // every 14 minutes
-}
