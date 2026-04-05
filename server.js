@@ -196,6 +196,28 @@ async function fetchTD(symbol, interval, limit, isH1, st) {
   var data = await res.json();
   if (data.status === 'error') throw new Error(data.message);
   var parsed = data.values.reverse().map(function(c) { return { open:+c.open, high:+c.high, low:+c.low, close:+c.close, vol:+(c.volume||0) }; });
+  // Validate price ranges to catch stale/wrong data
+  if (parsed.length > 0) {
+    var lastClose = parsed[parsed.length-1].close;
+    var valid = true;
+    if (symbol === 'XAUUSD' && (lastClose < 1500 || lastClose > 5000)) valid = false;
+    if (symbol === 'XAGUSD' && (lastClose < 10   || lastClose > 100))  valid = false;
+    if (symbol === 'EURUSD' && (lastClose < 0.8  || lastClose > 1.5))  valid = false;
+    if (symbol === 'GBPUSD' && (lastClose < 0.9  || lastClose > 1.8))  valid = false;
+    if (symbol === 'USDJPY' && (lastClose < 80   || lastClose > 200))  valid = false;
+    if (!valid) {
+      console.error('Invalid price for ' + symbol + ': ' + lastClose + ' - using demo data');
+      var p2 = symbol.indexOf('XAU') !== -1 ? 3100 : symbol.indexOf('XAG') !== -1 ? 32 : 1.082;
+      var arr2 = [];
+      for (var k = 0; k < limit; k++) {
+        var ch2 = (Math.random() - 0.488) * p2 * 0.003, o2 = p2, c2 = p2 + ch2;
+        arr2.push({ open:o2, high:Math.max(o2,c2)*1.001, low:Math.min(o2,c2)*0.999, close:c2, vol:Math.random()*1000 });
+        p2 = c2;
+      }
+      if (isH1) st.candlesH1 = arr2; else st.candles = arr2;
+      return;
+    }
+  }
   if (isH1) st.candlesH1 = parsed; else st.candles = parsed;
 }
 
@@ -449,12 +471,17 @@ function startLoop(refreshSec, consensus, cooldown) {
         if (st) {
           var mStatus = getMarketStatus(symbol);
           if (mStatus) {
-            // Market closed - update status but keep old candles for display
             st.stats.lastFilter = '[MERCATO CHIUSO] ' + mStatus;
             console.log(symbol + ': ' + mStatus);
-            // Still fetch candles once so dashboard shows indicators
-            if (!st.candles.length) await fetchCandles(symbol);
+            if (!st.candles.length) {
+              try { await fetchCandles(symbol); } catch(e) {}
+            }
             continue;
+          } else {
+            // Clear closed message when market reopens
+            if (st.stats.lastFilter.indexOf('MERCATO CHIUSO') !== -1) {
+              st.stats.lastFilter = 'Mercato aperto - analisi in corso...';
+            }
           }
         }
         await fetchCandles(symbol);
