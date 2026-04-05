@@ -445,6 +445,16 @@ function startLoop(refreshSec, consensus, cooldown) {
     for (var i = 0; i < activeSymbols.length; i++) {
       var symbol = activeSymbols[i];
       try {
+        // Always update market status first so dashboard shows it
+        var st = symbolState[symbol];
+        if (st) {
+          var mStatus = getMarketStatus(symbol);
+          if (mStatus) {
+            st.stats.lastFilter = '[MERCATO CHIUSO] ' + mStatus;
+            console.log(symbol + ': ' + mStatus);
+            continue; // skip fetch when market is closed
+          }
+        }
         await fetchCandles(symbol);
         await checkSignalsForSymbol(symbol, consensus, cooldown);
         await checkPreSignalForSymbol(symbol, consensus);
