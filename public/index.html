@@ -198,7 +198,7 @@ select.cf-inp option{background:#06101a;}
       <div class="stat"><div class="stat-v g" id="statBuys">0</div><div class="stat-l">BUY</div></div>
       <div class="stat"><div class="stat-v r" id="statSells">0</div><div class="stat-l">SELL</div></div>
       <div class="stat"><div class="stat-v y" id="statLast">—</div><div class="stat-l">ULTIMO</div></div>
-      <div class="stat" style="grid-column:1/-1"><div class="stat-v" style="font-size:13px;color:var(--text)" id="statFilter">In attesa...</div><div class="stat-l">ULTIMO FILTRO</div></div>
+      <div class="stat" style="grid-column:1/-1"><div id="statFilter" style="font-size:11px;line-height:1.8;">In attesa...</div><div class="stat-l">STATO FILTRI PER SIMBOLO</div></div>
     </div>
   </div>
 
@@ -296,7 +296,16 @@ async function fetchStatus(){
     if(d.perSymbol){
       Object.entries(d.perSymbol).forEach(([sym,data])=>{
         const el=document.getElementById('statFilter');
-        if(el&&data.stats)el.textContent=Object.entries(d.perSymbol).map(([s,d2])=>`${s}: ${d2.stats.lastFilter||'—'}`).join(' | ');
+        if(el&&d.perSymbol){
+          el.innerHTML=Object.entries(d.perSymbol).map(([s,d2])=>{
+            const f=d2.stats&&d2.stats.lastFilter||'--';
+            const isClosed=f.indexOf('MERCATO CHIUSO')!==-1||f.indexOf('chiusa')!==-1||f.indexOf('chiuso')!==-1||f.indexOf('weekend')!==-1;
+            const isSignal=f.indexOf('Segnale inviato')!==-1;
+            const color=isClosed?'var(--red)':isSignal?'var(--green)':'var(--yellow)';
+            const icon=isClosed?'[CHIUSO]':isSignal?'[OK]':'[FILTRO]';
+            return '<span style="margin-right:16px;color:'+color+'"><b>'+s+'</b> '+icon+' '+f+'</span>';
+          }).join('<br>');
+        }
       });
     }
     // Stats
