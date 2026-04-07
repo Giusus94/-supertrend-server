@@ -325,35 +325,34 @@ select.cf-inp option{background:#06101a;}
 
 <script>
 // LIVE PRICES — updates every 30 seconds directly from Yahoo/OKX
-const LIVE_SYMBOLS = {
-  'XAUUSD': { yahoo:'GC=F',   okx:null,          dec:2 },
-  'EURUSD': { yahoo:'EURUSD=X', okx:null,         dec:4 },
-  'BTCUSD': { yahoo:null,     okx:'BTC-USDT',     dec:2 }
+// OKX spot tickers for all symbols
+const OKX_TICKERS = {
+  'XAUUSD': 'XAU-USDT',
+  'EURUSD': 'EUR-USDT',
+  'BTCUSD': 'BTC-USDT',
+  'ETHUSD': 'ETH-USDT',
+  'SOLUSD': 'SOL-USDT',
+  'XRPUSD': 'XRP-USDT',
+  'GBPUSD': 'GBP-USDT',
+  'USDJPY': null
+};
+const PRICE_DEC = {
+  'XAUUSD':2,'EURUSD':4,'BTCUSD':2,'ETHUSD':2,
+  'SOLUSD':3,'XRPUSD':4,'GBPUSD':4,'USDJPY':3
 };
 const prevPrices = {};
 
 async function fetchLivePrice(symbol) {
-  var cfg = LIVE_SYMBOLS[symbol];
-  if (!cfg) return;
+  var ticker = OKX_TICKERS[symbol];
+  if (!ticker) return;
   try {
-    var price = null;
-    // Crypto: use OKX ticker
-    if (cfg.okx) {
-      var res = await fetch('https://www.okx.com/api/v5/market/ticker?instId='+cfg.okx);
-      var data = await res.json();
-      if (data.code==='0'&&data.data&&data.data[0]) price = +data.data[0].last;
+    var res = await fetch('https://www.okx.com/api/v5/market/ticker?instId='+ticker);
+    var data = await res.json();
+    if (data.code==='0'&&data.data&&data.data[0]) {
+      var price = +data.data[0].last;
+      var dec   = PRICE_DEC[symbol]||4;
+      if (price>0) updatePriceWidget(symbol, price, dec);
     }
-    // Forex/Gold: use Yahoo Finance quote
-    if (!price && cfg.yahoo) {
-      var res2 = await fetch('https://query2.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(cfg.yahoo)+'?interval=1m&range=1d', {
-        headers:{'User-Agent':'Mozilla/5.0','Accept':'application/json'}
-      });
-      var data2 = await res2.json();
-      var chart = data2&&data2.chart&&data2.chart.result&&data2.chart.result[0];
-      if (chart&&chart.meta) price = chart.meta.regularMarketPrice||chart.meta.previousClose;
-    }
-    if (!price) return;
-    updatePriceWidget(symbol, price, cfg.dec);
   } catch(e) { console.log('Live price error '+symbol+': '+e.message); }
 }
 
