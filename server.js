@@ -21,6 +21,14 @@ const TD_MAP = {
   XAUUSD:'XAU/USD', XAGUSD:'XAG/USD'
 };
 
+// Yahoo Finance tickers (no key needed)
+const YAHOO_MAP = {
+  XAUUSD:'GC=F',   XAGUSD:'SI=F',
+  EURUSD:'EURUSD=X', GBPUSD:'GBPUSD=X', USDJPY:'USDJPY=X',
+  GBPJPY:'GBPJPY=X', AUDUSD:'AUDUSD=X', USDCAD:'USDCAD=X',
+  USDCHF:'USDCHF=X', NZDUSD:'NZDUSD=X', EURGBP:'EURGBP=X'
+};
+
 // Realistic price ranges for validation
 const PRICE_RANGES = {
   BTCUSD:[20000,200000], ETHUSD:[500,20000], SOLUSD:[10,1000],
@@ -173,31 +181,62 @@ async function fetchOKX(symbol, isH1, st) {
 
 // FETCH FOREX - Twelve Data
 async function fetchTD(symbol, isH1, st) {
-  if (!TD_KEY) {
-    genDemo(symbol, isH1, st);
-    return;
+  // Try Yahoo Finance first (free, no key)
+  var yahooOk = await fetchYahooForex(symbol, isH1, st);
+  if (yahooOk) return;
+
+  // Fallback to Twelve Data if available
+  if (TD_KEY) {
+    try {
+      var sym      = TD_MAP[symbol]||symbol;
+      var interval = isH1 ? '1h' : '15min';
+      var url = 'https://api.twelvedata.com/time_series?symbol='+encodeURIComponent(sym)+'&interval='+interval+'&outputsize=150&apikey='+TD_KEY;
+      var res  = await fetch(url);
+      var data = await res.json();
+      if (data.status==='error') throw new Error(data.message);
+      var parsed = data.values.reverse().map(function(c){return{open:+c.open,high:+c.high,low:+c.low,close:+c.close,vol:+(c.volume||0)};});
+      if (!parsed.length) throw new Error('Empty response');
+      var last = parsed[parsed.length-1].close;
+      if (!isValidPrice(symbol, last)) throw new Error('Invalid price: '+last);
+      if (isH1) st.candlesH1=parsed; else st.candles=parsed;
+      console.log('TD '+symbol+' '+interval+': '+parsed.length+' candles @ '+last);
+      return;
+    } catch(e) { console.error('TD error '+symbol+': '+e.message); }
   }
+
+  // Last resort: demo data
+  if (!st.candles.length) genDemo(symbol, isH1, st);
+}
+
+async function fetchYahooForex(symbol, isH1, st) {
   try {
-    var sym      = TD_MAP[symbol]||symbol;
-    var interval = isH1 ? '1h' : '15min';
-    var url = 'https://api.twelvedata.com/time_series?symbol='+encodeURIComponent(sym)+'&interval='+interval+'&outputsize=150&apikey='+TD_KEY;
-    var res  = await fetch(url);
+    var ticker = YAHOO_MAP[symbol];
+    if (!ticker) return false;
+    var range    = isH1 ? '5d'  : '2d';
+    var interval = isH1 ? '1h'  : '15m';
+    var url = 'https://query2.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(ticker)+'?interval='+interval+'&range='+range+'&includePrePost=false';
+    var res = await fetch(url, {headers:{'User-Agent':'Mozilla/5.0','Accept':'application/json'}});
     var data = await res.json();
-    if (data.status==='error') throw new Error(data.message);
-    var parsed = data.values.reverse().map(function(c){return{open:+c.open,high:+c.high,low:+c.low,close:+c.close,vol:+(c.volume||0)};});
-    if (!parsed.length) throw new Error('Empty response');
+    var chart = data&&data.chart&&data.chart.result&&data.chart.result[0];
+    if (!chart||!chart.timestamp) return false;
+    var q = chart.indicators.quote[0];
+    var parsed = [];
+    for (var i=0;i<chart.timestamp.length;i++) {
+      if (q.open[i]&&q.high[i]&&q.low[i]&&q.close[i]) {
+        parsed.push({open:+q.open[i].toFixed(5),high:+q.high[i].toFixed(5),low:+q.low[i].toFixed(5),close:+q.close[i].toFixed(5),vol:q.volume[i]||0});
+      }
+    }
+    if (parsed.length<10) return false;
     var last = parsed[parsed.length-1].close;
-    if (!isValidPrice(symbol, last)) throw new Error('Invalid price: '+last);
+    if (!isValidPrice(symbol, last)) { console.error('Yahoo invalid price '+symbol+': '+last); return false; }
     if (isH1) st.candlesH1=parsed; else st.candles=parsed;
-    console.log('TD '+symbol+' '+interval+': '+parsed.length+' candles @ '+last);
-  } catch(e) {
-    console.error('TD error '+symbol+': '+e.message);
-    if (!st.candles.length) genDemo(symbol, isH1, st);
-  }
+    console.log('Yahoo '+symbol+' '+interval+': '+parsed.length+' candles @ '+last);
+    return true;
+  } catch(e) { console.error('Yahoo error '+symbol+': '+e.message); return false; }
 }
 
 function genDemo(symbol, isH1, st) {
-  var p = symbol==='XAUUSD'?4676 : symbol==='XAGUSD'?32 : symbol==='USDJPY'?150 : 1.082;
+  var p = symbol==='XAUUSD'?3300 : symbol==='XAGUSD'?33 : symbol==='USDJPY'?150 : symbol==='GBPJPY'?191 : symbol==='GBPUSD'?1.29 : symbol==='BTCUSD'?67000 : symbol==='ETHUSD'?1800 : 1.082;
   var arr=[], limit=isH1?100:150;
   for (var i=0;i<limit;i++) {
     var ch=(Math.random()-.488)*p*.003,o=p,c=p+ch;
@@ -217,15 +256,26 @@ async function fetchM5(symbol, st) {
       if (data.code==='0'&&Array.isArray(data.data)&&data.data.length>10) {
         st.candlesM5 = data.data.reverse().map(function(k){return{open:+k[1],high:+k[2],low:+k[3],close:+k[4],vol:+k[5]};});
       }
-    } else if (TD_KEY) {
-      var sym = TD_MAP[symbol]||symbol;
-      var url2 = 'https://api.twelvedata.com/time_series?symbol='+encodeURIComponent(sym)+'&interval=5min&outputsize=100&apikey='+TD_KEY;
-      await new Promise(function(r){setTimeout(r,2000);});
-      var res2 = await fetch(url2);
-      var data2 = await res2.json();
-      if (data2.status!=='error'&&data2.values) {
-        st.candlesM5 = data2.values.reverse().map(function(c){return{open:+c.open,high:+c.high,low:+c.low,close:+c.close,vol:+(c.volume||0)};});
-      }
+    } else {
+      // Yahoo Finance for forex M5
+      try {
+        var ticker2 = YAHOO_MAP[symbol];
+        if (ticker2) {
+          var url2 = 'https://query2.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(ticker2)+'?interval=5m&range=1d&includePrePost=false';
+          var res2 = await fetch(url2, {headers:{'User-Agent':'Mozilla/5.0','Accept':'application/json'}});
+          var data2 = await res2.json();
+          var chart2 = data2&&data2.chart&&data2.chart.result&&data2.chart.result[0];
+          if (chart2&&chart2.timestamp) {
+            var q2 = chart2.indicators.quote[0];
+            var arr2 = [];
+            for (var k=0;k<chart2.timestamp.length;k++) {
+              if (q2.open[k]&&q2.high[k]&&q2.low[k]&&q2.close[k])
+                arr2.push({open:+q2.open[k].toFixed(5),high:+q2.high[k].toFixed(5),low:+q2.low[k].toFixed(5),close:+q2.close[k].toFixed(5),vol:q2.volume[k]||0});
+            }
+            if (arr2.length>10) st.candlesM5=arr2;
+          }
+        }
+      } catch(e) { console.error('Yahoo M5 error: '+e.message); }
     }
   } catch(e) { console.error('M5 error '+symbol+': '+e.message); }
 }
