@@ -95,7 +95,23 @@ select.cf-inp option{background:#06101a;}
 .result.ok{background:#00ff9d10;border:1px solid #00ff9d30;color:var(--green);}
 .result.err{background:#ff386010;border:1px solid #ff386030;color:var(--red);}
 
-.sym-tab{font-family:'Barlow Condensed';font-weight:700;font-size:12px;letter-spacing:2px;padding:5px 14px;border-radius:3px;border:1px solid var(--border);background:transparent;color:var(--dim);cursor:pointer;transition:all .2s;}
+.live-price-bar{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px;}
+.price-widget{background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;position:relative;overflow:hidden;transition:border-color .2s;}
+.price-widget.up{border-color:#00ff9d50;}
+.price-widget.up::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--green);}
+.price-widget.dn{border-color:#ff386050;}
+.price-widget.dn::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--red);}
+.pw-left .pw-sym{font-family:"Barlow Condensed";font-weight:900;font-size:15px;letter-spacing:2px;color:var(--cyan);}
+.pw-left .pw-name{font-size:9px;color:var(--dim);letter-spacing:1px;margin-top:2px;}
+.pw-right{text-align:right;}
+.pw-price{font-family:"Barlow Condensed";font-weight:900;font-size:22px;color:var(--bright);}
+.pw-change{font-size:11px;margin-top:2px;}
+.pw-change.up{color:var(--green);}
+.pw-change.dn{color:var(--red);}
+.pw-updated{font-size:8px;color:var(--dim);margin-top:2px;}
+@keyframes flash{0%{opacity:1}50%{opacity:.3}100%{opacity:1}}
+.price-flash{animation:flash .5s ease;}
+.sym-tab{font-family:Barlow Condensed';font-weight:700;font-size:12px;letter-spacing:2px;padding:5px 14px;border-radius:3px;border:1px solid var(--border);background:transparent;color:var(--dim);cursor:pointer;transition:all .2s;}
 .sym-tab.active{background:#00d4ff18;border-color:var(--cyan);color:var(--cyan);}
 .sym-tab:hover{border-color:var(--border2);color:var(--text);}
 ::-webkit-scrollbar{width:3px;}::-webkit-scrollbar-track{background:var(--bg);}::-webkit-scrollbar-thumb{background:var(--border);}
@@ -119,6 +135,43 @@ select.cf-inp option{background:#06101a;}
     <span>Prezzo: <span id="stPrice" style="color:var(--bright)">—</span></span>
     <span>Candele: <span id="stCandles" style="color:var(--bright)">—</span></span>
     <span>Ultimo segnale: <span id="stLast" style="color:var(--bright)">—</span></span>
+  </div>
+
+  <!-- LIVE PRICE BAR -->
+  <div class="live-price-bar">
+    <div class="price-widget" id="pw-XAUUSD">
+      <div class="pw-left">
+        <div class="pw-sym">XAUUSD</div>
+        <div class="pw-name">ORO / DOLLARO</div>
+      </div>
+      <div class="pw-right">
+        <div class="pw-price" id="pp-XAUUSD">--</div>
+        <div class="pw-change" id="pc-XAUUSD">--</div>
+        <div class="pw-updated" id="pu-XAUUSD">aggiornamento...</div>
+      </div>
+    </div>
+    <div class="price-widget" id="pw-EURUSD">
+      <div class="pw-left">
+        <div class="pw-sym">EURUSD</div>
+        <div class="pw-name">EURO / DOLLARO</div>
+      </div>
+      <div class="pw-right">
+        <div class="pw-price" id="pp-EURUSD">--</div>
+        <div class="pw-change" id="pc-EURUSD">--</div>
+        <div class="pw-updated" id="pu-EURUSD">aggiornamento...</div>
+      </div>
+    </div>
+    <div class="price-widget" id="pw-BTCUSD">
+      <div class="pw-left">
+        <div class="pw-sym">BTCUSD</div>
+        <div class="pw-name">BITCOIN / DOLLARO</div>
+      </div>
+      <div class="pw-right">
+        <div class="pw-price" id="pp-BTCUSD">--</div>
+        <div class="pw-change" id="pc-BTCUSD">--</div>
+        <div class="pw-updated" id="pu-BTCUSD">aggiornamento...</div>
+      </div>
+    </div>
   </div>
 
   <!-- SYMBOL TABS -->
@@ -271,6 +324,76 @@ select.cf-inp option{background:#06101a;}
 </div>
 
 <script>
+// LIVE PRICES — updates every 30 seconds directly from Yahoo/OKX
+const LIVE_SYMBOLS = {
+  'XAUUSD': { yahoo:'GC=F',   okx:null,          dec:2 },
+  'EURUSD': { yahoo:'EURUSD=X', okx:null,         dec:4 },
+  'BTCUSD': { yahoo:null,     okx:'BTC-USDT',     dec:2 }
+};
+const prevPrices = {};
+
+async function fetchLivePrice(symbol) {
+  var cfg = LIVE_SYMBOLS[symbol];
+  if (!cfg) return;
+  try {
+    var price = null;
+    // Crypto: use OKX ticker
+    if (cfg.okx) {
+      var res = await fetch('https://www.okx.com/api/v5/market/ticker?instId='+cfg.okx);
+      var data = await res.json();
+      if (data.code==='0'&&data.data&&data.data[0]) price = +data.data[0].last;
+    }
+    // Forex/Gold: use Yahoo Finance quote
+    if (!price && cfg.yahoo) {
+      var res2 = await fetch('https://query2.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(cfg.yahoo)+'?interval=1m&range=1d', {
+        headers:{'User-Agent':'Mozilla/5.0','Accept':'application/json'}
+      });
+      var data2 = await res2.json();
+      var chart = data2&&data2.chart&&data2.chart.result&&data2.chart.result[0];
+      if (chart&&chart.meta) price = chart.meta.regularMarketPrice||chart.meta.previousClose;
+    }
+    if (!price) return;
+    updatePriceWidget(symbol, price, cfg.dec);
+  } catch(e) { console.log('Live price error '+symbol+': '+e.message); }
+}
+
+function updatePriceWidget(symbol, price, dec) {
+  var prev = prevPrices[symbol];
+  var priceEl   = document.getElementById('pp-'+symbol);
+  var changeEl  = document.getElementById('pc-'+symbol);
+  var updatedEl = document.getElementById('pu-'+symbol);
+  var widget    = document.getElementById('pw-'+symbol);
+  if (!priceEl) return;
+
+  var formatted = price.toFixed(dec);
+  priceEl.textContent = formatted;
+  priceEl.classList.add('price-flash');
+  setTimeout(function(){ priceEl.classList.remove('price-flash'); }, 500);
+
+  if (prev) {
+    var diff = price - prev;
+    var pct  = (diff/prev*100).toFixed(3);
+    var isUp = diff >= 0;
+    changeEl.textContent = (isUp?'+':'')+diff.toFixed(dec)+' ('+( isUp?'+':'')+pct+'%)';
+    changeEl.className = 'pw-change '+(isUp?'up':'dn');
+    widget.className   = 'price-widget '+(isUp?'up':'dn');
+  }
+  updatedEl.textContent = 'aggiornato '+new Date().toTimeString().slice(0,8);
+  prevPrices[symbol] = price;
+}
+
+// Fetch all live prices
+async function fetchAllLivePrices() {
+  for (var sym in LIVE_SYMBOLS) {
+    await fetchLivePrice(sym);
+    await new Promise(function(r){setTimeout(r,500);});
+  }
+}
+
+// Start live price updates
+fetchAllLivePrices();
+setInterval(fetchAllLivePrices, 30000); // every 30 seconds
+
 setInterval(()=>{document.getElementById('clock').textContent=new Date().toUTCString().slice(17,25)+' UTC';},1000);
 
 // SuperTrend calc (client-side for display only)
