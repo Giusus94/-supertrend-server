@@ -325,33 +325,32 @@ select.cf-inp option{background:#06101a;}
 
 <script>
 // LIVE PRICES — updates every 30 seconds directly from Yahoo/OKX
-// OKX spot tickers for all symbols
-const OKX_TICKERS = {
-  'XAUUSD': 'XAU-USDT',
-  'EURUSD': 'EUR-USDT',
-  'BTCUSD': 'BTC-USDT',
-  'ETHUSD': 'ETH-USDT',
-  'SOLUSD': 'SOL-USDT',
-  'XRPUSD': 'XRP-USDT',
-  'GBPUSD': 'GBP-USDT',
-  'USDJPY': null
-};
 const PRICE_DEC = {
   'XAUUSD':2,'EURUSD':4,'BTCUSD':2,'ETHUSD':2,
   'SOLUSD':3,'XRPUSD':4,'GBPUSD':4,'USDJPY':3
 };
+const CRYPTO = ['BTCUSD','ETHUSD','SOLUSD','XRPUSD','BNBUSD','ADAUSD'];
 const prevPrices = {};
 
 async function fetchLivePrice(symbol) {
-  var ticker = OKX_TICKERS[symbol];
-  if (!ticker) return;
+  var dec = PRICE_DEC[symbol]||4;
   try {
-    var res = await fetch('https://www.okx.com/api/v5/market/ticker?instId='+ticker);
-    var data = await res.json();
-    if (data.code==='0'&&data.data&&data.data[0]) {
-      var price = +data.data[0].last;
-      var dec   = PRICE_DEC[symbol]||4;
-      if (price>0) updatePriceWidget(symbol, price, dec);
+    // Crypto: OKX direct (no CORS)
+    if (CRYPTO.indexOf(symbol) !== -1) {
+      var pair = symbol.replace('USD','-USDT');
+      var res = await fetch('https://www.okx.com/api/v5/market/ticker?instId='+pair);
+      var data = await res.json();
+      if (data.code==='0'&&data.data&&data.data[0]) {
+        updatePriceWidget(symbol, +data.data[0].last, dec);
+        return;
+      }
+    }
+    // Forex/Gold: use our Render server (same origin, no CORS)
+    var res2 = await fetch('/api/candles/'+symbol);
+    var data2 = await res2.json();
+    if (data2.candles&&data2.candles.length) {
+      var last = data2.candles[data2.candles.length-1].close;
+      updatePriceWidget(symbol, last, dec);
     }
   } catch(e) { console.log('Live price error '+symbol+': '+e.message); }
 }
