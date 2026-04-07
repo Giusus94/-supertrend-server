@@ -138,39 +138,18 @@ select.cf-inp option{background:#06101a;}
   </div>
 
   <!-- LIVE PRICE BAR -->
-  <div class="live-price-bar">
+  <div class="live-price-bar" id="livePriceBar">
     <div class="price-widget" id="pw-XAUUSD">
-      <div class="pw-left">
-        <div class="pw-sym">XAUUSD</div>
-        <div class="pw-name">ORO / DOLLARO</div>
-      </div>
-      <div class="pw-right">
-        <div class="pw-price" id="pp-XAUUSD">--</div>
-        <div class="pw-change" id="pc-XAUUSD">--</div>
-        <div class="pw-updated" id="pu-XAUUSD">aggiornamento...</div>
-      </div>
+      <div class="pw-left"><div class="pw-sym">XAUUSD</div><div class="pw-name">ORO / DOLLARO</div></div>
+      <div class="pw-right"><div class="pw-price" id="pp-XAUUSD">--</div><div class="pw-change" id="pc-XAUUSD">--</div><div class="pw-updated" id="pu-XAUUSD">caricamento...</div></div>
     </div>
     <div class="price-widget" id="pw-EURUSD">
-      <div class="pw-left">
-        <div class="pw-sym">EURUSD</div>
-        <div class="pw-name">EURO / DOLLARO</div>
-      </div>
-      <div class="pw-right">
-        <div class="pw-price" id="pp-EURUSD">--</div>
-        <div class="pw-change" id="pc-EURUSD">--</div>
-        <div class="pw-updated" id="pu-EURUSD">aggiornamento...</div>
-      </div>
+      <div class="pw-left"><div class="pw-sym">EURUSD</div><div class="pw-name">EURO / DOLLARO</div></div>
+      <div class="pw-right"><div class="pw-price" id="pp-EURUSD">--</div><div class="pw-change" id="pc-EURUSD">--</div><div class="pw-updated" id="pu-EURUSD">caricamento...</div></div>
     </div>
     <div class="price-widget" id="pw-BTCUSD">
-      <div class="pw-left">
-        <div class="pw-sym">BTCUSD</div>
-        <div class="pw-name">BITCOIN / DOLLARO</div>
-      </div>
-      <div class="pw-right">
-        <div class="pw-price" id="pp-BTCUSD">--</div>
-        <div class="pw-change" id="pc-BTCUSD">--</div>
-        <div class="pw-updated" id="pu-BTCUSD">aggiornamento...</div>
-      </div>
+      <div class="pw-left"><div class="pw-sym">BTCUSD</div><div class="pw-name">BITCOIN / DOLLARO</div></div>
+      <div class="pw-right"><div class="pw-price" id="pp-BTCUSD">--</div><div class="pw-change" id="pc-BTCUSD">--</div><div class="pw-updated" id="pu-BTCUSD">caricamento...</div></div>
     </div>
   </div>
 
@@ -345,12 +324,22 @@ async function fetchLivePrice(symbol) {
         return;
       }
     }
-    // Forex/Gold: use our Render server (same origin, no CORS)
+    // Forex/Gold: use server API
     var res2 = await fetch('/api/candles/'+symbol);
     var data2 = await res2.json();
-    if (data2.candles&&data2.candles.length) {
-      var last = data2.candles[data2.candles.length-1].close;
-      updatePriceWidget(symbol, last, dec);
+    if (data2&&data2.candles&&data2.candles.length>0) {
+      var lastCandle = data2.candles[data2.candles.length-1];
+      if (lastCandle&&lastCandle.close&&lastCandle.close>0) {
+        updatePriceWidget(symbol, lastCandle.close, dec);
+        return;
+      }
+    }
+    // Fallback: use /api/status
+    var res3 = await fetch('/api/status');
+    var data3 = await res3.json();
+    if (data3&&data3.perSymbol&&data3.perSymbol[symbol]) {
+      var lp = data3.perSymbol[symbol].lastPrice;
+      if (lp&&lp>0) updatePriceWidget(symbol, lp, dec);
     }
   } catch(e) { console.log('Live price error '+symbol+': '+e.message); }
 }
@@ -380,12 +369,25 @@ function updatePriceWidget(symbol, price, dec) {
   prevPrices[symbol] = price;
 }
 
-// Fetch all live prices
+// Fetch all live prices for active symbols
 async function fetchAllLivePrices() {
-  for (var sym in LIVE_SYMBOLS) {
-    await fetchLivePrice(sym);
-    await new Promise(function(r){setTimeout(r,500);});
+  var syms = ['XAUUSD','EURUSD','BTCUSD'];
+  // Try to get active symbols from status
+  try {
+    var r = await fetch('/api/status');
+    var d = await r.json();
+    if (d&&d.activeSymbols&&d.activeSymbols.length) syms = d.activeSymbols;
+  } catch(e) {}
+  for (var i=0;i<syms.length;i++) {
+    await fetchLivePrice(syms[i]);
+    await new Promise(function(r){setTimeout(r,300);});
   }
+  // Also update price widgets for symbols shown in UI
+  var widgets = document.querySelectorAll('.price-widget');
+  widgets.forEach(function(w) {
+    var sym = w.id.replace('pw-','');
+    if (syms.indexOf(sym)===-1) fetchLivePrice(sym);
+  });
 }
 
 // Start live price updates
