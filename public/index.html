@@ -267,6 +267,7 @@ select.ctrl-inp option{background:var(--p2);}
   <div class="nav-item" onclick="showPage('signals',this)">SIGNALS</div>
   <div class="nav-item" onclick="showPage('risk',this)">RISK</div>
   <div class="nav-item" onclick="showPage('settings',this)">SETTINGS</div>
+  <div class="nav-item" onclick="showPage('pa',this)">PA BOT</div>
   <div class="nav-item" onclick="showPage('stats',this)">STATS</div>
 </div>
 
@@ -440,6 +441,43 @@ select.ctrl-inp option{background:var(--p2);}
         <div class="btn btn-test" onclick="testTG()">TEST TELEGRAM</div>
       </div>
       <div class="ctrl-result" id="ctrlResult"></div>
+    </div>
+  </div>
+</div>
+
+<!-- PA BOT PAGE -->
+<div class="page" id="page-pa">
+  <div class="desktop-two-col">
+    <div class="panel">
+      <div class="panel-hdr"><span class="panel-title">PA BOT 2 - PRICE ACTION D1</span><span class="tag tag-y">SWING</span></div>
+      <div id="paStatus"><div class="empty">-- LOADING --</div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-hdr"><span class="panel-title">PA SIGNAL LOG</span><span class="tag tag-c">D1</span></div>
+      <div id="paLog"><div class="empty">-- NO PA SIGNALS YET --</div></div>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-hdr"><span class="panel-title">PATTERN GUIDE</span></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--b1);">
+      <div style="background:var(--p2);padding:10px 12px;">
+        <div style="font-family:Share Tech Mono;font-size:9px;color:var(--g);letter-spacing:1px;margin-bottom:6px;">BULLISH PATTERNS</div>
+        <div style="font-size:11px;line-height:2;color:var(--tx);">
+          Bullish Engulfing (3/4)<br>
+          Morning Star (4/4)<br>
+          Hammer (2/4)<br>
+          Pin Bar Bull (3/4)
+        </div>
+      </div>
+      <div style="background:var(--p2);padding:10px 12px;">
+        <div style="font-family:Share Tech Mono;font-size:9px;color:var(--r);letter-spacing:1px;margin-bottom:6px;">BEARISH PATTERNS</div>
+        <div style="font-size:11px;line-height:2;color:var(--tx);">
+          Bearish Engulfing (3/4)<br>
+          Evening Star (4/4)<br>
+          Shooting Star (2/4)<br>
+          Pin Bar Bear (3/4)
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -655,7 +693,41 @@ async function pollStatus(){
     }
     if(d.globalLog&&d.globalLog.length!==lastLog){lastLog=d.globalLog.length;renderLog(d.globalLog);}
     if(d.activeSymbols&&d.activeSymbols.indexOf(S.sym)!==-1)loadAndUpdate(S.sym);
+    // PA Bot status
+    if(d.paState) updatePAStatus(d.paState, d.globalLog);
   }catch(e){document.getElementById('dotData').className='dot off';}
+}
+
+function updatePAStatus(paState, globalLog) {
+  var el = document.getElementById('paStatus');
+  if (!el||!paState) return;
+  var syms = Object.keys(paState);
+  if (!syms.length) { el.innerHTML='<div class="empty">-- NO DATA --</div>'; return; }
+  el.innerHTML = syms.filter(function(s){return paState[s].candleCount>0;}).map(function(s){
+    var st = paState[s];
+    var pat = st.stats.lastPattern||'--';
+    var sig = st.stats.lastSignal||'--';
+    var cls = sig==='BUY'?'signal':sig==='SELL'?'closed':'neutral';
+    return '<div class="ft-row">'
+      +'<span class="ft-sym">'+s+'</span>'
+      +'<span style="font-family:Share Tech Mono;font-size:10px;color:var(--dim)">D1:'+st.candleCount+'</span>'
+      +'<span class="ft-val '+cls+'">'+pat+'</span>'
+      +'</div>';
+  }).join('');
+
+  // PA log
+  var paLog = document.getElementById('paLog');
+  if (!paLog) return;
+  var paSignals = (globalLog||[]).filter(function(l){return l.pattern;});
+  if (!paSignals.length) { paLog.innerHTML='<div class="empty">-- NO PA SIGNALS YET --</div>'; return; }
+  paLog.innerHTML = paSignals.slice(0,10).map(function(s){
+    return '<div class="sig-row">'
+      +'<span class="sig-dir '+s.dir.toLowerCase()+'">'+s.dir+'</span>'
+      +'<span class="sig-sym">'+s.sym+'</span>'
+      +'<span class="sig-price" style="color:var(--y)">'+s.pattern+'</span>'
+      +'<span class="sig-time">'+s.time.slice(17,25)+'</span>'
+      +'</div>';
+  }).join('');
 }
 
 function renderLog(log){
