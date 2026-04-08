@@ -562,67 +562,15 @@ async function fetchD1(sym) {
 // ==============================
 // CANDLESTICK PATTERNS
 // ==============================
-function detectPatterns(candles) {
-  if (candles.length < 3) return [];
-  var patterns = [];
-  var c0 = candles[candles.length-1]; // current
-  var c1 = candles[candles.length-2]; // prev
-  var c2 = candles[candles.length-3]; // prev prev
-
-  var body0  = Math.abs(c0.close-c0.open);
-  var body1  = Math.abs(c1.close-c1.open);
-  var range0 = c0.high-c0.low;
-  var range1 = c1.high-c1.low;
-  var isBull0 = c0.close > c0.open;
-  var isBull1 = c1.close > c1.open;
-  var upperWick0 = c0.high - Math.max(c0.open,c0.close);
-  var lowerWick0 = Math.min(c0.open,c0.close) - c0.low;
-
-  // BULLISH ENGULFING
-  if (!isBull1 && isBull0 && c0.open <= c1.close && c0.close >= c1.open && body0 > body1)
-    patterns.push({name:'Bullish Engulfing', dir:'BUY', strength:3});
-
-  // BEARISH ENGULFING
-  if (isBull1 && !isBull0 && c0.open >= c1.close && c0.close <= c1.open && body0 > body1)
-    patterns.push({name:'Bearish Engulfing', dir:'SELL', strength:3});
-
-  // HAMMER (bullish)
-  if (lowerWick0 > body0*2 && upperWick0 < body0*0.5 && range0 > 0)
-    patterns.push({name:'Hammer', dir:'BUY', strength:2});
-
-  // SHOOTING STAR (bearish)
-  if (upperWick0 > body0*2 && lowerWick0 < body0*0.5 && range0 > 0)
-    patterns.push({name:'Shooting Star', dir:'SELL', strength:2});
-
-  // DOJI
-  if (body0 < range0*0.1 && range0 > 0)
-    patterns.push({name:'Doji', dir:'NEUTRAL', strength:1});
-
-  // MORNING STAR (3 candles, bullish)
-  if (!isBull1 && Math.abs(c1.close-c1.open)<range1*0.3 && isBull0 && c0.close > (c2.open+c2.close)/2)
-    patterns.push({name:'Morning Star', dir:'BUY', strength:4});
-
-  // EVENING STAR (3 candles, bearish)
-  var isBull2 = c2.close > c2.open;
-  if (isBull2 && Math.abs(c1.close-c1.open)<range1*0.3 && !isBull0 && c0.close < (c2.open+c2.close)/2)
-    patterns.push({name:'Evening Star', dir:'SELL', strength:4});
-
-  // PIN BAR BULLISH
-  if (lowerWick0 > range0*0.6 && body0 < range0*0.3)
-    patterns.push({name:'Pin Bar Bull', dir:'BUY', strength:3});
-
-  // PIN BAR BEARISH
-  if (upperWick0 > range0*0.6 && body0 < range0*0.3)
-    patterns.push({name:'Pin Bar Bear', dir:'SELL', strength:3});
-
-  // INSIDE BAR (consolidation breakout setup)
-  if (c0.high < c1.high && c0.low > c1.low)
-    patterns.push({name:'Inside Bar', dir:'NEUTRAL', strength:1});
-
-  return patterns;
+// D1 trend via EMA200
+function getD1Trend(candles) {
+  if (!candles||candles.length<50) return null;
+  var ema50 = calcEMA(candles,50);
+  var last = candles[candles.length-1].close;
+  return last > ema50 ? 'BUY' : 'SELL';
 }
 
-// H4 trend filter
+// H4 trend via EMA20
 function getH4Trend(candles) {
   if (!candles||candles.length<20) return null;
   var ema20 = calcEMA(candles,20);
@@ -630,58 +578,165 @@ function getH4Trend(candles) {
   return last > ema20 ? 'BUY' : 'SELL';
 }
 
-// Check Price Action signal
-async function checkPASignal(sym, cooldownMin) {
-  cooldownMin = cooldownMin||240; // 4 hours default for swing
+// Strict pattern detection - only high quality setups
+function detectPatterns(candles) {
+  if (candles.length < 5) return [];
+  var patterns = [];
+  var c0 = candles[candles.length-1];
+  var c1 = candles[candles.length-2];
+  var c2 = candles[candles.length-3];
+
+  var body0 = Math.abs(c0.close-c0.open);
+  var body1 = Math.abs(c1.close-c1.open);
+  var body2 = Math.abs(c2.close-c2.open);
+  var range0 = c0.high-c0.low;
+  var range1 = c1.high-c1.low;
+  var range2 = c2.high-c2.low;
+  var isBull0 = c0.close > c0.open;
+  var isBull1 = c1.close > c1.open;
+  var isBull2 = c2.close > c2.open;
+  var upper0 = c0.high - Math.max(c0.open,c0.close);
+  var lower0 = Math.min(c0.open,c0.close) - c0.low;
+
+  // Avg range for context (last 10 candles)
+  var avgRange = 0;
+  for (var i=candles.length-10;i<candles.length;i++) avgRange+=(candles[i].high-candles[i].low);
+  avgRange=avgRange/10;
+
+  // Only signal if current candle is significant (> 70% avg range)
+  if (range0 < avgRange*0.7) return [];
+
+  // MORNING STAR - strict: 3 specific candles + must be after downtrend
+  var priorDown = candles[candles.length-6] && candles[candles.length-6].close > c2.open;
+  if (priorDown && !isBull2 && body2>avgRange*0.5 &&
+      body1<range1*0.25 && range1>0 &&
+      isBull0 && body0>avgRange*0.5 &&
+      c0.close > (c2.open+c2.close)/2)
+    patterns.push({name:'Morning Star', dir:'BUY', strength:4});
+
+  // EVENING STAR - strict: must be after uptrend
+  var priorUp = candles[candles.length-6] && candles[candles.length-6].close < c2.open;
+  if (priorUp && isBull2 && body2>avgRange*0.5 &&
+      body1<range1*0.25 && range1>0 &&
+      !isBull0 && body0>avgRange*0.5 &&
+      c0.close < (c2.open+c2.close)/2)
+    patterns.push({name:'Evening Star', dir:'SELL', strength:4});
+
+  // BULLISH ENGULFING - strict: must engulf fully + prior downtrend
+  var priorDown2 = !isBull1 && !isBull2;
+  if (priorDown2 && !isBull1 && isBull0 &&
+      c0.open < c1.close && c0.close > c1.open &&
+      body0 > body1*1.5 && body0 > avgRange*0.6)
+    patterns.push({name:'Bullish Engulfing', dir:'BUY', strength:3});
+
+  // BEARISH ENGULFING - strict
+  var priorUp2 = isBull1 && isBull2;
+  if (priorUp2 && isBull1 && !isBull0 &&
+      c0.open > c1.close && c0.close < c1.open &&
+      body0 > body1*1.5 && body0 > avgRange*0.6)
+    patterns.push({name:'Bearish Engulfing', dir:'SELL', strength:3});
+
+  // PIN BAR - strict: wick must be 3x body, small upper wick
+  if (lower0 > body0*3 && upper0 < body0*0.5 && body0 > 0 && range0 > avgRange*0.8)
+    patterns.push({name:'Pin Bar Bull', dir:'BUY', strength:3});
+  if (upper0 > body0*3 && lower0 < body0*0.5 && body0 > 0 && range0 > avgRange*0.8)
+    patterns.push({name:'Pin Bar Bear', dir:'SELL', strength:3});
+
+  return patterns;
+}
+
+// Check if pattern forms near S/R level
+function isNearSR(price, srLevels, atr) {
+  for (var i=0;i<srLevels.length;i++) {
+    if (Math.abs(srLevels[i].price - price) < atr*1.5) return true;
+  }
+  return false;
+}
+
+// Check Price Action signal - STRICT version
+async function checkPASignal(sym) {
+  var COOLDOWN_HOURS = 24; // 24 hour cooldown
   var st = paState[sym];
   if (!st||!st.candlesD1.length||!paRunning) return;
-  if (Date.now()-st.lastSignalTime < cooldownMin*60*1000) return;
+  if (Date.now()-st.lastSignalTime < COOLDOWN_HOURS*60*60*1000) return;
 
-  // Market hours check
   var ms = getMarketStatus(sym);
-  if (ms) return;
+  if (ms) { st.stats.lastPattern='[CHIUSO] '+ms; return; }
 
-  var patterns = detectPatterns(st.candlesD1);
-  if (!patterns.length) return;
+  var c = st.candlesD1;
+  var patterns = detectPatterns(c);
 
-  // Get strongest non-neutral pattern
-  var actionable = patterns.filter(function(p){return p.dir!=='NEUTRAL';});
-  if (!actionable.length) return;
-  actionable.sort(function(a,b){return b.strength-a.strength;});
-  var best = actionable[0];
+  if (!patterns.length) {
+    st.stats.lastPattern='Nessun pattern valido';
+    return;
+  }
 
-  // H4 trend filter - signal must align
+  // Only take strength >= 3
+  var strong = patterns.filter(function(p){return p.strength>=3 && p.dir!=='NEUTRAL';});
+  if (!strong.length) { st.stats.lastPattern='Pattern debole - skip'; return; }
+  strong.sort(function(a,b){return b.strength-a.strength;});
+  var best = strong[0];
+
+  // D1 trend must align
+  var d1Trend = getD1Trend(c);
+  if (d1Trend && d1Trend !== best.dir) {
+    st.stats.lastPattern='D1 trend contro ('+d1Trend+' vs '+best.dir+')';
+    return;
+  }
+
+  // H4 trend must align
   var h4Trend = getH4Trend(st.candlesH4);
   if (h4Trend && h4Trend !== best.dir) {
-    st.stats.lastPattern='H4 contro ('+best.name+')';
+    st.stats.lastPattern='H4 trend contro ('+h4Trend+')';
     return;
   }
 
   // Avoid repeating same direction
-  if (best.dir === st.lastDir) return;
+  if (best.dir === st.lastDir) {
+    st.stats.lastPattern='Stessa direzione precedente - skip';
+    return;
+  }
 
-  var c = st.candlesD1;
   var price = c[c.length-1].close;
   var dec = price>1000?2:price>10?3:4;
+  var atrs = calcATR(c,14);
+  var atr = atrs[atrs.length-1]||0;
 
-  // SL/TP based on D1 ATR
-  var atr = calcATR(c,14)[c.length-2]||0;
-  var minDist = price*0.005;
-  var slDist = Math.max(atr*1.0, minDist); // tighter on D1
-  var tpDist = slDist*2.5; // 1:2.5 for swing
+  // Check if near S/R
+  var srLevels = calcSR(c,100);
+  var nearSR = isNearSR(price, srLevels, atr);
+  if (!nearSR) {
+    st.stats.lastPattern='Non su S/R - skip ('+best.name+')';
+    return;
+  }
+
+  // SL = ATR x2 for D1 swing (realistic)
+  var slDist = Math.max(atr*2.0, price*0.008); // min 0.8%
+  var tpDist = slDist*2.5; // R:R 1:2.5
   var sl = (best.dir==='BUY'?price-slDist:price+slDist).toFixed(dec);
   var tp = (best.dir==='BUY'?price+tpDist:price-tpDist).toFixed(dec);
 
-  // Lot sizes
-  var lots = [100,500,1000].map(function(b){return b+'EUR: '+calcLotSize(sym,b,3,slDist)+' lot';}).join(' | ');
-
-  // All patterns found
-  var allPatterns = patterns.map(function(p){return p.name+(p.dir!=='NEUTRAL'?' ('+p.dir+')':'');}).join(', ');
+  var lots = [100,500,1000].map(function(b){
+    return b+'EUR: '+calcLotSize(sym,b,3,slDist)+' lot';
+  }).join(' | ');
 
   var time = new Date().toUTCString().slice(0,25);
   var name = SYMBOL_NAMES[sym]||sym;
   var nl='\n';
-  var msg='[PA-EA] '+(best.dir==='BUY'?'[BUY]':'[SELL]')+' <b>'+name+'</b> ('+sym+')'+nl+nl+'<b>Pattern:</b> '+best.name+nl+'<b>Forza:</b> '+best.strength+'/4'+nl+'<b>Timeframe:</b> D1 Swing'+nl+'<b>Prezzo:</b> '+price.toFixed(dec)+nl+'<b>SL:</b> '+sl+' | <b>TP:</b> '+tp+nl+'<b>RR:</b> 1:2.5'+nl+nl+(h4Trend?'<b>H4 Trend:</b> '+h4Trend+nl:'')+'<b>Pattern:</b> '+allPatterns+nl+nl+'<b>Lot 3%:</b>'+nl+lots+nl+nl+time+' UTC'+nl+'<i>Non consulenza finanziaria.</i>';
+  var srInfo = srLevels.filter(function(l){return Math.abs(l.price-price)<atr*3;})
+    .map(function(l){return l.type+': '+l.price.toFixed(dec);}).join(' | ');
+
+  var msg='[PA-EA] '+(best.dir==='BUY'?'[BUY]':'[SELL]')+' <b>'+name+'</b> ('+sym+')'+nl+nl+
+    '<b>Pattern D1:</b> '+best.name+' ('+best.strength+'/4)'+nl+
+    '<b>Prezzo:</b> '+price.toFixed(dec)+nl+
+    '<b>SL:</b> '+sl+nl+
+    '<b>TP:</b> '+tp+nl+
+    '<b>R:R:</b> 1:2.5'+nl+nl+
+    '<b>Trend D1:</b> '+(d1Trend||'--')+nl+
+    '<b>Trend H4:</b> '+(h4Trend||'--')+nl+
+    (srInfo?'<b>S/R zona:</b> '+srInfo+nl:'')+nl+
+    '<b>Lot (3%):</b>'+nl+lots+nl+nl+
+    time+' UTC'+nl+'<i>Non consulenza finanziaria.</i>';
 
   var ok = await tgSend(msg);
   if (ok) {
