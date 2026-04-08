@@ -353,6 +353,32 @@ function buildChartUrl(symbol, dir, price, sl, tp, ema50, rsi, candles) {
 }
 
 // STRATEGIES
+// ===============================
+// RISK MANAGEMENT
+// ===============================
+// Pip values per symbol (per 0.01 lot)
+var PIP_VALUE = {
+  EURUSD:0.1, GBPUSD:0.1, USDJPY:0.1, GBPJPY:0.1,
+  AUDUSD:0.1, USDCAD:0.1, USDCHF:0.1, NZDUSD:0.1,
+  XAUUSD:0.01, XAGUSD:0.01,
+  BTCUSD:1.0, ETHUSD:0.1, SOLUSD:0.01
+};
+
+function calcLotSize(symbol, balance, riskPct, slDistance) {
+  var riskAmount = balance * (riskPct / 100);
+  var pipVal = PIP_VALUE[symbol] || 0.1;
+  // SL distance in pips
+  var dec = slDistance > 10 ? 2 : slDistance > 1 ? 4 : 5;
+  var pips = slDistance / (dec === 2 ? 1 : dec === 4 ? 0.0001 : 0.00001);
+  // Lot size formula
+  var lot = riskAmount / (pips * pipVal * 100);
+  // Round to 2 decimals, min 0.01
+  lot = Math.max(0.01, Math.round(lot * 100) / 100);
+  // Cap at 10 lots max
+  lot = Math.min(10, lot);
+  return lot;
+}
+
 var strategies = [{id:1,atr:7,mult:2.0},{id:2,atr:14,mult:3.0},{id:3,atr:21,mult:4.5}];
 
 async function checkSignalsForSymbol(symbol, consensus, cooldownMin) {
@@ -426,6 +452,15 @@ async function checkSignalsForSymbol(symbol, consensus, cooldownMin) {
   var srText = (resistances[0]?'Resistenza: '+resistances[0].price.toFixed(dec)+'\n':'')+(supports[0]?'Supporto: '+supports[0].price.toFixed(dec)+'\n':'');
 
   var time = new Date().toUTCString().slice(0,25);
+
+  // Calculate lot sizes for 100, 500, 1000 EUR balance
+  var balances = [100, 500, 1000];
+  var lotText = '';
+  balances.forEach(function(bal) {
+    var lot = calcLotSize(symbol, bal, 3, slDist);
+    lotText += bal+'EUR: <b>'+lot+' lot</b>  ';
+  });
+
   var msg =
     (dir==='BUY'?'[BUY]':'[SELL]')+' <b>SuperTrend Signal</b>\n\n'+
     '<b>Simbolo:</b> '+symbol+'\n'+
@@ -434,6 +469,7 @@ async function checkSignalsForSymbol(symbol, consensus, cooldownMin) {
     '<b>SL:</b> '+sl+'\n'+
     '<b>TP:</b> '+tp+'\n'+
     '<b>R:R:</b> 1:2\n\n'+
+    '<b>Lot size (rischio 3%):</b>\n'+lotText+'\n\n'+
     (srText?'<b>Livelli:</b>\n'+srText+'\n':'')+
     'ST '+Math.max(bv,sv)+'/3 | H1 | EMA50 | RSI '+rsi.toFixed(1)+' | Vol\n'+
     time+' UTC\n\n'+
