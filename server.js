@@ -77,6 +77,7 @@ function initSymbol(s) {
     candles:[], candlesH1:[], candlesM5:[],
     lastDir:null, lastSignalTime:0,
     lastPreTime:0, lastPreDir:null,
+    lastSRAlertTime:0,
     stats:{ total:0, buys:0, sells:0, lastSignal:'--', lastFilter:'--' },
     log:[]
   };
@@ -434,11 +435,19 @@ async function checkSignal(sym, consensus, cooldownMin) {
     'ST '+Math.max(bv,sv)+'/3 | H1 | EMA50 | M5\n'+
     time+' UTC\n<i>Non consulenza finanziaria.</i>';
 
-  var ok = await tgPhoto(msg, buildChart(sym,dir,price,+sl,+tp,ema50,rsi,st.candles));
+  // MSG 1 - Entry signal, short and immediate
+  var msg1 =
+    '[ST-EA] <b>'+dir+'</b> '+sym+nl+
+    '<b>Prezzo:</b> '+price.toFixed(dec)+nl+
+    '<b>SL:</b> '+sl+' | <b>TP:</b> '+tp+nl+
+    '<b>R:R:</b> 1:2 | <b>Lot:</b> '+calcLotSize(sym,500,3,slDist)+' lot (500EUR)'+nl+
+    '<b>ENTRA ORA!</b>';
+
+  var ok = await tgSend(msg1);
   if (ok) {
     st.stats.total++; if(dir==='BUY')st.stats.buys++;else st.stats.sells++;
     st.stats.lastSignal=dir;
-    st.stats.lastFilter='Segnale inviato: '+dir+' @ '+price.toFixed(dec);
+    st.stats.lastFilter='SEGNALE INVIATO: '+dir+' @ '+price.toFixed(dec);
     st.lastSignalTime=Date.now(); st.lastDir=dir;
     st.log.unshift({dir:dir,price:price.toFixed(dec),time:time,sym:sym,rsi:rsi.toFixed(1),sl:sl,tp:tp});
     if(st.log.length>20) st.log.pop();
@@ -446,6 +455,19 @@ async function checkSignal(sym, consensus, cooldownMin) {
     globalLog.unshift({dir:dir,price:price.toFixed(dec),time:time,sym:sym});
     if(globalLog.length>50) globalLog.pop();
     console.log('SIGNAL: '+sym+' '+dir+' @ '+price.toFixed(dec));
+
+    // MSG 2 - Confirmation with full data after 3 minutes
+    setTimeout(async function(){
+      var msg2 =
+        '[ST-EA] CONFERMA <b>'+dir+'</b> '+sym+nl+nl+
+        '<b>Filtri confermati:</b>'+nl+
+        'ST '+Math.max(bv,sv)+'/3 | H1: '+dir+' | EMA50: '+(dir==='BUY'?'SOPRA':'SOTTO')+nl+
+        'RSI: '+rsi.toFixed(1)+' | Volume: OK'+nl+nl+
+        '<b>Lot size (rischio 3%):</b>'+nl+lots+nl+nl+
+        (srText?'<b>Livelli chiave:</b>'+nl+srText+nl:'')+
+        time+' UTC';
+      await tgPhoto(msg2, buildChart(sym,dir,price,+sl,+tp,ema50,rsi,st.candles));
+    }, 3*60*1000); // 3 minutes delay
   }
 }
 
@@ -453,8 +475,9 @@ async function checkPreSignal(sym, consensus) {
   consensus=consensus||3;
   var st=symbolState[sym];
   if(!st||!st.candles.length||!isRunning) return;
-  if(Date.now()-st.lastPreTime<30*60*1000) return;
   if(getMarketStatus(sym)) return;
+  if(Date.now()-st.lastPreTime<30*60*1000) return;
+
   var bv=0,sv=0;
   for(var i=0;i<strategies.length;i++){
     var r=calcST(st.candles,strategies[i].atr,strategies[i].mult);
@@ -462,14 +485,26 @@ async function checkPreSignal(sym, consensus) {
     if(r[r.length-1].dir===1)bv++;else sv++;
   }
   var h1Dir=null;
-  if(st.candlesH1.length>=2){var sh=calcST(st.candlesH1,14,3.0);if(sh.length)h1Dir=sh[sh.length-1].dir===1?'BUY':'SELL';}
+  if(st.candlesH1.length>=2){
+    var sh=calcST(st.candlesH1,14,3.0);
+    if(sh.length)h1Dir=sh[sh.length-1].dir===1?'BUY':'SELL';
+  }
   var m15Dir=bv>=consensus?'BUY':sv>=consensus?'SELL':null;
-  if(!m15Dir||!h1Dir||m15Dir===h1Dir||m15Dir===st.lastPreDir) return;
+  if(!m15Dir||m15Dir===h1Dir||m15Dir===st.lastPreDir) return;
+
   var price=st.candles[st.candles.length-1].close;
-  var rsi=calcRSI(st.candles,14);
   var dec=price>1000?2:price>10?3:4;
   var name=SYMBOL_NAMES[sym]||sym;
-  var ok=await tgSend('[!] <b>Pre-Segnale: '+name+'</b>\nM15: '+m15Dir+' ('+Math.max(bv,sv)+'/3)\nH1: '+h1Dir+' (opposto)\nPrezzo: '+price.toFixed(dec)+' | RSI: '+rsi.toFixed(1)+'\n<i>H1 deve allinearsi con M15</i>');
+  var nl='\n';
+
+  // Single pre-alert: M15 ready, waiting for H1
+  var ok=await tgSend(
+    '[ST-EA] PREPARATI - <b>'+name+'</b>'+nl+
+    'Direzione: <b>'+m15Dir+'</b>'+nl+
+    'Prezzo: '+price.toFixed(dec)+nl+
+    'Apri Capital.com ORA'+nl+
+    '<i>Segnale in arrivo...</i>'
+  );
   if(ok){st.lastPreTime=Date.now();st.lastPreDir=m15Dir;}
 }
 
