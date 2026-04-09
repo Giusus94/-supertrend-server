@@ -64,7 +64,19 @@ function isValidPrice(sym, price) {
 // ==============================
 // STATE
 // ==============================
-const DEFAULT_SYMBOLS = ['XAUUSD','BTCUSD','EURUSD'];
+// ==============================
+// DEFAULT CONFIG FROM ENV
+// ==============================
+// Set DEFAULT_SYMBOLS on Render Environment to persist symbols
+// e.g. DEFAULT_SYMBOLS=XAUUSD,EURUSD,BTCUSD
+// Set AUTO_START=true to auto-start EA on deploy
+var ENV_SYMBOLS = process.env.DEFAULT_SYMBOLS ? process.env.DEFAULT_SYMBOLS.split(',').map(function(s){return s.trim();}) : null;
+var AUTO_START  = process.env.AUTO_START === 'true';
+var ENV_REFRESH = parseInt(process.env.REFRESH_SEC)||600;
+var ENV_COOLDOWN= parseInt(process.env.COOLDOWN_MIN)||15;
+var ENV_CONSENSUS= parseInt(process.env.CONSENSUS)||3;
+
+const DEFAULT_SYMBOLS = ENV_SYMBOLS || ['XAUUSD','BTCUSD','EURUSD'];
 var isRunning      = false;
 var activeSymbols  = DEFAULT_SYMBOLS.slice();
 var refreshTimer   = null;
@@ -878,6 +890,24 @@ app.get('/api/pa-status', function(req,res) {
 app.listen(PORT, function(){
   console.log('SuperTrend EA v1 on port '+PORT);
   console.log('TG:'+(TG_TOKEN?'OK':'--')+' TD:'+(TD_KEY?'OK':'--'));
+  console.log('Symbols: '+DEFAULT_SYMBOLS.join(', ')+' | AutoStart: '+AUTO_START);
+  // Auto-start EA if AUTO_START=true in environment
+  if (AUTO_START) {
+    console.log('Auto-starting EA on: '+DEFAULT_SYMBOLS.join(', '));
+    activeSymbols = DEFAULT_SYMBOLS.slice();
+    activeSymbols.forEach(function(s){if(!symbolState[s])initSymbol(s);});
+    isRunning = true;
+    paRunning = true;
+    setTimeout(async function(){
+      for(var i=0;i<activeSymbols.length;i++){
+        try{await fetchCandles(activeSymbols[i]);}catch(e){console.error(activeSymbols[i],e.message);}
+        await new Promise(function(r){setTimeout(r,3000);});
+      }
+      startLoop(ENV_REFRESH, ENV_CONSENSUS, ENV_COOLDOWN);
+      startPALoop(3600);
+      console.log('EA auto-started!');
+    }, 3000);
+  }
   (async function(){
     for(var i=0;i<DEFAULT_SYMBOLS.length;i++){
       try{await fetchCandles(DEFAULT_SYMBOLS[i]);}catch(e){console.error(DEFAULT_SYMBOLS[i],e.message);}
