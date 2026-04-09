@@ -694,32 +694,44 @@ async function pollStatus(){
     if(d.globalLog&&d.globalLog.length!==lastLog){lastLog=d.globalLog.length;renderLog(d.globalLog);}
     if(d.activeSymbols&&d.activeSymbols.indexOf(S.sym)!==-1)loadAndUpdate(S.sym);
     // PA Bot status
-    if(d.paState) updatePAStatus(d.paState, d.globalLog);
+    updatePAStatus(d.paState||{}, d.globalLog||[]);
   }catch(e){document.getElementById('dotData').className='dot off';}
 }
 
 function updatePAStatus(paState, globalLog) {
   var el = document.getElementById('paStatus');
-  if (!el||!paState) return;
+  if (!el) return;
+
+  // Show status even if paState is empty
+  if (!paState || !Object.keys(paState).length) {
+    el.innerHTML='<div class="ft-row"><span class="ft-sym" style="color:var(--y)">PA BOT</span><span class="ft-val waiting">Avvia EA per attivare il PA Bot</span></div>';
+    return;
+  }
+
   var syms = Object.keys(paState);
-  if (!syms.length) { el.innerHTML='<div class="empty">-- NO DATA --</div>'; return; }
-  el.innerHTML = syms.filter(function(s){return paState[s].candleCount>0;}).map(function(s){
+  var rows = syms.map(function(s){
     var st = paState[s];
-    var pat = st.stats.lastPattern||'--';
-    var sig = st.stats.lastSignal||'--';
-    var cls = sig==='BUY'?'signal':sig==='SELL'?'closed':'neutral';
+    var pat = st.stats ? (st.stats.lastPattern||'--') : '--';
+    var sig = st.stats ? (st.stats.lastSignal||'--') : '--';
+    var count = st.candleCount||0;
+    var cls = sig==='BUY'?'signal':sig==='SELL'?'closed':pat.indexOf('contro')!==-1||pat.indexOf('skip')!==-1?'waiting':'neutral';
     return '<div class="ft-row">'
       +'<span class="ft-sym">'+s+'</span>'
-      +'<span style="font-family:Share Tech Mono;font-size:10px;color:var(--dim)">D1:'+st.candleCount+'</span>'
+      +'<span style="font-family:Share Tech Mono;font-size:10px;color:'+(count>0?'var(--g)':'var(--dim)')+'">D1:'+count+'</span>'
       +'<span class="ft-val '+cls+'">'+pat+'</span>'
       +'</div>';
-  }).join('');
+  });
+
+  el.innerHTML = rows.length ? rows.join('') : '<div class="empty">-- CARICAMENTO D1 --</div>';
 
   // PA log
   var paLog = document.getElementById('paLog');
   if (!paLog) return;
   var paSignals = (globalLog||[]).filter(function(l){return l.pattern;});
-  if (!paSignals.length) { paLog.innerHTML='<div class="empty">-- NO PA SIGNALS YET --</div>'; return; }
+  if (!paSignals.length) {
+    paLog.innerHTML='<div class="empty">-- NO PA SIGNALS YET --</div>';
+    return;
+  }
   paLog.innerHTML = paSignals.slice(0,10).map(function(s){
     return '<div class="sig-row">'
       +'<span class="sig-dir '+s.dir.toLowerCase()+'">'+s.dir+'</span>'
