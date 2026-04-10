@@ -640,7 +640,7 @@ async function checkPreSignal(sym, consensus) {
 // LOOP
 // ==============================
 function startLoop(refreshSec, consensus, cooldown) {
-  refreshSec=refreshSec||600;
+  refreshSec=refreshSec||120;
   if(refreshTimer) clearInterval(refreshTimer);
   refreshTimer = setInterval(async function() {
     updateLoopTime();
