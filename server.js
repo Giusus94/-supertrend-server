@@ -15,7 +15,7 @@ const RENDER_URL  = process.env.RENDER_URL || '';
 // SYMBOL CONFIG
 // ==============================
 const CRYPTO  = ['BTCUSD','ETHUSD','SOLUSD','XRPUSD','BNBUSD','ADAUSD'];
-const METALS  = ['XAUUSD','XAGUSD'];
+const METALS  = ['XAUUSD','XAGUSD','WTIUSD','BRNUSD','USOIL','UKOIL'];
 const FOREX   = ['EURUSD','GBPUSD','USDJPY','GBPJPY','AUDUSD','USDCAD','USDCHF','NZDUSD'];
 
 const TD_MAP = {
@@ -27,6 +27,8 @@ const TD_MAP = {
 
 const YAHOO_MAP = {
   XAUUSD:'GC=F', XAGUSD:'SI=F',
+  WTIUSD:'CL=F', BRNUSD:'BZ=F',
+  USOIL:'CL=F', UKOIL:'BZ=F',
   EURUSD:'EURUSD=X', GBPUSD:'GBPUSD=X', USDJPY:'USDJPY=X',
   GBPJPY:'GBPJPY=X', AUDUSD:'AUDUSD=X', USDCAD:'USDCAD=X',
   USDCHF:'USDCHF=X', NZDUSD:'NZDUSD=X'
@@ -36,6 +38,7 @@ const PRICE_RANGES = {
   BTCUSD:[20000,200000], ETHUSD:[500,20000], SOLUSD:[10,1000],
   XRPUSD:[0.1,100], BNBUSD:[100,5000], ADAUSD:[0.01,10],
   XAUUSD:[1000,8000], XAGUSD:[10,200],
+  WTIUSD:[20,200], BRNUSD:[20,200], USOIL:[20,200], UKOIL:[20,200],
   EURUSD:[0.8,1.6], GBPUSD:[0.9,1.8], USDJPY:[80,200],
   GBPJPY:[100,250], AUDUSD:[0.5,1.1], USDCAD:[1.0,1.8],
   USDCHF:[0.7,1.3], NZDUSD:[0.4,1.0]
@@ -53,7 +56,9 @@ const SYMBOL_NAMES = {
   EURUSD:'Euro/Dollaro', GBPUSD:'Sterlina/Dollaro',
   USDJPY:'Dollaro/Yen', GBPJPY:'Sterlina/Yen',
   AUDUSD:'Aussie/Dollaro', USDCAD:'Dollaro/Cad',
-  BTCUSD:'Bitcoin', ETHUSD:'Ethereum', SOLUSD:'Solana'
+  BTCUSD:'Bitcoin', ETHUSD:'Ethereum', SOLUSD:'Solana',
+  WTIUSD:'Petrolio WTI', BRNUSD:'Petrolio Brent',
+  USOIL:'Petrolio WTI', UKOIL:'Petrolio Brent'
 };
 
 function isValidPrice(sym, price) {
