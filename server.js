@@ -238,6 +238,124 @@ function getNearestOB(price, obs, atr) {
   return nearby.slice(0,2);
 }
 
+// ==============================
+// CHoCH - Change of Character (M15)
+// Detects when price breaks above previous swing high (BUY reversal)
+// or below previous swing low (SELL reversal)
+// ==============================
+function detectCHoCH(candles) {
+  if (candles.length < 10) return null;
+
+  var len = candles.length;
+  var last = candles[len-1];
+
+  // Find previous swing high and low in last 20 candles
+  var swingHigh = 0, swingLow = 999999;
+  var swingHighIdx = 0, swingLowIdx = 0;
+
+  for (var i = len-10; i < len-1; i++) {
+    if (candles[i].high > swingHigh) {
+      swingHigh = candles[i].high;
+      swingHighIdx = i;
+    }
+    if (candles[i].low < swingLow) {
+      swingLow = candles[i].low;
+      swingLowIdx = i;
+    }
+  }
+
+  // CHoCH BUY: current candle closes above previous swing high
+  // AND previous candle was bearish (confirms reversal)
+  var prevBear = candles[len-2].close < candles[len-2].open;
+  var prevBull = candles[len-2].close > candles[len-2].open;
+
+  if (last.close > swingHigh && prevBear) {
+    return { type: 'BUY', level: swingHigh, strength: 'strong' };
+  }
+
+  // CHoCH SELL: current candle closes below previous swing low
+  if (last.close < swingLow && prevBull) {
+    return { type: 'SELL', level: swingLow, strength: 'strong' };
+  }
+
+  // Weaker CHoCH: just closing above/below swing without confirmation
+  if (last.close > swingHigh) return { type: 'BUY', level: swingHigh, strength: 'weak' };
+  if (last.close < swingLow)  return { type: 'SELL', level: swingLow, strength: 'weak' };
+
+  return null;
+}
+
+// ==============================
+// SESSION FILTER
+// Best trading sessions for each market type
+// London: 08:00-12:00 UTC | NY: 13:30-17:00 UTC | Overlap: best!
+// ==============================
+function isOptimalSession(sym) {
+  // Crypto trades 24/7 - always optimal
+  if (CRYPTO.indexOf(sym) !== -1) return true;
+
+  var now = new Date();
+  var utcHour = now.getUTCHours();
+  var utcMin  = now.getUTCMinutes();
+  var utcTime = utcHour * 100 + utcMin;
+
+  // London open: 07:00-12:00 UTC
+  var londonOpen = utcTime >= 700 && utcTime <= 1200;
+  // NY open: 13:30-17:30 UTC
+  var nyOpen = utcTime >= 1330 && utcTime <= 1730;
+  // Overlap (best): 13:30-16:00 UTC
+  var overlap = utcTime >= 1330 && utcTime <= 1600;
+
+  // For JPY pairs also include Tokyo session: 00:00-03:00 UTC
+  var tokyoOpen = utcTime >= 0 && utcTime <= 300;
+  if (sym === 'USDJPY' || sym === 'GBPJPY') {
+    return londonOpen || nyOpen || tokyoOpen;
+  }
+
+  // Gold trades best during London+NY
+  if (sym === 'XAUUSD' || sym === 'XAGUSD') {
+    return londonOpen || nyOpen;
+  }
+
+  // All other Forex: London + NY sessions
+  return londonOpen || nyOpen;
+}
+
+function getSessionName(sym) {
+  var now = new Date();
+  var utcTime = now.getUTCHours() * 100 + now.getUTCMinutes();
+  if (utcTime >= 700  && utcTime <= 1200) return 'London';
+  if (utcTime >= 1330 && utcTime <= 1600) return 'London+NY';
+  if (utcTime >= 1600 && utcTime <= 1730) return 'NY';
+  if (utcTime >= 0    && utcTime <= 300)  return 'Tokyo';
+  return 'Off-session';
+}
+
+// ==============================
+// S/R PROXIMITY CHECK
+// Signal is stronger when near a key S/R level or OB
+// ==============================
+function isNearKeyLevel(price, dir, srLevels, obs, atr) {
+  // Check S/R levels
+  var relevant = srLevels.filter(function(l) {
+    var dist = Math.abs(l.price - price);
+    var pct  = dist / price;
+    // Within 0.3% of price
+    return pct < 0.003;
+  });
+  if (relevant.length > 0) return { confirmed: true, type: 'S/R', level: relevant[0].price };
+
+  // Check Order Blocks
+  var nearOB = obs.filter(function(ob) {
+    return Math.abs(ob.mid - price) < atr * 2 &&
+           ((dir === 'BUY'  && ob.type === 'BUY')  ||
+            (dir === 'SELL' && ob.type === 'SELL'));
+  });
+  if (nearOB.length > 0) return { confirmed: true, type: 'OB', level: nearOB[0].mid };
+
+  return { confirmed: false };
+}
+
 // ADX - Average Directional Index
 // Returns ADX value (>25 = strong trend, <20 = weak/lateral)
 function calcADX(c, period) {
@@ -463,6 +581,9 @@ function buildChart(sym, dir, price, sl, tp, ema50, rsi, candles) {
 var strategies = [{id:1,atr:7,mult:2.0},{id:2,atr:14,mult:3.0},{id:3,atr:21,mult:4.5}];
 
 async function checkSignal(sym, consensus, cooldownMin) {
+  // Use per-symbol consensus if defined, otherwise use global setting
+  var symF0 = getSymbolFilters(sym);
+  if (symF0.consensus) consensus = symF0.consensus;
   consensus   = consensus||3;
   cooldownMin = cooldownMin||15;
   var st = symbolState[sym];
@@ -484,6 +605,8 @@ async function checkSignal(sym, consensus, cooldownMin) {
   }
   var dir = null;
   if (bv>=consensus) dir='BUY'; else if (sv>=consensus) dir='SELL';
+  // Log what blocked the signal for dashboard visibility
+  if (!dir) { st.stats.lastFilter='ST consensus insufficiente (BUY:'+bv+' SELL:'+sv+' needed:'+consensus+')'; return; }
   if (!dir||dir===st.lastDir) return;
 
   var price = st.candles[st.candles.length-1].close;
@@ -521,8 +644,30 @@ async function checkSignal(sym, consensus, cooldownMin) {
     }
   }
 
+  // SESSION FILTER - only trade during active market sessions
+  if (CRYPTO.indexOf(sym) === -1 && !isOptimalSession(sym)) {
+    st.stats.lastFilter = 'Sessione inattiva ('+getSessionName(sym)+') - aspetta London/NY';
+    return;
+  }
+
+  // S/R + OB CONFIRMATION - signal stronger near key levels
+  var atr0    = calcATR(st.candles,14)[st.candles.length-2]||0;
+  var srCheck = calcSR(st.candles, 50);
+  var obCheck = detectOrderBlocks(st.candles);
+  var keyLvl  = isNearKeyLevel(price, dir, srCheck, obCheck, atr0);
+
+  // CHoCH CHECK - detect reversal pattern for extra confirmation
+  var choch   = detectCHoCH(st.candles);
+  var chochOk = choch && choch.type === dir;
+
+  // If NOT near any key level AND no CHoCH, skip weak signals in middle of range
+  if (!keyLvl.confirmed && !chochOk) {
+    st.stats.lastFilter = 'Nessun livello chiave vicino - segnale debole';
+    return;
+  }
+
   // ALL PASSED - build signal
-  var atr     = calcATR(st.candles,14)[st.candles.length-2]||0;
+  var atr     = atr0;
   var dec     = price>1000?2:price>10?3:4;
   var minDist = price*0.005;
   var slDist  = Math.max(atr*1.5,minDist);
@@ -552,12 +697,19 @@ async function checkSignal(sym, consensus, cooldownMin) {
     time+' UTC\n<i>Non consulenza finanziaria.</i>';
 
   // MSG 1 - Entry signal, short and immediate
+  // Build context info for message
+  var sessionNow = getSessionName(sym);
+  var chochNow   = detectCHoCH(st.candles);
+  var chochInfo  = chochNow && chochNow.type===dir ? ' | CHoCH '+chochNow.strength : '';
+  var keyLvlNow  = isNearKeyLevel(price,dir,srLevels,obs,atr);
+  var keyInfo    = keyLvlNow.confirmed ? ' | '+keyLvlNow.type+' '+keyLvlNow.level.toFixed(dec) : '';
+
   var msg1 =
     '[ST-EA] <b>'+dir+'</b> '+sym+nl+
     '<b>Prezzo:</b> '+price.toFixed(dec)+nl+
     '<b>SL:</b> '+sl+' | <b>TP:</b> '+tp+nl+
     '<b>R:R:</b> 1:2 | <b>Lot:</b> '+calcLotSize(sym,500,3,slDist)+' lot (500EUR)'+nl+
-    (obConfirm?'<b>OB Confermato!</b>'+nl:'')+
+    '<b>Sessione:</b> '+sessionNow+chochInfo+keyInfo+nl+
     '<b>ENTRA ORA!</b>';
 
   var ok = await tgSend(msg1);
