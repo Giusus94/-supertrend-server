@@ -382,11 +382,11 @@ async function fetchCandles(sym) {
     // M15
     var okM15 = await fetchYahoo(sym,'15m','5d','candles',st);
     if (!okM15) if (!await fetchTD(sym,'15min',200,'candles',st)) genDemo(sym,'candles',st,200);
-    await new Promise(function(r){setTimeout(r,1500);});
+    await new Promise(function(r){setTimeout(r,500);});
     // H1
     var okH1 = await fetchYahoo(sym,'1h','30d','candlesH1',st);
     if (!okH1) if (!await fetchTD(sym,'1h',100,'candlesH1',st)) genDemo(sym,'candlesH1',st,100);
-    await new Promise(function(r){setTimeout(r,1500);});
+    await new Promise(function(r){setTimeout(r,500);});
     // M5
     var okM5 = await fetchYahoo(sym,'5m','1d','candlesM5',st);
     if (!okM5) if (!await fetchTD(sym,'5min',100,'candlesM5',st)) genDemo(sym,'candlesM5',st,100);
@@ -656,7 +656,7 @@ function startLoop(refreshSec, consensus, cooldown) {
         await fetchCandles(sym);
         await checkSignal(sym,consensus,cooldown);
         await checkPreSignal(sym,consensus);
-        await new Promise(function(r){setTimeout(r,3000);});
+        await new Promise(function(r){setTimeout(r,1000);});
       } catch(e){console.error('Loop '+sym+': '+e.message);}
     }
     loopRunning = false;
@@ -926,7 +926,7 @@ function startPALoop(refreshSec) {
       try {
         await fetchD1(sym);
         await checkPASignal(sym);
-        await new Promise(function(r){setTimeout(r,2000);});
+        await new Promise(function(r){setTimeout(r,800);});
       } catch(e){console.error('PA Loop '+sym+': '+e.message);}
     }
   }, refreshSec*1000);
@@ -978,7 +978,7 @@ setInterval(async function() {
     console.log('WATCHDOG: Loop never started, starting now...');
     for (var i=0;i<activeSymbols.length;i++) {
       try { await fetchCandles(activeSymbols[i]); } catch(e) {}
-      await new Promise(function(r){setTimeout(r,2000);});
+      await new Promise(function(r){setTimeout(r,800);});
     }
     startLoop(ENV_REFRESH, ENV_CONSENSUS, ENV_COOLDOWN);
   }
@@ -1008,12 +1008,12 @@ app.post('/api/start', async function(req,res) {
   try{
     for(var j=0;j<activeSymbols.length;j++){
       await fetchCandles(activeSymbols[j]);
-      await new Promise(function(r){setTimeout(r,3000);});
+      await new Promise(function(r){setTimeout(r,1000);});
     }
     startLoop(ref||600,cons||3,cool||15);
     // Start PA bot too
     paRunning=true;
-    (async function(){for(var k=0;k<PA_SYMBOLS.length;k++){try{await fetchD1(PA_SYMBOLS[k]);}catch(e){}await new Promise(function(r){setTimeout(r,1500);});}}());
+    (async function(){for(var k=0;k<PA_SYMBOLS.length;k++){try{await fetchD1(PA_SYMBOLS[k]);}catch(e){}await new Promise(function(r){setTimeout(r,500);});}}());
     startPALoop(3600);
     await tgSend('SuperTrend EA v1 Avviato\nSimbolii: '+activeSymbols.join(', ')+'\nFiltri: ST(3TF)+H1+EMA50+RSI+VOL+M5\n'+new Date().toUTCString().slice(0,25));
     res.json({ok:true,message:'EA v1 avviato su '+activeSymbols.join(', ')});
@@ -1067,7 +1067,7 @@ app.listen(PORT, function(){
   setTimeout(async function(){
     for(var i=0;i<activeSymbols.length;i++){
       try{await fetchCandles(activeSymbols[i]);}catch(e){console.error(activeSymbols[i],e.message);}
-      await new Promise(function(r){setTimeout(r,3000);});
+      await new Promise(function(r){setTimeout(r,1000);});
     }
     startLoop(ENV_REFRESH, ENV_CONSENSUS, ENV_COOLDOWN);
     startPALoop(3600);
@@ -1078,7 +1078,7 @@ app.listen(PORT, function(){
   (async function(){
     for(var i=0;i<DEFAULT_SYMBOLS.length;i++){
       try{await fetchCandles(DEFAULT_SYMBOLS[i]);}catch(e){console.error(DEFAULT_SYMBOLS[i],e.message);}
-      await new Promise(function(r){setTimeout(r,4000);});
+      await new Promise(function(r){setTimeout(r,1500);});
     }
   })();
 });
