@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <title>SuperTrend EA v1</title>
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <style>
@@ -552,6 +553,7 @@ function calcADX(c,p){
   if(!dx.length)return 0;
   return dx.slice(-p).reduce(function(a,b){return a+b;},0)/Math.min(p,dx.length);
 }
+function calcAvgVol(c,p){p=p||20;var s=c.slice(-p),sum=0;for(var i=0;i<s.length;i++)sum+=(s[i].vol||0);return sum/s.length;}
 function calcEMA(c,p){if(c.length<p)return c[c.length-1].close;var k=2/(p+1),ema=0;for(var i=0;i<p;i++)ema+=c[i].close;ema=ema/p;for(var j=p;j<c.length;j++)ema=c[j].close*k+ema*(1-k);return ema;}
 function calcSR(c,look){look=look||50;var r=c.slice(-look),lv=[];for(var i=2;i<r.length-2;i++){if(r[i].high>r[i-1].high&&r[i].high>r[i-2].high&&r[i].high>r[i+1].high&&r[i].high>r[i+2].high)lv.push({price:r[i].high,type:'R',str:1});if(r[i].low<r[i-1].low&&r[i].low<r[i-2].low&&r[i].low<r[i+1].low&&r[i].low<r[i+2].low)lv.push({price:r[i].low,type:'S',str:1});}var mg=[];for(var k=0;k<lv.length;k++){var nb=null;for(var m=0;m<mg.length;m++){if(Math.abs(mg[m].price-lv[k].price)/lv[k].price<0.003){nb=mg[m];break;}}if(nb)nb.str++;else mg.push({price:lv[k].price,type:lv[k].type,str:1});}mg.sort(function(a,b){return b.str-a.str;});return mg.slice(0,6);}
 function calcLot(sym,bal,slD){var ra=bal*0.03,pv=PIP[sym]||10,dec=slD>10?2:slD>1?4:5,pips=dec===2?slD:slD/(dec===4?0.0001:0.00001);return Math.min(10,Math.max(0.01,Math.round(ra/(pips*pv*100)*100)/100));}
