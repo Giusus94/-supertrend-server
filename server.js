@@ -243,44 +243,39 @@ function getNearestOB(price, obs, atr) {
 // Detects when price breaks above previous swing high (BUY reversal)
 // or below previous swing low (SELL reversal)
 // ==============================
-function detectCHoCH(candles) {
-  if (candles.length < 10) return null;
+// detectCHoCH — two levels matching Pine Script v1.1
+// Uses 20-candle lookback and requires a minimum 0.05% break to filter noise.
+// Returns { type, level, strength } where strength is 'confirmed' or 'informative'.
+// 'confirmed'  = break + H1 already aligned  → contributes to signal
+// 'informative'= break only, H1 not yet aligned → updates lastFilter only
+function detectCHoCH(candles, h1Dir) {
+  if (candles.length < 22) return null;
 
   var len = candles.length;
   var last = candles[len-1];
+  var prev = candles[len-2];
+  var minBreak = last.close * 0.0005; // 0.05% minimum significance
 
-  // Find previous swing high and low in last 20 candles
+  // Find swing high and low in last 20 candles (excluding current)
   var swingHigh = 0, swingLow = 999999;
-  var swingHighIdx = 0, swingLowIdx = 0;
-
-  for (var i = len-10; i < len-1; i++) {
-    if (candles[i].high > swingHigh) {
-      swingHigh = candles[i].high;
-      swingHighIdx = i;
-    }
-    if (candles[i].low < swingLow) {
-      swingLow = candles[i].low;
-      swingLowIdx = i;
-    }
+  for (var i = len-21; i < len-1; i++) {
+    if (candles[i].high > swingHigh) swingHigh = candles[i].high;
+    if (candles[i].low  < swingLow)  swingLow  = candles[i].low;
   }
 
-  // CHoCH BUY: current candle closes above previous swing high
-  // AND previous candle was bearish (confirms reversal)
-  var prevBear = candles[len-2].close < candles[len-2].open;
-  var prevBull = candles[len-2].close > candles[len-2].open;
-
-  if (last.close > swingHigh && prevBear) {
-    return { type: 'BUY', level: swingHigh, strength: 'strong' };
+  // CHoCH BUY: bullish candle closes meaningfully above swing high
+  var isBullBreak = last.close > open && last.close > swingHigh + minBreak;
+  if (isBullBreak) {
+    var strength = (h1Dir === 'BUY') ? 'confirmed' : 'informative';
+    return { type: 'BUY', level: swingHigh, strength: strength };
   }
 
-  // CHoCH SELL: current candle closes below previous swing low
-  if (last.close < swingLow && prevBull) {
-    return { type: 'SELL', level: swingLow, strength: 'strong' };
+  // CHoCH SELL: bearish candle closes meaningfully below swing low
+  var isBearBreak = last.close < last.open && last.close < swingLow - minBreak;
+  if (isBearBreak) {
+    var strength2 = (h1Dir === 'SELL') ? 'confirmed' : 'informative';
+    return { type: 'SELL', level: swingLow, strength: strength2 };
   }
-
-  // Weaker CHoCH: just closing above/below swing without confirmation
-  if (last.close > swingHigh) return { type: 'BUY', level: swingHigh, strength: 'weak' };
-  if (last.close < swingLow)  return { type: 'SELL', level: swingLow, strength: 'weak' };
 
   return null;
 }
@@ -656,13 +651,49 @@ async function checkSignal(sym, consensus, cooldownMin) {
   var obCheck = detectOrderBlocks(st.candles);
   var keyLvl  = isNearKeyLevel(price, dir, srCheck, obCheck, atr0);
 
-  // CHoCH CHECK - detect reversal pattern for extra confirmation
-  var choch   = detectCHoCH(st.candles);
-  var chochOk = choch && choch.type === dir;
+  // MOMENTUM FILTER - price must be moving in signal direction
+  // For BUY: current candle must be green, price rising vs 2 bars ago,
+  //          and at least 2 of last 3 candles must be green.
+  // This prevents buying into a falling candle even if indicators say BUY.
+  var c = st.candles;
+  var len = c.length;
+  var greenCount = (c[len-1].close>c[len-1].open?1:0) + (c[len-2].close>c[len-2].open?1:0) + (c[len-3].close>c[len-3].open?1:0);
+  var redCount   = (c[len-1].close<c[len-1].open?1:0) + (c[len-2].close<c[len-2].open?1:0) + (c[len-3].close<c[len-3].open?1:0);
+  var momentumOk = false;
+  if (dir === 'BUY') {
+    momentumOk = c[len-1].close > c[len-1].open &&
+                 c[len-1].close > c[len-3].close &&
+                 greenCount >= 2;
+  } else {
+    momentumOk = c[len-1].close < c[len-1].open &&
+                 c[len-1].close < c[len-3].close &&
+                 redCount >= 2;
+  }
+  if (!momentumOk) {
+    st.stats.lastFilter = 'Momentum assente - candele contro direzione';
+    return;
+  }
 
-  // If NOT near any key level AND no CHoCH, skip weak signals in middle of range
+  // CHoCH CHECK - pass H1 direction so strength is evaluated correctly
+  var h1DirNow = 'WAIT';
+  if (st.candlesH1.length >= 2) {
+    var stH1tmp = calcST(st.candlesH1, 14, 3.0);
+    if (stH1tmp.length) h1DirNow = stH1tmp[stH1tmp.length-1].dir===1?'BUY':'SELL';
+  }
+  var choch   = detectCHoCH(st.candles, h1DirNow);
+  // Only a 'confirmed' CHoCH (H1 agrees) counts as confirmation
+  var chochOk = choch && choch.type === dir && choch.strength === 'confirmed';
+
+  // Update filter status with informative CHoCH so dashboard shows it
+  if (choch && choch.type === dir && choch.strength === 'informative') {
+    st.stats.lastFilter = 'CHoCH informativo '+dir+' - aspetta H1';
+  }
+
+  // If NOT near any key level AND no confirmed CHoCH, skip weak signal
   if (!keyLvl.confirmed && !chochOk) {
-    st.stats.lastFilter = 'Nessun livello chiave vicino - segnale debole';
+    if (!st.stats.lastFilter || st.stats.lastFilter === '--') {
+      st.stats.lastFilter = 'Nessun livello chiave vicino - segnale debole';
+    }
     return;
   }
 
