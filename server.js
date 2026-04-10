@@ -640,7 +640,7 @@ async function checkPreSignal(sym, consensus) {
 // LOOP
 // ==============================
 function startLoop(refreshSec, consensus, cooldown) {
-  refreshSec=refreshSec||120;
+  refreshSec=refreshSec||600;
   if(refreshTimer) clearInterval(refreshTimer);
   refreshTimer = setInterval(async function() {
     updateLoopTime();
@@ -941,21 +941,23 @@ if(RENDER_URL) {
   }, 14*60*1000);
 }
 
-// Watchdog: restart loop if it stops unexpectedly
-var lastLoopTime = Date.now();
-
-function updateLoopTime() { lastLoopTime = Date.now(); }
-
+// Watchdog: restart loop if stuck
 setInterval(async function(){
   if (!isRunning) return;
   var elapsed = Date.now() - lastLoopTime;
-  // If loop hasn't run in 20 minutes, restart it
-  if (elapsed > 20*60*1000) {
-    console.log('Watchdog: loop stalled for '+Math.round(elapsed/60000)+' min, restarting...');
+  if (lastLoopTime > 0 && elapsed > 15*60*1000) {
+    console.log('Watchdog: loop stalled '+Math.round(elapsed/60000)+' min, restarting...');
+    loopRunning = false;
+    if (refreshTimer) clearInterval(refreshTimer);
     startLoop(ENV_REFRESH, ENV_CONSENSUS, ENV_COOLDOWN);
-    await tgSend('Watchdog: EA loop riavviato automaticamente');
+    await tgSend('Watchdog: loop riavviato');
   }
-}, 5*60*1000);
+  // Force start if never ran
+  if (lastLoopTime === 0 && isRunning) {
+    console.log('Watchdog: loop never started, forcing start...');
+    startLoop(ENV_REFRESH, ENV_CONSENSUS, ENV_COOLDOWN);
+  }
+}, 3*60*1000);
 
 // ==============================
 // WATCHDOG - restart loop if stuck
@@ -1022,6 +1024,11 @@ app.post('/api/stop', async function(req,res) {
   isRunning=false; paRunning=false; if(refreshTimer)clearInterval(refreshTimer); if(paTimer)clearInterval(paTimer);
   await tgSend('EA v1 Fermato');
   res.json({ok:true});
+});
+
+app.get('/api/test', async function(req,res) {
+  var ok=await tgSend('Test OK! EA: '+(isRunning?'RUNNING':'STOPPED')+' Simboli: '+activeSymbols.join(', '));
+  res.json({ok:ok, message:ok?'Inviato!':'Errore TG'});
 });
 
 app.post('/api/test', async function(req,res) {
