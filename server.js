@@ -86,6 +86,8 @@ var isRunning      = false;
 var activeSymbols  = DEFAULT_SYMBOLS.slice();
 var refreshTimer   = null;
 var globalStats    = { total:0, buys:0, sells:0 };
+var lastLoopTime   = 0;
+var loopRunning    = false;
 var globalLog      = [];
 var symbolState    = {};
 
@@ -641,6 +643,7 @@ function startLoop(refreshSec, consensus, cooldown) {
   refreshSec=refreshSec||600;
   if(refreshTimer) clearInterval(refreshTimer);
   refreshTimer = setInterval(async function() {
+    updateLoopTime();
     for(var i=0;i<activeSymbols.length;i++) {
       var sym=activeSymbols[i], st=symbolState[sym];
       try {
@@ -656,6 +659,7 @@ function startLoop(refreshSec, consensus, cooldown) {
         await new Promise(function(r){setTimeout(r,3000);});
       } catch(e){console.error('Loop '+sym+': '+e.message);}
     }
+    loopRunning = false;
   }, refreshSec*1000);
 }
 
@@ -929,13 +933,54 @@ function startPALoop(refreshSec) {
 }
 
 // ==============================
-// KEEP-ALIVE
+// KEEP-ALIVE + WATCHDOG
 // ==============================
 if(RENDER_URL) {
   setInterval(async function(){
     try{await fetch(RENDER_URL+'/api/status');}catch(e){}
   }, 14*60*1000);
 }
+
+// Watchdog: restart loop if it stops unexpectedly
+var lastLoopTime = Date.now();
+
+function updateLoopTime() { lastLoopTime = Date.now(); }
+
+setInterval(async function(){
+  if (!isRunning) return;
+  var elapsed = Date.now() - lastLoopTime;
+  // If loop hasn't run in 20 minutes, restart it
+  if (elapsed > 20*60*1000) {
+    console.log('Watchdog: loop stalled for '+Math.round(elapsed/60000)+' min, restarting...');
+    startLoop(ENV_REFRESH, ENV_CONSENSUS, ENV_COOLDOWN);
+    await tgSend('Watchdog: EA loop riavviato automaticamente');
+  }
+}, 5*60*1000);
+
+// ==============================
+// WATCHDOG - restart loop if stuck
+// ==============================
+setInterval(async function() {
+  if (!isRunning) return;
+  var now = Date.now();
+  // If loop hasn't run in 20 minutes, restart it
+  if (lastLoopTime > 0 && now - lastLoopTime > 20*60*1000) {
+    console.log('WATCHDOG: Loop stuck! Restarting...');
+    loopRunning = false;
+    if (refreshTimer) clearInterval(refreshTimer);
+    startLoop(ENV_REFRESH, ENV_CONSENSUS, ENV_COOLDOWN);
+    await tgSend('Watchdog: EA loop riavviato automaticamente');
+  }
+  // If loop was never started but isRunning=true, start it
+  if (lastLoopTime === 0 && isRunning) {
+    console.log('WATCHDOG: Loop never started, starting now...');
+    for (var i=0;i<activeSymbols.length;i++) {
+      try { await fetchCandles(activeSymbols[i]); } catch(e) {}
+      await new Promise(function(r){setTimeout(r,2000);});
+    }
+    startLoop(ENV_REFRESH, ENV_CONSENSUS, ENV_COOLDOWN);
+  }
+}, 5*60*1000); // check every 5 minutes
 
 // ==============================
 // API
@@ -1006,22 +1051,23 @@ app.listen(PORT, function(){
   console.log('TG:'+(TG_TOKEN?'OK':'--')+' TD:'+(TD_KEY?'OK':'--'));
   console.log('Symbols: '+DEFAULT_SYMBOLS.join(', ')+' | AutoStart: '+AUTO_START);
   // Auto-start EA if AUTO_START=true in environment
-  if (AUTO_START) {
-    console.log('Auto-starting EA on: '+DEFAULT_SYMBOLS.join(', '));
-    activeSymbols = DEFAULT_SYMBOLS.slice();
-    activeSymbols.forEach(function(s){if(!symbolState[s])initSymbol(s);});
-    isRunning = true;
-    paRunning = true;
-    setTimeout(async function(){
-      for(var i=0;i<activeSymbols.length;i++){
-        try{await fetchCandles(activeSymbols[i]);}catch(e){console.error(activeSymbols[i],e.message);}
-        await new Promise(function(r){setTimeout(r,3000);});
-      }
-      startLoop(ENV_REFRESH, ENV_CONSENSUS, ENV_COOLDOWN);
-      startPALoop(3600);
-      console.log('EA auto-started!');
-    }, 3000);
-  }
+  // Always auto-start regardless of AUTO_START env
+  console.log('Auto-starting EA on: '+DEFAULT_SYMBOLS.join(', '));
+  activeSymbols = DEFAULT_SYMBOLS.slice();
+  activeSymbols.forEach(function(s){if(!symbolState[s])initSymbol(s);});
+  isRunning = true;
+  paRunning = true;
+  setTimeout(async function(){
+    for(var i=0;i<activeSymbols.length;i++){
+      try{await fetchCandles(activeSymbols[i]);}catch(e){console.error(activeSymbols[i],e.message);}
+      await new Promise(function(r){setTimeout(r,3000);});
+    }
+    startLoop(ENV_REFRESH, ENV_CONSENSUS, ENV_COOLDOWN);
+    startPALoop(3600);
+    lastLoopTime = Date.now();
+    console.log('EA auto-started!');
+    await tgSend('SuperTrend EA v1 Online - Simboli: '+activeSymbols.join(', '));
+  }, 5000);
   (async function(){
     for(var i=0;i<DEFAULT_SYMBOLS.length;i++){
       try{await fetchCandles(DEFAULT_SYMBOLS[i]);}catch(e){console.error(DEFAULT_SYMBOLS[i],e.message);}
