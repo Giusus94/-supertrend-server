@@ -613,12 +613,18 @@ function switchSym(sym){
 
 async function loadAndUpdate(sym){
   try{
-    var r=await fetch('/api/candles/'+sym);var d=await r.json();
-    if(d.candles&&d.candles.length){
-      S.candles[sym]=d.candles;S.h1[sym]=d.candlesH1||[];S.m5[sym]=d.candlesM5||[];
-      updateAnalysis(sym);updateSR(sym);updateRisk();
+    var r=await fetch('/api/candles/'+sym);
+    if(!r.ok) return;
+    var d=await r.json();
+    if(d.candles&&d.candles.length>0){
+      S.candles[sym]=d.candles;
+      S.h1[sym]=d.candlesH1||[];
+      S.m5[sym]=d.candlesM5||[];
+      updateAnalysis(sym);
+      updateSR(sym);
+      updateRisk();
     }
-  }catch(e){}
+  }catch(e){ console.log('loadAndUpdate error: '+e.message); }
 }
 
 function updateAnalysis(sym){
@@ -725,7 +731,8 @@ async function pollStatus(){
       }).join('');
     }
     if(d.globalLog&&d.globalLog.length!==lastLog){lastLog=d.globalLog.length;renderLog(d.globalLog);}
-    if(d.activeSymbols&&d.activeSymbols.indexOf(S.sym)!==-1)loadAndUpdate(S.sym);
+    // Always refresh candles for current display symbol
+    loadAndUpdate(S.sym);
     // PA Bot status
     updatePAStatus(d.paState||{}, d.globalLog||[]);
   }catch(e){document.getElementById('dotData').className='dot off';}
