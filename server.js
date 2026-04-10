@@ -264,7 +264,7 @@ function detectCHoCH(candles, h1Dir) {
   }
 
   // CHoCH BUY: bullish candle closes meaningfully above swing high
-  var isBullBreak = last.close > open && last.close > swingHigh + minBreak;
+  var isBullBreak = last.close > last.open && last.close > swingHigh + minBreak;
   if (isBullBreak) {
     var strength = (h1Dir === 'BUY') ? 'confirmed' : 'informative';
     return { type: 'BUY', level: swingHigh, strength: strength };
@@ -576,6 +576,7 @@ function buildChart(sym, dir, price, sl, tp, ema50, rsi, candles) {
 var strategies = [{id:1,atr:7,mult:2.0},{id:2,atr:14,mult:3.0},{id:3,atr:21,mult:4.5}];
 
 async function checkSignal(sym, consensus, cooldownMin) {
+  try {
   // Use per-symbol consensus if defined, otherwise use global setting
   var symF0 = getSymbolFilters(sym);
   if (symF0.consensus) consensus = symF0.consensus;
@@ -769,6 +770,10 @@ async function checkSignal(sym, consensus, cooldownMin) {
         time+' UTC';
       await tgPhoto(msg2, buildChart(sym,dir,price,+sl,+tp,ema50,rsi,st.candles));
     }, 3*60*1000); // 3 minutes delay
+  }
+  } catch(e) {
+    console.error('checkSignal error '+sym+': '+e.message);
+    if(symbolState[sym]) symbolState[sym].stats.lastFilter = 'Errore: '+e.message.slice(0,50);
   }
 }
 
