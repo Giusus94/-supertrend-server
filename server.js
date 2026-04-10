@@ -495,10 +495,11 @@ async function checkSignal(sym, consensus, cooldownMin) {
   if (dir==='BUY'&&price<ema50) { st.stats.lastFilter='Prezzo sotto EMA50'; return; }
   if (dir==='SELL'&&price>ema50) { st.stats.lastFilter='Prezzo sopra EMA50'; return; }
 
-  // RSI filter
+  // RSI filter - per symbol thresholds
   var rsi = calcRSI(st.candles,14);
-  if (dir==='BUY'&&rsi>70)  { st.stats.lastFilter='RSI ipercomprato ('+rsi.toFixed(1)+')'; return; }
-  if (dir==='SELL'&&rsi<30) { st.stats.lastFilter='RSI ipervenduto ('+rsi.toFixed(1)+')'; return; }
+  var symF = getSymbolFilters(sym);
+  if (dir==='BUY'&&rsi>symF.rsiMax)  { st.stats.lastFilter='RSI alto ('+rsi.toFixed(1)+' > '+symF.rsiMax+')'; return; }
+  if (dir==='SELL'&&rsi<symF.rsiMin) { st.stats.lastFilter='RSI basso ('+rsi.toFixed(1)+' < '+symF.rsiMin+')'; return; }
 
   // Volume filter
   var avgVol=calcAvgVol(st.candles,20), lastVol=st.candles[st.candles.length-1].vol||0;
@@ -610,10 +611,11 @@ async function checkPreSignal(sym, consensus) {
   var adx=calcADX(st.candles,14);
   var avgVol=calcAvgVol(st.candles,20);
   var lastVol=st.candles[st.candles.length-1].vol||0;
-  var volPct=avgVol>0?(lastVol/avgVol*100).toFixed(0):'--';
+  var volPct=avgVol>0&&lastVol>0?(lastVol/avgVol*100).toFixed(0)+'%':'N/A (Forex)';
 
   // Pre-alert only when H1 is already aligned AND ADX strong AND volume ok
-  if (m15Dir===h1Dir && adx>=20 && (avgVol===0||lastVol>=avgVol*0.7)) {
+  var preF = getSymbolFilters(sym);
+  if (m15Dir===h1Dir && adx>=preF.adx*0.8 && (avgVol===0||lastVol===0||lastVol>=avgVol*0.7)) {
     var ok=await tgSend(
       '[ST-EA] PREPARATI - <b>'+name+'</b>'+nl+
       'Direzione: <b>'+m15Dir+'</b>'+nl+
