@@ -889,19 +889,57 @@ async function fetchD1(sym) {
     try {
       var ticker=YAHOO_MAP[sym];
       if(!ticker) return;
-      // D1
-      var url=('https://query2.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(ticker)+'?interval=1d&range=6mo&includePrePost=false');
-      var res=await fetch(url,{headers:{'User-Agent':'Mozilla/5.0','Accept':'application/json'}});
-      var data=await res.json();
-      var chart=data&&data.chart&&data.chart.result&&data.chart.result[0];
-      if(chart&&chart.timestamp){
-        var q=chart.indicators.quote[0];
+
+      // Fetch D1 candles (6 months of daily data)
+      var urlD1='https://query2.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(ticker)+'?interval=1d&range=6mo&includePrePost=false';
+      var resD1=await fetch(urlD1,{headers:{'User-Agent':'Mozilla/5.0','Accept':'application/json'}});
+      var dataD1=await resD1.json();
+      var chartD1=dataD1&&dataD1.chart&&dataD1.chart.result&&dataD1.chart.result[0];
+      if(chartD1&&chartD1.timestamp){
+        var q=chartD1.indicators.quote[0];
         var parsed=[];
-        for(var i=0;i<chart.timestamp.length;i++){
+        for(var i=0;i<chartD1.timestamp.length;i++){
           if(q.open[i]&&q.high[i]&&q.low[i]&&q.close[i])
             parsed.push({open:+q.open[i].toFixed(5),high:+q.high[i].toFixed(5),low:+q.low[i].toFixed(5),close:+q.close[i].toFixed(5),vol:q.volume[i]||0});
         }
-        if(parsed.length>10) st.candlesD1=parsed;
+        if(parsed.length>10){
+          st.candlesD1=parsed;
+          console.log('PA D1 '+sym+': '+parsed.length+' candles @ '+parsed[parsed.length-1].close.toFixed(5));
+        }
+      }
+
+      // Small delay to avoid Yahoo rate limiting
+      await new Promise(function(r){setTimeout(r,800);});
+
+      // Fetch H4 candles (60 days of 4H data) for trend filter
+      var urlH4='https://query2.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(ticker)+'?interval=1h&range=60d&includePrePost=false';
+      var resH4=await fetch(urlH4,{headers:{'User-Agent':'Mozilla/5.0','Accept':'application/json'}});
+      var dataH4=await resH4.json();
+      var chartH4=dataH4&&dataH4.chart&&dataH4.chart.result&&dataH4.chart.result[0];
+      if(chartH4&&chartH4.timestamp){
+        // Group 1H candles into 4H candles manually
+        var qH=chartH4.indicators.quote[0];
+        var h1candles=[];
+        for(var j=0;j<chartH4.timestamp.length;j++){
+          if(qH.open[j]&&qH.high[j]&&qH.low[j]&&qH.close[j])
+            h1candles.push({open:+qH.open[j].toFixed(5),high:+qH.high[j].toFixed(5),low:+qH.low[j].toFixed(5),close:+qH.close[j].toFixed(5),vol:qH.volume[j]||0});
+        }
+        // Group into H4 (every 4 candles)
+        var h4candles=[];
+        for(var k=0;k+3<h1candles.length;k+=4){
+          var group=h1candles.slice(k,k+4);
+          h4candles.push({
+            open:  group[0].open,
+            high:  Math.max.apply(null,group.map(function(c){return c.high;})),
+            low:   Math.min.apply(null,group.map(function(c){return c.low;})),
+            close: group[group.length-1].close,
+            vol:   group.reduce(function(s,c){return s+(c.vol||0);},0)
+          });
+        }
+        if(h4candles.length>10){
+          st.candlesH4=h4candles;
+          console.log('PA H4 '+sym+': '+h4candles.length+' candles');
+        }
       }
     }catch(e){console.error('PA D1 Yahoo '+sym+': '+e.message);}
   }
@@ -1109,7 +1147,9 @@ function startPALoop(refreshSec) {
       try {
         await fetchD1(sym);
         await checkPASignal(sym);
-        await new Promise(function(r){setTimeout(r,800);});
+        // Longer delay for Yahoo Finance rate limiting
+        var delay = CRYPTO.indexOf(sym)!==-1 ? 500 : 2000;
+        await new Promise(function(r){setTimeout(r,delay);});
       } catch(e){console.error('PA Loop '+sym+': '+e.message);}
     }
   }, refreshSec*1000);
@@ -1196,7 +1236,15 @@ app.post('/api/start', async function(req,res) {
     startLoop(ref||600,cons||3,cool||15);
     // Start PA bot too
     paRunning=true;
-    (async function(){for(var k=0;k<PA_SYMBOLS.length;k++){try{await fetchD1(PA_SYMBOLS[k]);}catch(e){}await new Promise(function(r){setTimeout(r,500);});}}());
+    (async function(){
+      for(var k=0;k<PA_SYMBOLS.length;k++){
+        try{await fetchD1(PA_SYMBOLS[k]);}catch(e){console.error('PA init '+PA_SYMBOLS[k]+': '+e.message);}
+        // Respect Yahoo rate limits on startup
+        var startDelay = CRYPTO.indexOf(PA_SYMBOLS[k])!==-1 ? 500 : 2500;
+        await new Promise(function(r){setTimeout(r,startDelay);});
+      }
+      console.log('PA Bot D1 data loaded for all symbols');
+    }());
     startPALoop(3600);
     await tgSend('SuperTrend EA v1 Avviato\nSimbolii: '+activeSymbols.join(', ')+'\nFiltri: ST(3TF)+H1+EMA50+RSI+VOL+M5\n'+new Date().toUTCString().slice(0,25));
     res.json({ok:true,message:'EA v1 avviato su '+activeSymbols.join(', ')});
