@@ -320,6 +320,8 @@ select.ctrl-inp option{background:var(--p2);}
           <div class="ind-cell"><div class="ind-lbl">H1</div><div class="ind-val" id="iH1">--</div></div>
           <div class="ind-cell"><div class="ind-lbl">RSI</div><div class="ind-val" id="iRSI">--</div></div>
           <div class="ind-cell"><div class="ind-lbl">EMA50</div><div class="ind-val" id="iEMA">--</div></div>
+          <div class="ind-cell"><div class="ind-lbl">ADX</div><div class="ind-val" id="iADX">--</div></div>
+          <div class="ind-cell"><div class="ind-lbl">VOLUME</div><div class="ind-val" id="iVOL">--</div></div>
         </div>
       </div>
 
@@ -525,6 +527,28 @@ function toast(msg,type){
 function calcATR(c,p){var t=[];for(var i=1;i<c.length;i++)t.push(Math.max(c[i].high-c[i].low,Math.abs(c[i].high-c[i-1].close),Math.abs(c[i].low-c[i-1].close)));var a=[t[0]];for(var j=1;j<t.length;j++)a.push((a[j-1]*(p-1)+t[j])/p);return a;}
 function calcST(c,p,m){var atrs=calcATR(c,p),res=[],dir=1,pu=0,pl=0;for(var i=1;i<c.length;i++){var atr=atrs[i-1]||atrs[0],hl2=(c[i].high+c[i].low)/2;var u=hl2+m*atr,l=hl2-m*atr;if(i>1){u=(u<pu||c[i-1].close>pu)?u:pu;l=(l>pl||c[i-1].close<pl)?l:pl;}var cl=c[i].close;if(dir===1&&cl<l)dir=-1;else if(dir===-1&&cl>u)dir=1;res.push({dir:dir,line:dir===1?l:u,atr:atr});pu=u;pl=l;}return res;}
 function calcRSI(c,p){p=p||14;if(c.length<p+1)return 50;var g=0,l=0;for(var i=c.length-p;i<c.length;i++){var d=c[i].close-c[i-1].close;if(d>0)g+=d;else l+=Math.abs(d);}var ag=g/p,al=l/p;if(al===0)return 100;return 100-(100/(1+ag/al));}
+function calcADX(c,p){
+  p=p||14;if(c.length<p*2)return 0;
+  var tr=[],pdm=[],mdm=[];
+  for(var i=1;i<c.length;i++){
+    var h=c[i].high,l=c[i].low,ph=c[i-1].high,pl=c[i-1].low,pc=c[i-1].close;
+    tr.push(Math.max(h-l,Math.abs(h-pc),Math.abs(l-pc)));
+    var up=h-ph,dn=pl-l;
+    pdm.push(up>dn&&up>0?up:0);
+    mdm.push(dn>up&&dn>0?dn:0);
+  }
+  var st=tr.slice(0,p).reduce(function(a,b){return a+b;},0);
+  var sp=pdm.slice(0,p).reduce(function(a,b){return a+b;},0);
+  var sm=mdm.slice(0,p).reduce(function(a,b){return a+b;},0);
+  var dx=[];
+  for(var j=p;j<tr.length;j++){
+    st=st-st/p+tr[j];sp=sp-sp/p+pdm[j];sm=sm-sm/p+mdm[j];
+    var pi=st>0?sp/st*100:0,mi=st>0?sm/st*100:0;
+    var s=pi+mi;dx.push(s>0?Math.abs(pi-mi)/s*100:0);
+  }
+  if(!dx.length)return 0;
+  return dx.slice(-p).reduce(function(a,b){return a+b;},0)/Math.min(p,dx.length);
+}
 function calcEMA(c,p){if(c.length<p)return c[c.length-1].close;var k=2/(p+1),ema=0;for(var i=0;i<p;i++)ema+=c[i].close;ema=ema/p;for(var j=p;j<c.length;j++)ema=c[j].close*k+ema*(1-k);return ema;}
 function calcSR(c,look){look=look||50;var r=c.slice(-look),lv=[];for(var i=2;i<r.length-2;i++){if(r[i].high>r[i-1].high&&r[i].high>r[i-2].high&&r[i].high>r[i+1].high&&r[i].high>r[i+2].high)lv.push({price:r[i].high,type:'R',str:1});if(r[i].low<r[i-1].low&&r[i].low<r[i-2].low&&r[i].low<r[i+1].low&&r[i].low<r[i+2].low)lv.push({price:r[i].low,type:'S',str:1});}var mg=[];for(var k=0;k<lv.length;k++){var nb=null;for(var m=0;m<mg.length;m++){if(Math.abs(mg[m].price-lv[k].price)/lv[k].price<0.003){nb=mg[m];break;}}if(nb)nb.str++;else mg.push({price:lv[k].price,type:lv[k].type,str:1});}mg.sort(function(a,b){return b.str-a.str;});return mg.slice(0,6);}
 function calcLot(sym,bal,slD){var ra=bal*0.03,pv=PIP[sym]||10,dec=slD>10?2:slD>1?4:5,pips=dec===2?slD:slD/(dec===4?0.0001:0.00001);return Math.min(10,Math.max(0.01,Math.round(ra/(pips*pv*100)*100)/100));}
@@ -624,10 +648,16 @@ function updateAnalysis(sym){
   var m15=buys>=2?'BUY':sells>=2?'SELL':'WAIT';
   var h1='--';
   if(S.h1[sym]&&S.h1[sym].length>=2){var sh=calcST(S.h1[sym],14,3.0);if(sh.length)h1=sh[sh.length-1].dir===1?'BUY':'SELL';}
+  var adx=calcADX(c,14);
+  var avgVol=calcAvgVol(c,20);
+  var lastVol=c[c.length-1].vol||0;
+  var volPct=avgVol>0?Math.round(lastVol/avgVol*100):0;
   setInd('iM15',m15,m15==='BUY'?'g':m15==='SELL'?'r':'');
   setInd('iH1',h1,h1==='BUY'?'g':h1==='SELL'?'r':'');
   setInd('iRSI',rsi.toFixed(1),rsi>70?'r':rsi<30?'g':'');
   setInd('iEMA',price>ema?'ABOVE':'BELOW',price>ema?'g':'r');
+  setInd('iADX',adx.toFixed(1),adx>=25?'g':adx>=20?'y':'r');
+  setInd('iVOL',volPct+'%',volPct>=80?'g':volPct>=60?'y':'r');
 }
 
 function setInd(id,val,cls){var e=document.getElementById(id);if(!e)return;e.textContent=val;e.className='ind-val'+(cls?' '+cls:'');}
