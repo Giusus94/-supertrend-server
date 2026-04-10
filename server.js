@@ -77,7 +77,7 @@ function isValidPrice(sym, price) {
 // Set AUTO_START=true to auto-start EA on deploy
 var ENV_SYMBOLS = process.env.DEFAULT_SYMBOLS ? process.env.DEFAULT_SYMBOLS.split(',').map(function(s){return s.trim();}) : null;
 var AUTO_START  = process.env.AUTO_START === 'true';
-var ENV_REFRESH = parseInt(process.env.REFRESH_SEC)||600;
+var ENV_REFRESH = parseInt(process.env.REFRESH_SEC)||120;
 var ENV_COOLDOWN= parseInt(process.env.COOLDOWN_MIN)||15;
 var ENV_CONSENSUS= parseInt(process.env.CONSENSUS)||3;
 
