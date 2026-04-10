@@ -172,6 +172,102 @@ function calcSR(c, lookback) {
   return merged.slice(0,8);
 }
 
+// ==============================
+// ORDER BLOCK DETECTION
+// ==============================
+function detectOrderBlocks(candles) {
+  if (candles.length < 10) return [];
+  var obs = [];
+
+  for (var i = 2; i < candles.length-1; i++) {
+    var c  = candles[i];
+    var cn = candles[i+1]; // next candle
+    var cp = candles[i-1]; // prev candle
+
+    var body  = Math.abs(c.close-c.open);
+    var range = c.high-c.low;
+    if (range===0) continue;
+
+    // Bullish OB: bearish candle followed by strong bullish move
+    var isBear = c.close < c.open;
+    var nextBull = cn.close > cn.open && Math.abs(cn.close-cn.open) > body*1.2;
+    if (isBear && nextBull && body > range*0.5) {
+      obs.push({
+        type: 'BUY',
+        high: c.high,
+        low:  c.low,
+        mid:  (c.high+c.low)/2,
+        idx:  i,
+        strength: Math.round(body/range*10)
+      });
+    }
+
+    // Bearish OB: bullish candle followed by strong bearish move
+    var isBull2 = c.close > c.open;
+    var nextBear = cn.close < cn.open && Math.abs(cn.close-cn.open) > body*1.2;
+    if (isBull2 && nextBear && body > range*0.5) {
+      obs.push({
+        type: 'SELL',
+        high: c.high,
+        low:  c.low,
+        mid:  (c.high+c.low)/2,
+        idx:  i,
+        strength: Math.round(body/range*10)
+      });
+    }
+  }
+
+  // Keep only recent OBs (last 30 candles) and sort by strength
+  var recent = obs.filter(function(ob){ return ob.idx >= candles.length-30; });
+  recent.sort(function(a,b){ return b.strength-a.strength; });
+  return recent.slice(0,4);
+}
+
+function getNearestOB(price, obs, atr) {
+  var nearby = obs.filter(function(ob){
+    return Math.abs(ob.mid-price) < atr*3;
+  });
+  nearby.sort(function(a,b){ return Math.abs(a.mid-price)-Math.abs(b.mid-price); });
+  return nearby.slice(0,2);
+}
+
+// ADX - Average Directional Index
+// Returns ADX value (>25 = strong trend, <20 = weak/lateral)
+function calcADX(c, period) {
+  period = period || 14;
+  if (c.length < period*2) return 0;
+  var trArr=[], plusDM=[], minusDM=[];
+  for (var i=1;i<c.length;i++) {
+    var high = c[i].high, low = c[i].low;
+    var prevHigh = c[i-1].high, prevLow = c[i-1].low, prevClose = c[i-1].close;
+    var tr = Math.max(high-low, Math.abs(high-prevClose), Math.abs(low-prevClose));
+    var upMove = high-prevHigh;
+    var downMove = prevLow-low;
+    trArr.push(tr);
+    plusDM.push(upMove>downMove && upMove>0 ? upMove : 0);
+    minusDM.push(downMove>upMove && downMove>0 ? downMove : 0);
+  }
+  // Smooth over period
+  var smoothTR=trArr.slice(0,period).reduce(function(a,b){return a+b;},0);
+  var smoothPlus=plusDM.slice(0,period).reduce(function(a,b){return a+b;},0);
+  var smoothMinus=minusDM.slice(0,period).reduce(function(a,b){return a+b;},0);
+  var dxArr=[];
+  for (var j=period;j<trArr.length;j++) {
+    smoothTR = smoothTR - smoothTR/period + trArr[j];
+    smoothPlus = smoothPlus - smoothPlus/period + plusDM[j];
+    smoothMinus = smoothMinus - smoothMinus/period + minusDM[j];
+    var plusDI = smoothTR>0 ? (smoothPlus/smoothTR)*100 : 0;
+    var minusDI = smoothTR>0 ? (smoothMinus/smoothTR)*100 : 0;
+    var diSum = plusDI+minusDI;
+    var dx = diSum>0 ? Math.abs(plusDI-minusDI)/diSum*100 : 0;
+    dxArr.push(dx);
+  }
+  if (!dxArr.length) return 0;
+  // Final ADX = average of last period DX values
+  var adx = dxArr.slice(-period).reduce(function(a,b){return a+b;},0)/Math.min(period,dxArr.length);
+  return adx;
+}
+
 function calcLotSize(sym, balance, riskPct, slDist) {
   var riskAmt = balance*(riskPct/100);
   var pipVal  = PIP_VALUE[sym]||10;
@@ -453,6 +549,7 @@ async function checkSignal(sym, consensus, cooldownMin) {
     '<b>Prezzo:</b> '+price.toFixed(dec)+nl+
     '<b>SL:</b> '+sl+' | <b>TP:</b> '+tp+nl+
     '<b>R:R:</b> 1:2 | <b>Lot:</b> '+calcLotSize(sym,500,3,slDist)+' lot (500EUR)'+nl+
+    (obConfirm?'<b>OB Confermato!</b>'+nl:'')+
     '<b>ENTRA ORA!</b>';
 
   var ok = await tgSend(msg1);
@@ -472,11 +569,12 @@ async function checkSignal(sym, consensus, cooldownMin) {
     setTimeout(async function(){
       var msg2 =
         '[ST-EA] CONFERMA <b>'+dir+'</b> '+sym+nl+nl+
-        '<b>Filtri confermati:</b>'+nl+
-        'ST '+Math.max(bv,sv)+'/3 | H1: '+dir+' | EMA50: '+(dir==='BUY'?'SOPRA':'SOTTO')+nl+
+        '<b>Filtri:</b>'+nl+
+        'ST '+Math.max(bv,sv)+'/3 | H1: '+dir+nl+
+        'ADX: '+calcADX(st.candles,14).toFixed(1)+' | EMA50: '+(dir==='BUY'?'SOPRA':'SOTTO')+nl+
         'RSI: '+rsi.toFixed(1)+' | Volume: OK'+nl+nl+
-        '<b>Lot size (rischio 3%):</b>'+nl+lots+nl+nl+
         (srText?'<b>Livelli chiave:</b>'+nl+srText+nl:'')+
+        '<b>Lot size (rischio 3%):</b>'+nl+lots+nl+nl+
         time+' UTC';
       await tgPhoto(msg2, buildChart(sym,dir,price,+sl,+tp,ema50,rsi,st.candles));
     }, 3*60*1000); // 3 minutes delay
@@ -502,22 +600,31 @@ async function checkPreSignal(sym, consensus) {
     if(sh.length)h1Dir=sh[sh.length-1].dir===1?'BUY':'SELL';
   }
   var m15Dir=bv>=consensus?'BUY':sv>=consensus?'SELL':null;
-  if(!m15Dir||m15Dir===h1Dir||m15Dir===st.lastPreDir) return;
+  if(!m15Dir||m15Dir===st.lastPreDir) return;
 
   var price=st.candles[st.candles.length-1].close;
   var dec=price>1000?2:price>10?3:4;
   var name=SYMBOL_NAMES[sym]||sym;
   var nl='\n';
+  var rsi=calcRSI(st.candles,14);
+  var adx=calcADX(st.candles,14);
+  var avgVol=calcAvgVol(st.candles,20);
+  var lastVol=st.candles[st.candles.length-1].vol||0;
+  var volPct=avgVol>0?(lastVol/avgVol*100).toFixed(0):'--';
 
-  // Single pre-alert: M15 ready, waiting for H1
-  var ok=await tgSend(
-    '[ST-EA] PREPARATI - <b>'+name+'</b>'+nl+
-    'Direzione: <b>'+m15Dir+'</b>'+nl+
-    'Prezzo: '+price.toFixed(dec)+nl+
-    'Apri Capital.com ORA'+nl+
-    '<i>Segnale in arrivo...</i>'
-  );
-  if(ok){st.lastPreTime=Date.now();st.lastPreDir=m15Dir;}
+  // Pre-alert only when H1 is already aligned AND ADX strong AND volume ok
+  if (m15Dir===h1Dir && adx>=20 && (avgVol===0||lastVol>=avgVol*0.7)) {
+    var ok=await tgSend(
+      '[ST-EA] PREPARATI - <b>'+name+'</b>'+nl+
+      'Direzione: <b>'+m15Dir+'</b>'+nl+
+      'Prezzo: '+price.toFixed(dec)+nl+
+      'H1: '+h1Dir+' | ADX: '+adx.toFixed(1)+' | Vol: '+volPct+'%'+nl+
+      'RSI: '+rsi.toFixed(1)+nl+
+      'Apri Capital.com ORA'+nl+
+      '<i>Segnale in arrivo...</i>'
+    );
+    if(ok){st.lastPreTime=Date.now();st.lastPreDir=m15Dir;}
+  }
 }
 
 // ==============================
