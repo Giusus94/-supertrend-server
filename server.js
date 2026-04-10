@@ -643,7 +643,7 @@ function startLoop(refreshSec, consensus, cooldown) {
   refreshSec=refreshSec||600;
   if(refreshTimer) clearInterval(refreshTimer);
   refreshTimer = setInterval(async function() {
-    updateLoopTime();
+    lastLoopTime = Date.now();
     for(var i=0;i<activeSymbols.length;i++) {
       var sym=activeSymbols[i], st=symbolState[sym];
       try {
