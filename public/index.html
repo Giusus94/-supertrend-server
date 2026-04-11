@@ -606,6 +606,19 @@ function rebuildSymBar(syms){
 fetchAllPrices();
 setInterval(fetchAllPrices,30000);
 
+// Sync settings checkboxes with server active symbols on page load
+(async function syncSettingsSymbols(){
+  try{
+    var r=await fetch('/api/status');
+    var d=await r.json();
+    if(d&&d.activeSymbols){
+      document.querySelectorAll('.sym-check').forEach(function(cb){
+        cb.checked=d.activeSymbols.indexOf(cb.value)!==-1;
+      });
+    }
+  }catch(e){}
+})();
+
 function switchSym(sym){
   S.sym=sym;
   document.querySelectorAll('.sym-pill').forEach(function(p){p.classList.remove('active');});
@@ -733,6 +746,15 @@ async function pollStatus(){
       }).join('');
     }
     if(d.globalLog&&d.globalLog.length!==lastLog){lastLog=d.globalLog.length;renderLog(d.globalLog);}
+    // Sync symbol bar with server active symbols
+    if(d.activeSymbols && d.activeSymbols.length){
+      rebuildSymBar(d.activeSymbols);
+      // If current sym not in active list, switch to first
+      if(d.activeSymbols.indexOf(S.sym)===-1){
+        S.sym=d.activeSymbols[0];
+        switchSym(S.sym);
+      }
+    }
     // Always refresh candles for current display symbol
     loadAndUpdate(S.sym);
     // PA Bot status
