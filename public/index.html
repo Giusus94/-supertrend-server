@@ -594,7 +594,10 @@ async function fetchAllPrices(){
 
 function rebuildSymBar(syms){
   var bar=document.getElementById('symBar');if(!bar)return;
-  if(bar.querySelectorAll('.sym-pill').length===syms.length)return;
+  var current=Array.from(bar.querySelectorAll('.sym-pill')).map(function(p){return p.id.replace('sp-','');});
+  var same=current.length===syms.length&&syms.every(function(s,i){return s===current[i];});
+  if(same)return;
+  if(syms.indexOf(S.sym)===-1)S.sym=syms[0];
   bar.innerHTML=syms.map(function(s){
     return '<div class="sym-pill'+(s===S.sym?' active':'')+'" id="sp-'+s+'" onclick="switchSym(\''+s+'\')">'
       +'<span class="sp-name">'+s+'</span>'
@@ -754,6 +757,11 @@ async function pollStatus(){
         S.sym=d.activeSymbols[0];
         switchSym(S.sym);
       }
+    }
+    // Sync symbol bar with server active symbols on every poll
+    if(d.activeSymbols&&d.activeSymbols.length){
+      rebuildSymBar(d.activeSymbols);
+      if(d.activeSymbols.indexOf(S.sym)===-1){S.sym=d.activeSymbols[0];switchSym(S.sym);}
     }
     // Always refresh candles for current display symbol
     loadAndUpdate(S.sym);
