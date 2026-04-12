@@ -22,25 +22,28 @@ const FOREX   = ['EURUSD','GBPUSD','USDJPY','GBPJPY','AUDUSD','USDCAD','USDCHF',
 // PER-SYMBOL FILTER THRESHOLDS
 // ==============================
 var SYMBOL_FILTERS = {
-  EURUSD:{ adx:15, rsiMax:72, rsiMin:28, noVol:true,  consensus:2 },
-  GBPUSD:{ adx:15, rsiMax:72, rsiMin:28, noVol:true,  consensus:2 },
-  USDJPY:{ adx:15, rsiMax:76, rsiMin:24, noVol:true,  consensus:2 },
-  GBPJPY:{ adx:15, rsiMax:78, rsiMin:22, noVol:true,  consensus:2 },
-  AUDUSD:{ adx:15, rsiMax:72, rsiMin:28, noVol:true,  consensus:2 },
-  USDCAD:{ adx:15, rsiMax:72, rsiMin:28, noVol:true,  consensus:2 },
-  USDCHF:{ adx:15, rsiMax:72, rsiMin:28, noVol:true,  consensus:2 },
-  NZDUSD:{ adx:15, rsiMax:72, rsiMin:28, noVol:true,  consensus:2 },
-  XAUUSD:{ adx:15, rsiMax:71, rsiMin:29, noVol:true,  consensus:2 },
-  XAGUSD:{ adx:15, rsiMax:71, rsiMin:29, noVol:true,  consensus:2 },
-  USOIL: { adx:15, rsiMax:71, rsiMin:29, noVol:true,  consensus:2 },
-  UKOIL: { adx:15, rsiMax:71, rsiMin:29, noVol:true,  consensus:2 },
-  WTIUSD:{ adx:15, rsiMax:71, rsiMin:29, noVol:true,  consensus:2 },
-  BRNUSD:{ adx:15, rsiMax:71, rsiMin:29, noVol:true,  consensus:2 },
-  BTCUSD:{ adx:20, rsiMax:70, rsiMin:30, noVol:false, consensus:3 },
-  ETHUSD:{ adx:20, rsiMax:70, rsiMin:30, noVol:false, consensus:3 },
-  SOLUSD:{ adx:20, rsiMax:70, rsiMin:30, noVol:false, consensus:3 },
-  XRPUSD:{ adx:20, rsiMax:70, rsiMin:30, noVol:false, consensus:3 },
-  BNBUSD:{ adx:20, rsiMax:70, rsiMin:30, noVol:false, consensus:3 },
+  // Forex - SL 1.5xATR, TP 2x, D1 trend required
+  EURUSD:{ adx:15, rsiMax:72, rsiMin:28, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0, useD1:true },
+  GBPUSD:{ adx:15, rsiMax:72, rsiMin:28, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0, useD1:true },
+  USDJPY:{ adx:15, rsiMax:76, rsiMin:24, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0, useD1:true },
+  GBPJPY:{ adx:15, rsiMax:78, rsiMin:22, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0, useD1:true },
+  AUDUSD:{ adx:15, rsiMax:72, rsiMin:28, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0, useD1:true },
+  USDCAD:{ adx:15, rsiMax:72, rsiMin:28, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0, useD1:true },
+  USDCHF:{ adx:15, rsiMax:72, rsiMin:28, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0, useD1:true },
+  NZDUSD:{ adx:15, rsiMax:72, rsiMin:28, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0, useD1:true },
+  // Metals - SL 1.8xATR, TP 2.5x
+  XAUUSD:{ adx:15, rsiMax:71, rsiMin:29, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5, useD1:true },
+  XAGUSD:{ adx:15, rsiMax:71, rsiMin:29, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5, useD1:true },
+  USOIL: { adx:15, rsiMax:71, rsiMin:29, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5, useD1:false },
+  UKOIL: { adx:15, rsiMax:71, rsiMin:29, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5, useD1:false },
+  WTIUSD:{ adx:15, rsiMax:71, rsiMin:29, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5, useD1:false },
+  BRNUSD:{ adx:15, rsiMax:71, rsiMin:29, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5, useD1:false },
+  // Crypto - SL 2.0xATR, TP 3x (più volatili), D1 trend required
+  BTCUSD:{ adx:20, rsiMax:70, rsiMin:30, noVol:false, consensus:3, slMult:2.0, tpMult:3.0, useD1:true },
+  ETHUSD:{ adx:20, rsiMax:70, rsiMin:30, noVol:false, consensus:3, slMult:2.0, tpMult:3.0, useD1:true },
+  SOLUSD:{ adx:20, rsiMax:70, rsiMin:30, noVol:false, consensus:3, slMult:2.0, tpMult:3.0, useD1:true },
+  XRPUSD:{ adx:20, rsiMax:70, rsiMin:30, noVol:false, consensus:3, slMult:2.0, tpMult:3.0, useD1:true },
+  BNBUSD:{ adx:20, rsiMax:70, rsiMin:30, noVol:false, consensus:3, slMult:2.0, tpMult:3.0, useD1:true },
 };
 
 function getSymbolFilters(sym) {
@@ -650,6 +653,19 @@ async function checkSignal(sym, consensus, cooldownMin) {
     }
   }
 
+  // D1 TREND FILTER - solo se useD1=true per il simbolo
+  var symFD1 = getSymbolFilters(sym);
+  if (symFD1.useD1 && st.candlesH1.length >= 50) {
+    // Usa le H1 come proxy per D1 (ogni 24 candele H1 = 1 giorno)
+    var d1Ema = calcEMA(st.candlesH1, 50); // EMA50 su H1 = trend medio termine
+    var h1Price = st.candlesH1[st.candlesH1.length-1].close;
+    var d1Trend = h1Price > d1Ema ? 'BUY' : 'SELL';
+    if (d1Trend !== dir) {
+      st.stats.lastFilter = 'D1 trend contro (D1='+d1Trend+' vs '+dir+')';
+      return;
+    }
+  }
+
   // EMA50 filter
   var ema50 = calcEMA(st.candles,50);
   if (dir==='BUY'&&price<ema50) { st.stats.lastFilter='Prezzo sotto EMA50'; return; }
@@ -668,13 +684,18 @@ async function checkSignal(sym, consensus, cooldownMin) {
     st.stats.lastFilter='Volume basso ('+Math.round(lastVol/avgVol*100)+'% avg)'; return;
   }
 
-  // M5 trigger
-  if (st.candlesM5.length>=10) {
-    var stM5 = calcST(st.candlesM5,7,2.0);
-    if (stM5.length) {
-      var m5Dir = stM5[stM5.length-1].dir===1?'BUY':'SELL';
-      if (m5Dir!==dir) { st.stats.lastFilter='Attesa trigger M5 (M5='+m5Dir+')'; return; }
-    }
+  // M5 trigger - richiede almeno 2/3 ST su M5 allineati per entrare prima
+  if (st.candlesM5.length>=20) {
+    var stM5a = calcST(st.candlesM5,7,2.0);
+    var stM5b = calcST(st.candlesM5,14,3.0);
+    var stM5c = calcST(st.candlesM5,21,4.5);
+    var m5Buy=0, m5Sell=0;
+    if (stM5a.length && stM5a[stM5a.length-1].dir===1) m5Buy++; else m5Sell++;
+    if (stM5b.length && stM5b[stM5b.length-1].dir===1) m5Buy++; else m5Sell++;
+    if (stM5c.length && stM5c[stM5c.length-1].dir===1) m5Buy++; else m5Sell++;
+    var m5Needed = CRYPTO.indexOf(sym)!==-1 ? 2 : 2; // 2/3 su M5
+    if (dir==='BUY'  && m5Buy  < m5Needed) { st.stats.lastFilter='Attesa M5 trigger ('+m5Buy+'/3 BUY)'; return; }
+    if (dir==='SELL' && m5Sell < m5Needed) { st.stats.lastFilter='Attesa M5 trigger ('+m5Sell+'/3 SELL)'; return; }
   }
 
   // SESSION FILTER - only trade during active market sessions
@@ -740,9 +761,14 @@ async function checkSignal(sym, consensus, cooldownMin) {
   // ALL PASSED - build signal
   var atr     = atr0;
   var dec     = price>1000?2:price>10?3:4;
-  var minDist = price*0.005;
-  var slDist  = Math.max(atr*1.5,minDist);
-  var tpDist  = slDist*2;
+  // SL/TP per simbolo - crypto più ampio, forex più stretto
+  var symFSL  = getSymbolFilters(sym);
+  var slMult  = symFSL.slMult || 1.5;
+  var tpMult  = symFSL.tpMult || 2.0;
+  var minPct  = CRYPTO.indexOf(sym)!==-1 ? 0.008 : 0.003; // crypto min 0.8%, forex min 0.3%
+  var minDist = price * minPct;
+  var slDist  = Math.max(atr * slMult, minDist);
+  var tpDist  = slDist * tpMult;
   var sl      = (dir==='BUY'?price-slDist:price+slDist).toFixed(dec);
   var tp      = (dir==='BUY'?price+tpDist:price-tpDist).toFixed(dec);
 
