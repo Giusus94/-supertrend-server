@@ -1312,6 +1312,18 @@ app.get('/api/test', async function(req,res) {
   res.json({ok:ok, message:ok?'Inviato!':'Errore TG'});
 });
 
+// Test signal endpoint - simulates a real signal for MT5 EA testing
+app.get('/api/test-signal', function(req,res) {
+  var sym = req.query.sym || 'BTCUSD';
+  var dir = req.query.dir || 'BUY';
+  var price = req.query.price || '72500.00';
+  var sl    = req.query.sl    || '71800.00';
+  var tp    = req.query.tp    || '73900.00';
+  var id    = 'TEST'+Date.now();
+  pendingSignal = 'SIGNAL|'+dir+'|'+sym+'|'+price+'|'+sl+'|'+tp+'|London|'+id;
+  res.json({ok:true, signal:pendingSignal, message:'Segnale di test impostato! Controlla MT5.'});
+});
+
 app.post('/api/test', async function(req,res) {
   var ok=await tgSend('SuperTrend EA v1 - Test OK!\nSimbolii: '+activeSymbols.join(', ')+'\nTG connesso!');
   res.json({ok:ok});
