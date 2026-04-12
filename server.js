@@ -118,6 +118,7 @@ var globalStats    = { total:0, buys:0, sells:0 };
 var lastLoopTime   = 0;
 var loopRunning    = false;
 var globalLog      = [];
+var pendingSignal  = null; // Signal waiting for MT5 EA to pick up
 var symbolState    = {};
 
 function initSymbol(s) {
@@ -804,6 +805,10 @@ async function checkSignal(sym, consensus, cooldownMin) {
     globalLog.unshift({dir:dir,price:price.toFixed(dec),time:time,sym:sym});
     if(globalLog.length>50) globalLog.pop();
     console.log('SIGNAL: '+sym+' '+dir+' @ '+price.toFixed(dec));
+    // Store signal for MT5 EA pickup via HTTP
+    var signalId = Date.now().toString();
+    pendingSignal = 'SIGNAL|'+dir+'|'+sym+'|'+price.toFixed(dec)+'|'+sl+'|'+tp+'|'+sessionNow+'|'+signalId;
+    console.log('Pending signal set: '+pendingSignal);
 
     // MSG 2 - Confirmation with full data after 3 minutes
     setTimeout(async function(){
@@ -1263,6 +1268,22 @@ setInterval(async function() {
 // ==============================
 // API
 // ==============================
+// MT5 EA signal endpoint - returns signal.txt content
+app.get('/signal.txt', function(req,res) {
+  if(pendingSignal) {
+    res.set('Content-Type','text/plain');
+    res.send(pendingSignal);
+  } else {
+    res.status(404).send('');
+  }
+});
+
+// MT5 EA clears signal after reading
+app.post('/api/clear-signal', function(req,res) {
+  pendingSignal = null;
+  res.json({ok:true});
+});
+
 app.get('/api/status', function(req,res) {
   var ps={};
   for(var i=0;i<activeSymbols.length;i++){
