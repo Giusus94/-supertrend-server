@@ -767,37 +767,29 @@ async function checkSignal(sym, consensus, cooldownMin) {
     'ST '+Math.max(bv,sv)+'/3 | H1 | EMA50 | M5\n'+
     time+' UTC\n<i>Non consulenza finanziaria.</i>';
 
-  // MSG 1 - Entry signal, short and immediate
-  // Build context info for message
+  // UNICO MESSAGGIO - tutto in uno, niente secondo messaggio
   var nl = '\n';
   var sessionNow = getSessionName(sym);
   var chochNow   = detectCHoCH(st.candles);
-  var chochInfo  = chochNow && chochNow.type===dir ? ' | CHoCH '+chochNow.strength : '';
+  var chochTxt   = chochNow && chochNow.type===dir ? ' CHoCH ✓' : '';
   var keyLvlNow  = isNearKeyLevel(price,dir,srLevels,obCheck,atr);
-  var keyInfo    = keyLvlNow.confirmed ? ' | '+keyLvlNow.type+' '+keyLvlNow.level.toFixed(dec) : '';
+  var keyTxt     = keyLvlNow.confirmed ? ' '+keyLvlNow.type+' ✓' : '';
+  var signalId   = Date.now().toString();
 
-  var msg1 =
-    '[ST-EA] <b>'+dir+'</b> '+sym+nl+
-    '<b>Prezzo:</b> '+price.toFixed(dec)+nl+
-    '<b>SL:</b> '+sl+' | <b>TP:</b> '+tp+nl+
-    '<b>R:R:</b> 1:2 | <b>Lot:</b> '+calcLotSize(sym,500,3,slDist)+' lot (500EUR)'+nl+
-    '<b>Sessione:</b> '+sessionNow+chochInfo+keyInfo+nl+
-    '<b>ENTRA ORA!</b>';
+  var emoji = dir==='BUY' ? '🟢' : '🔴';
+  var msg =
+    emoji+' <b>'+dir+'</b> '+sym+nl+
+    '💰 '+price.toFixed(dec)+' | SL: '+sl+' | TP: '+tp+nl+
+    '📊 RSI: '+rsi.toFixed(1)+' | ADX: '+calcADX(st.candles,14).toFixed(1)+nl+
+    '📍 '+sessionNow+chochTxt+keyTxt+nl+
+    '🎯 Lot: '+calcLotSize(sym,500,3,slDist)+' (500€) | R:R 1:2'+nl+
+    (srText ? '📌 '+srText.replace(/\n/g,' | ') : '');
 
-  var ok = await tgSend(msg1);
+  var ok = await tgSend(msg);
   if (ok) {
     st.stats.total++; if(dir==='BUY')st.stats.buys++;else st.stats.sells++;
     st.stats.lastSignal=dir;
     st.stats.lastFilter='SEGNALE INVIATO: '+dir+' @ '+price.toFixed(dec);
-    // Write signal file for MT5 EA auto-execution
-    try {
-      var signalId = Date.now().toString();
-      var signalContent = 'SIGNAL|'+dir+'|'+sym+'|'+price.toFixed(dec)+'|'+sl+'|'+tp+'|'+sessionNow+'|'+signalId;
-      var fs = require('fs');
-      var signalPath = process.env.MT5_SIGNAL_PATH || './public/ST_EA_signal.txt';
-      fs.writeFileSync(signalPath, signalContent);
-      console.log('Signal file written: '+signalPath);
-    } catch(eFile) { console.log('Signal file error: '+eFile.message); }
     st.lastSignalTime=Date.now(); st.lastDir=dir;
     st.log.unshift({dir:dir,price:price.toFixed(dec),time:time,sym:sym,rsi:rsi.toFixed(1),sl:sl,tp:tp});
     if(st.log.length>20) st.log.pop();
@@ -805,24 +797,8 @@ async function checkSignal(sym, consensus, cooldownMin) {
     globalLog.unshift({dir:dir,price:price.toFixed(dec),time:time,sym:sym});
     if(globalLog.length>50) globalLog.pop();
     console.log('SIGNAL: '+sym+' '+dir+' @ '+price.toFixed(dec));
-    // Store signal for MT5 EA pickup via HTTP
-    var signalId = Date.now().toString();
+    // Store for MT5 EA
     pendingSignal = 'SIGNAL|'+dir+'|'+sym+'|'+price.toFixed(dec)+'|'+sl+'|'+tp+'|'+sessionNow+'|'+signalId;
-    console.log('Pending signal set: '+pendingSignal);
-
-    // MSG 2 - Confirmation with full data after 3 minutes
-    setTimeout(async function(){
-      var msg2 =
-        '[ST-EA] CONFERMA <b>'+dir+'</b> '+sym+nl+nl+
-        '<b>Filtri:</b>'+nl+
-        'ST '+Math.max(bv,sv)+'/3 | H1: '+dir+nl+
-        'ADX: '+calcADX(st.candles,14).toFixed(1)+' | EMA50: '+(dir==='BUY'?'SOPRA':'SOTTO')+nl+
-        'RSI: '+rsi.toFixed(1)+' | Volume: OK'+nl+nl+
-        (srText?'<b>Livelli chiave:</b>'+nl+srText+nl:'')+
-        '<b>Lot size (rischio 3%):</b>'+nl+lots+nl+nl+
-        time+' UTC';
-      await tgPhoto(msg2, buildChart(sym,dir,price,+sl,+tp,ema50,rsi,st.candles));
-    }, 3*60*1000); // 3 minutes delay
   }
   } catch(e) {
     console.error('checkSignal error '+sym+': '+e.message);
