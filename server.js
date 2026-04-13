@@ -856,10 +856,15 @@ async function checkSignal(sym, consensus, cooldownMin) {
     st.stats.lastFilter = 'CHoCH informativo '+dir+' - aspetta H1';
   }
 
-  // If NOT near any key level AND no confirmed CHoCH, skip weak signal
-  if (!keyLvl.confirmed && !chochOk) {
+  // S/R + CHoCH confirmation — required only if signal is not "strong"
+  // A signal is STRONG when: all 3 ST agree + H1 + D1 + M5 all aligned
+  // In that case we allow the trade even without S/R or CHoCH
+  var stAllAgree = (dir==='BUY' ? bv : sv) === 3; // 3/3 ST consensus
+  var strongSignal = stAllAgree && chochOk === false; // all filters passed
+  
+  if (!keyLvl.confirmed && !chochOk && !stAllAgree) {
     if (!st.stats.lastFilter || st.stats.lastFilter === '--') {
-      st.stats.lastFilter = 'Nessun livello chiave vicino - segnale debole';
+      st.stats.lastFilter = 'Nessun livello chiave (ST '+( dir==='BUY'?bv:sv)+'/3) - segnale debole';
     }
     return;
   }
