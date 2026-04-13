@@ -264,6 +264,55 @@ function detectOrderBlocks(candles) {
   return recent.slice(0,4);
 }
 
+// ==============================
+// FAIR VALUE GAP DETECTION
+// Bullish FVG: low[0] > high[2] — gap tra candela 3 e candela 1
+// Bearish FVG: high[0] < low[2] — gap tra candela 3 e candela 1
+// Price tende a tornare a riempire questi gap — livelli chiave
+// ==============================
+function detectFVG(candles) {
+  if (candles.length < 5) return { bull: [], bear: [] };
+  var bull = [], bear = [];
+  var minPct = 0.0005; // 0.05% minimo per filtrare rumore
+
+  for (var i = 2; i < candles.length - 1; i++) {
+    var c0 = candles[i];     // candela corrente
+    var c2 = candles[i - 2]; // due candele prima
+
+    // Bullish FVG: low[0] > high[2]
+    var bullGap = c0.low - c2.high;
+    if (bullGap > 0 && bullGap / c2.high >= minPct) {
+      bull.push({ top: c0.low, bottom: c2.high, mid: (c0.low + c2.high) / 2, idx: i });
+    }
+
+    // Bearish FVG: high[0] < low[2]
+    var bearGap = c2.low - c0.high;
+    if (bearGap > 0 && bearGap / c2.low >= minPct) {
+      bear.push({ top: c2.low, bottom: c0.high, mid: (c2.low + c0.high) / 2, idx: i });
+    }
+  }
+
+  // Filtra FVG già riempiti (prezzo è passato dentro)
+  var lastPrice = candles[candles.length - 1].close;
+  bull = bull.filter(function(f) { return lastPrice > f.bottom && lastPrice < f.top * 1.01; });
+  bear = bear.filter(function(f) { return lastPrice < f.top    && lastPrice > f.bottom * 0.99; });
+
+  // Tieni solo i più recenti (max 3)
+  bull.sort(function(a,b){return b.idx-a.idx;}); bull = bull.slice(0,3);
+  bear.sort(function(a,b){return b.idx-a.idx;}); bear = bear.slice(0,3);
+
+  return { bull: bull, bear: bear };
+}
+
+function isNearFVG(price, dir, fvgs, atr) {
+  var list = dir === 'BUY' ? fvgs.bull : fvgs.bear;
+  for (var i = 0; i < list.length; i++) {
+    var dist = Math.abs(list[i].mid - price);
+    if (dist < atr * 2) return { confirmed: true, type: 'FVG', level: list[i].mid };
+  }
+  return { confirmed: false };
+}
+
 function getNearestOB(price, obs, atr) {
   var nearby = obs.filter(function(ob){
     return Math.abs(ob.mid-price) < atr*3;
@@ -774,7 +823,11 @@ async function checkSignal(sym, consensus, cooldownMin) {
   var atr0    = calcATR(st.candles,14)[st.candles.length-2]||0;
   var srCheck = calcSR(st.candles, 50);
   var obCheck = detectOrderBlocks(st.candles);
+  var fvgCheck = detectFVG(st.candles);
   var keyLvl  = isNearKeyLevel(price, dir, srCheck, obCheck, atr0);
+  // FVG come conferma aggiuntiva
+  var fvgLvl  = isNearFVG(price, dir, fvgCheck, atr0);
+  if (!keyLvl.confirmed && fvgLvl.confirmed) keyLvl = fvgLvl;
 
   // MOMENTUM FILTER - price must be moving in signal direction
   // For BUY: current candle must be green, price rising vs 2 bars ago,
