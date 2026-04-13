@@ -996,22 +996,70 @@ async function checkPreSignal(sym, consensus) {
       st.pendingPreDir=m15Dir;
       st.pendingPreTime=Date.now();
 
-      // After 5 minutes check if signal was confirmed
-      // If not → send false signal warning
-      setTimeout(async function(){
-        // Signal was confirmed if lastDir matches and lastSignalTime is recent
-        var confirmed = st.lastDir===m15Dir &&
-                        (Date.now()-st.lastSignalTime) < 6*60*1000;
-        if(!confirmed && st.pendingPreId===preId) {
+      // Monitor conditions every 2 minutes (max 3 checks = 6 min window)
+      // A signal is FALSE if market conditions reverse before confirmation
+      var checkCount = 0;
+      var maxChecks  = 3; // 3 checks × 2 min = 6 minutes max
+      var checkInterval = setInterval(async function(){
+        checkCount++;
+
+        // Stop monitoring if signal was confirmed
+        if(st.lastDir===m15Dir && (Date.now()-st.lastSignalTime)<3*60*1000) {
+          clearInterval(checkInterval);
+          st.pendingPreId=null;
+          return;
+        }
+
+        // Stop if pendingPreId changed (new signal replaced this one)
+        if(st.pendingPreId!==preId) {
+          clearInterval(checkInterval);
+          return;
+        }
+
+        // Check if conditions have REVERSED since PREPARATI
+        var stNow = calcST(st.candles,14,3.0);
+        var dirNow = stNow.length ? (stNow[stNow.length-1].dir===1?'BUY':'SELL') : null;
+        var ema50Now = calcEMA(st.candles,50);
+        var priceNow = st.candles[st.candles.length-1].close;
+        var macdNow  = calcMACD(st.candles,12,26,9);
+        var rsiNow   = calcRSI(st.candles,14);
+
+        // Conditions that indicate a FALSE signal:
+        var stReversed    = dirNow && dirNow !== m15Dir;
+        var emaReversed   = m15Dir==='BUY'  ? priceNow < ema50Now
+                          : m15Dir==='SELL' ? priceNow > ema50Now : false;
+        var macdReversed  = macdNow && (
+                            m15Dir==='BUY'  ? macdNow.cross==='SELL'
+                          : m15Dir==='SELL' ? macdNow.cross==='BUY' : false);
+        var rsiExtreme    = m15Dir==='BUY'  ? rsiNow < 35
+                          : m15Dir==='SELL' ? rsiNow > 65 : false;
+
+        var reversalCount = (stReversed?1:0) + (emaReversed?1:0) +
+                            (macdReversed?1:0) + (rsiExtreme?1:0);
+
+        var reasons = [];
+        if(stReversed)   reasons.push('ST invertito → '+dirNow);
+        if(emaReversed)  reasons.push('Prezzo oltre EMA50');
+        if(macdReversed) reasons.push('MACD crossover inverso');
+        if(rsiExtreme)   reasons.push('RSI estremo ('+rsiNow.toFixed(1)+')');
+
+        // FALSE if 2+ conditions reversed OR reached max checks
+        var isFalse = reversalCount >= 2 || checkCount >= maxChecks;
+
+        if(isFalse) {
+          clearInterval(checkInterval);
+          st.pendingPreId=null;
+
+          var reason = reasons.length > 0 ? reasons.join(', ') : 'Conferma non arrivata in tempo';
           await tgSend(
             '❌ <b>SEGNALE FALSO</b> — '+name+nl+
-            'Il '+m15Dir+' non si è confermato'+nl+
+            'Il <b>'+m15Dir+'</b> non si è confermato'+nl+
+            '⚠ '+reason+nl+
             '<i>Non entrare. Aspetta il prossimo segnale.</i>'
           );
-          st.pendingPreId=null;
-          console.log('False signal notified: '+sym+' '+m15Dir);
+          console.log('False signal: '+sym+' '+m15Dir+' | '+reason);
         }
-      }, 5*60*1000);
+      }, 2*60*1000); // check every 2 minutes
     }
   }
 }
