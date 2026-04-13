@@ -130,6 +130,7 @@ function initSymbol(s) {
     lastDir:null, lastSignalTime:0,
     lastPreTime:0, lastPreDir:null,
     lastSRAlertTime:0,
+    pendingPreId:null, pendingPreDir:null, pendingPreTime:0,
     stats:{ total:0, buys:0, sells:0, lastSignal:'--', lastFilter:'--' },
     log:[]
   };
@@ -421,6 +422,59 @@ function calcADX(c, period) {
   return adx;
 }
 
+// ══════════════════════════════════════════
+// MACD - Moving Average Convergence Divergence
+// fast=12, slow=26, signal=9 (standard)
+// Returns { macd, signal, hist, cross }
+// cross: 'BUY' = macd crossed above signal (bullish)
+//        'SELL'= macd crossed below signal (bearish)
+//        null  = no cross on last candle
+// ══════════════════════════════════════════
+function calcMACD(candles, fast, slow, sigLen) {
+  fast   = fast   || 12;
+  slow   = slow   || 26;
+  sigLen = sigLen || 9;
+  if (candles.length < slow + sigLen + 2) return null;
+
+  // EMA helper
+  function ema(arr, period) {
+    var k = 2 / (period + 1), e = arr[0];
+    for (var i = 1; i < arr.length; i++) e = arr[i] * k + e * (1 - k);
+    return e;
+  }
+  function emaArr(arr, period) {
+    var k = 2 / (period + 1);
+    var out = [arr[0]];
+    for (var i = 1; i < arr.length; i++) out.push(arr[i] * k + out[i-1] * (1 - k));
+    return out;
+  }
+
+  var closes = candles.map(function(c){ return c.close; });
+  var emaFast = emaArr(closes, fast);
+  var emaSlow = emaArr(closes, slow);
+
+  // MACD line
+  var macdLine = [];
+  for (var i = 0; i < closes.length; i++) macdLine.push(emaFast[i] - emaSlow[i]);
+
+  // Signal line = EMA9 of MACD
+  var sigLine = emaArr(macdLine, sigLen);
+
+  var last  = macdLine[macdLine.length-1];
+  var prev  = macdLine[macdLine.length-2];
+  var lastS = sigLine[sigLine.length-1];
+  var prevS = sigLine[sigLine.length-2];
+  var hist  = last - lastS;
+  var histP = prev - prevS;
+
+  // Crossover detection
+  var cross = null;
+  if (prev <= prevS && last > lastS) cross = 'BUY';   // MACD crossed above signal
+  if (prev >= prevS && last < lastS) cross = 'SELL';  // MACD crossed below signal
+
+  return { macd: last, signal: lastS, hist: hist, histPrev: histP, cross: cross };
+}
+
 function calcLotSize(sym, balance, riskPct, slDist) {
   var riskAmt = balance*(riskPct/100);
   var pipVal  = PIP_VALUE[sym]||10;
@@ -698,12 +752,22 @@ async function checkSignal(sym, consensus, cooldownMin) {
     if (dir==='SELL' && m5Sell < m5Needed) { st.stats.lastFilter='Attesa M5 trigger ('+m5Sell+'/3 SELL)'; return; }
   }
 
-  // SESSION FILTER - only trade during active market sessions
-  // Session filter - Crypto always passes, Forex/Metals need active session
+  // SESSION FILTER
+  // Forex/Metals: solo London e NY
+  // Crypto: 24/7 MA con ADX minimo più alto fuori sessioni per evitare segnali deboli
+  var sesName = getSessionName(sym);
   if (CRYPTO.indexOf(sym) === -1 && !isOptimalSession(sym)) {
-    var sesName = getSessionName(sym);
     st.stats.lastFilter = 'Sessione inattiva ('+sesName+') - aspetta London 07:00 o NY 13:30 UTC';
     return;
+  }
+  // Crypto fuori sessioni principali: richiedi ADX più forte (evita movimenti deboli notturni)
+  if (CRYPTO.indexOf(sym) !== -1 && sesName === 'Off-session') {
+    var adxNow = calcADX(st.candles, 14);
+    var adxMinOffSession = 28; // più alto del normale 20 per crypto
+    if (adxNow < adxMinOffSession) {
+      st.stats.lastFilter = 'Crypto Off-session: ADX troppo basso ('+adxNow.toFixed(1)+'<'+adxMinOffSession+')';
+      return;
+    }
   }
 
   // S/R + OB CONFIRMATION - signal stronger near key levels
@@ -720,19 +784,61 @@ async function checkSignal(sym, consensus, cooldownMin) {
   var len = c.length;
   var greenCount = (c[len-1].close>c[len-1].open?1:0) + (c[len-2].close>c[len-2].open?1:0) + (c[len-3].close>c[len-3].open?1:0);
   var redCount   = (c[len-1].close<c[len-1].open?1:0) + (c[len-2].close<c[len-2].open?1:0) + (c[len-3].close<c[len-3].open?1:0);
+  // Crypto richiede 3/3 candele allineate (mercato volatile)
+  // Forex richiede 2/3 candele allineate
+  var isCrypto = CRYPTO.indexOf(sym) !== -1;
+  var minCandles = isCrypto ? 3 : 2;
   var momentumOk = false;
   if (dir === 'BUY') {
     momentumOk = c[len-1].close > c[len-1].open &&
                  c[len-1].close > c[len-3].close &&
-                 greenCount >= 2;
+                 greenCount >= minCandles;
   } else {
     momentumOk = c[len-1].close < c[len-1].open &&
                  c[len-1].close < c[len-3].close &&
-                 redCount >= 2;
+                 redCount >= minCandles;
   }
   if (!momentumOk) {
-    st.stats.lastFilter = 'Momentum assente - candele contro direzione';
+    st.stats.lastFilter = 'Momentum insufficiente ('+
+      (dir==='BUY'?greenCount:redCount)+'/'+minCandles+' candele '+
+      (dir==='BUY'?'verdi':'rosse')+' richieste)';
     return;
+  }
+
+  // ── MACD FILTER ──
+  // M15 MACD: richiede crossover nella direzione del segnale
+  // H1 MACD:  richiede che MACD > signal (trend confermato)
+  var macdM15 = calcMACD(st.candles, 12, 26, 9);
+  var macdH1  = calcMACD(st.candlesH1, 12, 26, 9);
+
+  if (macdM15) {
+    // M15: richiedi crossover recente (ultima o penultima candela)
+    // Se non c'è crossover recente, controlla almeno che MACD sia dalla parte giusta
+    var m15CrossOk = false;
+    if (dir === 'BUY') {
+      // Crossover BUY recente O MACD sopra signal con istogramma crescente
+      m15CrossOk = macdM15.cross === 'BUY' ||
+                   (macdM15.macd > macdM15.signal && macdM15.hist > macdM15.histPrev);
+    } else {
+      // Crossover SELL recente O MACD sotto signal con istogramma decrescente
+      m15CrossOk = macdM15.cross === 'SELL' ||
+                   (macdM15.macd < macdM15.signal && macdM15.hist < macdM15.histPrev);
+    }
+    if (!m15CrossOk) {
+      st.stats.lastFilter = 'MACD M15 contro direzione (MACD:'+macdM15.macd.toFixed(2)+' Sig:'+macdM15.signal.toFixed(2)+')';
+      return;
+    }
+  }
+
+  if (macdH1) {
+    // H1: MACD deve essere dalla parte giusta del signal (trend confermato)
+    var h1MACDok = false;
+    if (dir === 'BUY')  h1MACDok = macdH1.macd > macdH1.signal;
+    if (dir === 'SELL') h1MACDok = macdH1.macd < macdH1.signal;
+    if (!h1MACDok) {
+      st.stats.lastFilter = 'MACD H1 contro direzione (H1 MACD:'+macdH1.macd.toFixed(2)+' Sig:'+macdH1.signal.toFixed(2)+')';
+      return;
+    }
   }
 
   // CHoCH CHECK - pass H1 direction so strength is evaluated correctly
@@ -802,11 +908,13 @@ async function checkSignal(sym, consensus, cooldownMin) {
   var keyTxt     = keyLvlNow.confirmed ? ' '+keyLvlNow.type+' ✓' : '';
   var signalId   = Date.now().toString();
 
+  var macdInfo = calcMACD(st.candles, 12, 26, 9);
+  var macdTxt  = macdInfo ? ' | MACD: '+(macdInfo.cross==='BUY'?'↑cross':macdInfo.cross==='SELL'?'↓cross':macdInfo.hist>0?'↑':'↓') : '';
   var emoji = dir==='BUY' ? '🟢' : '🔴';
   var msg =
     emoji+' <b>'+dir+'</b> '+sym+nl+
     '💰 '+price.toFixed(dec)+' | SL: '+sl+' | TP: '+tp+nl+
-    '📊 RSI: '+rsi.toFixed(1)+' | ADX: '+calcADX(st.candles,14).toFixed(1)+nl+
+    '📊 RSI: '+rsi.toFixed(1)+' | ADX: '+calcADX(st.candles,14).toFixed(1)+macdTxt+nl+
     '📍 '+sessionNow+chochTxt+keyTxt+nl+
     '🎯 Lot: '+calcLotSize(sym,500,3,slDist)+' (500€) | R:R 1:2'+nl+
     (srText ? '📌 '+srText.replace(/\n/g,' | ') : '');
@@ -817,6 +925,7 @@ async function checkSignal(sym, consensus, cooldownMin) {
     st.stats.lastSignal=dir;
     st.stats.lastFilter='SEGNALE INVIATO: '+dir+' @ '+price.toFixed(dec);
     st.lastSignalTime=Date.now(); st.lastDir=dir;
+    st.pendingPreId=null; // Signal confirmed - cancel false signal timer
     st.log.unshift({dir:dir,price:price.toFixed(dec),time:time,sym:sym,rsi:rsi.toFixed(1),sl:sl,tp:tp});
     if(st.log.length>20) st.log.pop();
     globalStats.total++; if(dir==='BUY')globalStats.buys++;else globalStats.sells++;
@@ -825,6 +934,13 @@ async function checkSignal(sym, consensus, cooldownMin) {
     console.log('SIGNAL: '+sym+' '+dir+' @ '+price.toFixed(dec));
     // Store for MT5 EA
     pendingSignal = 'SIGNAL|'+dir+'|'+sym+'|'+price.toFixed(dec)+'|'+sl+'|'+tp+'|'+sessionNow+'|'+signalId;
+    // Auto-clear signal after 5 minutes if EA didn't pick it up
+    setTimeout(function(){ 
+      if(pendingSignal && pendingSignal.indexOf(signalId) !== -1) {
+        pendingSignal = null;
+        console.log('Signal auto-cleared after 5min: '+signalId);
+      }
+    }, 5*60*1000);
   }
   } catch(e) {
     console.error('checkSignal error '+sym+': '+e.message);
@@ -866,16 +982,37 @@ async function checkPreSignal(sym, consensus) {
   // Pre-alert only when H1 is already aligned AND ADX strong AND volume ok
   var preF = getSymbolFilters(sym);
   if (m15Dir===h1Dir && adx>=preF.adx*0.8 && (avgVol===0||lastVol===0||lastVol>=avgVol*0.7)) {
+    var preId = sym+'_'+Date.now();
     var ok=await tgSend(
-      '[ST-EA] PREPARATI - <b>'+name+'</b>'+nl+
-      'Direzione: <b>'+m15Dir+'</b>'+nl+
-      'Prezzo: '+price.toFixed(dec)+nl+
-      'H1: '+h1Dir+' | ADX: '+adx.toFixed(1)+' | Vol: '+volPct+'%'+nl+
-      'RSI: '+rsi.toFixed(1)+nl+
-      'Apri Capital.com ORA'+nl+
-      '<i>Segnale in arrivo...</i>'
+      '⚡ <b>PREPARATI</b> — '+name+nl+
+      'Direzione: <b>'+m15Dir+'</b> @ '+price.toFixed(dec)+nl+
+      'RSI: '+rsi.toFixed(1)+' | ADX: '+adx.toFixed(1)+nl+
+      '<i>Conferma in arrivo entro 5 min...</i>'
     );
-    if(ok){st.lastPreTime=Date.now();st.lastPreDir=m15Dir;}
+    if(ok){
+      st.lastPreTime=Date.now();
+      st.lastPreDir=m15Dir;
+      st.pendingPreId=preId;
+      st.pendingPreDir=m15Dir;
+      st.pendingPreTime=Date.now();
+
+      // After 5 minutes check if signal was confirmed
+      // If not → send false signal warning
+      setTimeout(async function(){
+        // Signal was confirmed if lastDir matches and lastSignalTime is recent
+        var confirmed = st.lastDir===m15Dir &&
+                        (Date.now()-st.lastSignalTime) < 6*60*1000;
+        if(!confirmed && st.pendingPreId===preId) {
+          await tgSend(
+            '❌ <b>SEGNALE FALSO</b> — '+name+nl+
+            'Il '+m15Dir+' non si è confermato'+nl+
+            '<i>Non entrare. Aspetta il prossimo segnale.</i>'
+          );
+          st.pendingPreId=null;
+          console.log('False signal notified: '+sym+' '+m15Dir);
+        }
+      }, 5*60*1000);
+    }
   }
 }
 
