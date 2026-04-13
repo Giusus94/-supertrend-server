@@ -54,13 +54,15 @@ const TD_MAP = {
   EURUSD:'EUR/USD', GBPUSD:'GBP/USD', USDJPY:'USD/JPY',
   GBPJPY:'GBP/JPY', AUDUSD:'AUD/USD', USDCAD:'USD/CAD',
   USDCHF:'USD/CHF', NZDUSD:'NZD/USD',
-  XAUUSD:'XAU/USD', XAGUSD:'XAG/USD'
+  XAUUSD:'XAU/USD', XAGUSD:'XAG/USD',
+  USOIL:'WTI/USD',  UKOIL:'BRENT/USD',
+  WTIUSD:'WTI/USD', BRNUSD:'BRENT/USD'
 };
 
 const YAHOO_MAP = {
   XAUUSD:'GC=F', XAGUSD:'SI=F',
   WTIUSD:'CL=F', BRNUSD:'BZ=F',
-  USOIL:'CL=F', UKOIL:'BZ=F',
+  USOIL:'CL=F',  UKOIL:'BZ=F',
   EURUSD:'EURUSD=X', GBPUSD:'GBPUSD=X', USDJPY:'USDJPY=X',
   GBPJPY:'GBPJPY=X', AUDUSD:'AUDUSD=X', USDCAD:'USDCAD=X',
   USDCHF:'USDCHF=X', NZDUSD:'NZDUSD=X'
@@ -70,7 +72,7 @@ const PRICE_RANGES = {
   BTCUSD:[20000,200000], ETHUSD:[500,20000], SOLUSD:[10,1000],
   XRPUSD:[0.1,100], BNBUSD:[100,5000], ADAUSD:[0.01,10],
   XAUUSD:[1000,8000], XAGUSD:[10,200],
-  WTIUSD:[20,200], BRNUSD:[20,200], USOIL:[20,200], UKOIL:[20,200],
+  WTIUSD:[40,150], BRNUSD:[40,150], USOIL:[40,150], UKOIL:[40,150],
   EURUSD:[0.8,1.6], GBPUSD:[0.9,1.8], USDJPY:[80,200],
   GBPJPY:[100,250], AUDUSD:[0.5,1.1], USDCAD:[1.0,1.8],
   USDCHF:[0.7,1.3], NZDUSD:[0.4,1.0]
@@ -1011,6 +1013,8 @@ async function checkPreSignal(sym, consensus) {
   var st=symbolState[sym];
   if(!st||!st.candles.length||!isRunning) return;
   if(getMarketStatus(sym)) return;
+  // Session filter - no pre-signals outside active sessions for Forex/Metals
+  if (CRYPTO.indexOf(sym) === -1 && !isOptimalSession(sym)) return;
   if(Date.now()-st.lastPreTime<30*60*1000) return;
 
   var bv=0,sv=0;
