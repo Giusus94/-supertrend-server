@@ -21,33 +21,85 @@ const FOREX   = ['EURUSD','GBPUSD','USDJPY','GBPJPY','AUDUSD','USDCAD','USDCHF',
 // ==============================
 // PER-SYMBOL FILTER THRESHOLDS
 // ==============================
+// ==============================
+// PER-SYMBOL FILTER THRESHOLDS
+// Each symbol has 3 sets of thresholds based on trend level:
+// TREND  = ADX strong + H1+H4 aligned  → relaxed filters
+// NORMAL = ADX medium + H1 aligned     → standard filters
+// RANGE  = ADX weak                    → no signals
+// ==============================
 var SYMBOL_FILTERS = {
-  // Forex - SL 1.5xATR, TP 2x, D1 trend required
-  EURUSD:{ adx:15, rsiMax:72, rsiMin:28, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0, useD1:true },
-  GBPUSD:{ adx:15, rsiMax:72, rsiMin:28, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0, useD1:true },
-  USDJPY:{ adx:15, rsiMax:76, rsiMin:24, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0, useD1:true },
-  GBPJPY:{ adx:15, rsiMax:78, rsiMin:22, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0, useD1:true },
-  AUDUSD:{ adx:15, rsiMax:72, rsiMin:28, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0, useD1:true },
-  USDCAD:{ adx:15, rsiMax:72, rsiMin:28, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0, useD1:true },
-  USDCHF:{ adx:15, rsiMax:72, rsiMin:28, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0, useD1:true },
-  NZDUSD:{ adx:15, rsiMax:72, rsiMin:28, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0, useD1:true },
-  // Metals - SL 1.8xATR, TP 2.5x
-  XAUUSD:{ adx:15, rsiMax:71, rsiMin:29, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5, useD1:true },
-  XAGUSD:{ adx:15, rsiMax:71, rsiMin:29, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5, useD1:true },
-  USOIL: { adx:15, rsiMax:71, rsiMin:29, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5, useD1:false },
-  UKOIL: { adx:15, rsiMax:71, rsiMin:29, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5, useD1:false },
-  WTIUSD:{ adx:15, rsiMax:71, rsiMin:29, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5, useD1:false },
-  BRNUSD:{ adx:15, rsiMax:71, rsiMin:29, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5, useD1:false },
-  // Crypto - SL 2.0xATR, TP 3x (più volatili), D1 trend required
-  BTCUSD:{ adx:20, rsiMax:70, rsiMin:30, noVol:false, consensus:3, slMult:2.0, tpMult:3.0, useD1:true },
-  ETHUSD:{ adx:20, rsiMax:70, rsiMin:30, noVol:false, consensus:3, slMult:2.0, tpMult:3.0, useD1:true },
-  SOLUSD:{ adx:20, rsiMax:70, rsiMin:30, noVol:false, consensus:3, slMult:2.0, tpMult:3.0, useD1:true },
-  XRPUSD:{ adx:20, rsiMax:70, rsiMin:30, noVol:false, consensus:3, slMult:2.0, tpMult:3.0, useD1:true },
-  BNBUSD:{ adx:20, rsiMax:70, rsiMin:30, noVol:false, consensus:3, slMult:2.0, tpMult:3.0, useD1:true },
+  // Forex
+  EURUSD:{ adxTrend:25, adxNormal:15, rsiMax:72, rsiMaxTrend:74, rsiMin:28, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
+  GBPUSD:{ adxTrend:25, adxNormal:15, rsiMax:72, rsiMaxTrend:74, rsiMin:28, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
+  USDJPY:{ adxTrend:25, adxNormal:15, rsiMax:76, rsiMaxTrend:78, rsiMin:24, rsiMinTrend:22, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
+  GBPJPY:{ adxTrend:25, adxNormal:15, rsiMax:78, rsiMaxTrend:80, rsiMin:22, rsiMinTrend:20, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
+  AUDUSD:{ adxTrend:25, adxNormal:15, rsiMax:72, rsiMaxTrend:74, rsiMin:28, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
+  USDCAD:{ adxTrend:25, adxNormal:15, rsiMax:72, rsiMaxTrend:74, rsiMin:28, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
+  USDCHF:{ adxTrend:25, adxNormal:15, rsiMax:72, rsiMaxTrend:74, rsiMin:28, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
+  NZDUSD:{ adxTrend:25, adxNormal:15, rsiMax:72, rsiMaxTrend:74, rsiMin:28, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
+  // Metals
+  XAUUSD:{ adxTrend:30, adxNormal:15, rsiMax:71, rsiMaxTrend:75, rsiMin:29, rsiMinTrend:25, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5 },
+  XAGUSD:{ adxTrend:30, adxNormal:15, rsiMax:71, rsiMaxTrend:75, rsiMin:29, rsiMinTrend:25, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5 },
+  // Oil
+  USOIL: { adxTrend:28, adxNormal:15, rsiMax:71, rsiMaxTrend:74, rsiMin:29, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5 },
+  UKOIL: { adxTrend:28, adxNormal:15, rsiMax:71, rsiMaxTrend:74, rsiMin:29, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5 },
+  WTIUSD:{ adxTrend:28, adxNormal:15, rsiMax:71, rsiMaxTrend:74, rsiMin:29, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5 },
+  BRNUSD:{ adxTrend:28, adxNormal:15, rsiMax:71, rsiMaxTrend:74, rsiMin:29, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5 },
+  // Crypto
+  BTCUSD:{ adxTrend:30, adxNormal:20, rsiMax:70, rsiMaxTrend:73, rsiMin:30, rsiMinTrend:27, noVol:false, consensus:3, slMult:2.0, tpMult:3.0 },
+  ETHUSD:{ adxTrend:30, adxNormal:20, rsiMax:70, rsiMaxTrend:73, rsiMin:30, rsiMinTrend:27, noVol:false, consensus:3, slMult:2.0, tpMult:3.0 },
+  SOLUSD:{ adxTrend:30, adxNormal:20, rsiMax:70, rsiMaxTrend:73, rsiMin:30, rsiMinTrend:27, noVol:false, consensus:3, slMult:2.0, tpMult:3.0 },
+  XRPUSD:{ adxTrend:30, adxNormal:20, rsiMax:70, rsiMaxTrend:73, rsiMin:30, rsiMinTrend:27, noVol:false, consensus:3, slMult:2.0, tpMult:3.0 },
+  BNBUSD:{ adxTrend:30, adxNormal:20, rsiMax:70, rsiMaxTrend:73, rsiMin:30, rsiMinTrend:27, noVol:false, consensus:3, slMult:2.0, tpMult:3.0 },
 };
 
 function getSymbolFilters(sym) {
-  return SYMBOL_FILTERS[sym] || { adx:15, rsiMax:72, rsiMin:28, noVol:true, consensus:2 };
+  return SYMBOL_FILTERS[sym] || { adxTrend:25, adxNormal:15, rsiMax:72, rsiMaxTrend:74, rsiMin:28, rsiMinTrend:26, noVol:true, consensus:2 };
+}
+
+// ==============================
+// TREND LEVEL DETECTION
+// Returns: { level:'TREND'|'NORMAL'|'RANGE', dir:'BUY'|'SELL'|null, adx:number }
+// TREND  = ADX >= adxTrend AND H1 + H4 aligned
+// NORMAL = ADX >= adxNormal AND H1 aligned
+// RANGE  = ADX < adxNormal
+// ==============================
+function getTrendLevel(sym) {
+  var st = symbolState[sym];
+  if (!st || !st.candles.length) return { level:'RANGE', dir:null, adx:0 };
+
+  var symF = getSymbolFilters(sym);
+  var adx  = calcADX(st.candles, 14);
+
+  // H1 direction
+  var h1Dir = null;
+  if (st.candlesH1.length >= 2) {
+    var stH1 = calcST(st.candlesH1, 14, 3.0);
+    if (stH1.length) h1Dir = stH1[stH1.length-1].dir===1 ? 'BUY' : 'SELL';
+  }
+
+  // H4 direction (use last 4 H1 candles as proxy)
+  var h4Dir = null;
+  if (st.candlesH1.length >= 8) {
+    var stH4 = calcST(st.candlesH1.slice(-40), 14, 3.0);
+    if (stH4.length) h4Dir = stH4[stH4.length-1].dir===1 ? 'BUY' : 'SELL';
+  }
+
+  // RANGE: ADX too low
+  if (adx < symF.adxNormal) return { level:'RANGE', dir:h1Dir, adx:adx };
+
+  // TREND: ADX strong + H1 + H4 all aligned
+  if (adx >= symF.adxTrend && h1Dir && h4Dir && h1Dir===h4Dir) {
+    return { level:'TREND', dir:h1Dir, adx:adx };
+  }
+
+  // NORMAL: ADX ok + H1 aligned
+  if (adx >= symF.adxNormal && h1Dir) {
+    return { level:'NORMAL', dir:h1Dir, adx:adx };
+  }
+
+  return { level:'RANGE', dir:h1Dir, adx:adx };
 }
 
 const TD_MAP = {
@@ -370,35 +422,28 @@ function detectCHoCH(candles, h1Dir) {
 // Best trading sessions for each market type
 // London: 08:00-12:00 UTC | NY: 13:30-17:00 UTC | Overlap: best!
 // ==============================
-function isOptimalSession(sym) {
+function isOptimalSession(sym, trendLevel) {
   // Crypto trades 24/7 - always optimal
   if (CRYPTO.indexOf(sym) !== -1) return true;
 
   var now = new Date();
-  var utcHour = now.getUTCHours();
-  var utcMin  = now.getUTCMinutes();
-  var utcTime = utcHour * 100 + utcMin;
+  var utcTime = now.getUTCHours() * 100 + now.getUTCMinutes();
 
-  // London open: 07:00-12:00 UTC
-  var londonOpen = utcTime >= 700 && utcTime <= 1200;
-  // NY open: 13:30-17:30 UTC
-  var nyOpen = utcTime >= 1330 && utcTime <= 1730;
-  // Overlap (best): 13:30-16:00 UTC
-  var overlap = utcTime >= 1330 && utcTime <= 1600;
+  // Sessions
+  var preOpen    = utcTime >= 600  && utcTime <= 700;   // Pre-London (TREND only)
+  var londonOpen = utcTime >= 700  && utcTime <= 1200;
+  var nyOpen     = utcTime >= 1330 && utcTime <= 1730;
+  var tokyoOpen  = utcTime >= 0    && utcTime <= 300;
 
-  // For JPY pairs also include Tokyo session: 00:00-03:00 UTC
-  var tokyoOpen = utcTime >= 0 && utcTime <= 300;
+  // In TREND MODE: extend session by 1 hour (from 06:00 UTC)
+  var extendedOpen = trendLevel==='TREND' ? (preOpen || londonOpen || nyOpen) : (londonOpen || nyOpen);
+
+  // JPY pairs: also include Tokyo
   if (sym === 'USDJPY' || sym === 'GBPJPY') {
-    return londonOpen || nyOpen || tokyoOpen;
+    return extendedOpen || tokyoOpen;
   }
 
-  // Gold trades best during London+NY
-  if (sym === 'XAUUSD' || sym === 'XAGUSD') {
-    return londonOpen || nyOpen;
-  }
-
-  // All other Forex: London + NY sessions
-  return londonOpen || nyOpen;
+  return extendedOpen;
 }
 
 function getSessionName(sym) {
@@ -731,6 +776,20 @@ async function checkSignal(sym, consensus, cooldownMin) {
   var mStatus = getMarketStatus(sym);
   if (mStatus) { st.stats.lastFilter='[CHIUSO] '+mStatus; return; }
 
+  // ── DETECT TREND LEVEL ──
+  var trendInfo = getTrendLevel(sym);
+  var trendLevel = trendInfo.level;  // 'TREND' | 'NORMAL' | 'RANGE'
+
+  // RANGE: no signals
+  if (trendLevel === 'RANGE') {
+    st.stats.lastFilter='Mercato laterale (ADX '+trendInfo.adx.toFixed(1)+' < '+symF.adxNormal+')';
+    return;
+  }
+
+  // Use appropriate RSI thresholds based on trend level
+  var rsiMax = trendLevel==='TREND' ? symF.rsiMaxTrend : symF.rsiMax;
+  var rsiMin = trendLevel==='TREND' ? symF.rsiMinTrend : symF.rsiMin;
+
   // ── 1. ST M15 CONSENSUS ──
   var bv=0, sv=0;
   for (var i=0;i<strategies.length;i++) {
@@ -740,8 +799,14 @@ async function checkSignal(sym, consensus, cooldownMin) {
   }
   var dir = null;
   if (bv>=consensus) dir='BUY'; else if (sv>=consensus) dir='SELL';
-  if (!dir) { st.stats.lastFilter='ST M15: '+bv+' BUY / '+sv+' SELL (serve '+consensus+')'; return; }
+  if (!dir) { st.stats.lastFilter='['+trendLevel+'] ST M15: '+bv+' BUY / '+sv+' SELL (serve '+consensus+')'; return; }
   if (dir===st.lastDir) { st.stats.lastFilter='Cooldown: '+dir+' già inviato'; return; }
+
+  // In TREND MODE: signal must align with trend direction
+  if (trendLevel==='TREND' && trendInfo.dir && dir!==trendInfo.dir) {
+    st.stats.lastFilter='[TREND] Segnale contro trend ('+dir+' vs trend '+trendInfo.dir+')';
+    return;
+  }
 
   var price = st.candles[st.candles.length-1].close;
 
@@ -754,87 +819,74 @@ async function checkSignal(sym, consensus, cooldownMin) {
     }
   }
 
-  // ── 3. D1 TREND FILTER ──
-  if (st.candlesH1.length >= 30) {
-    var d1Ema = calcEMA(st.candlesH1, 50);
-    var h1Last = st.candlesH1[st.candlesH1.length-1].close;
-    var d1Trend = h1Last > d1Ema ? 'BUY' : 'SELL';
-    if (d1Trend !== dir) {
-      st.stats.lastFilter = 'D1 trend contro (prezzo '+(dir==='BUY'?'sotto':'sopra')+' EMA50 H1)';
-      return;
-    }
-  }
-
-  // ── 4. EMA50 M15 ──
+  // ── 3. EMA50 M15 ──
   var ema50 = calcEMA(st.candles, 50);
   if (dir==='BUY'  && price < ema50) { st.stats.lastFilter='Prezzo sotto EMA50'; return; }
   if (dir==='SELL' && price > ema50) { st.stats.lastFilter='Prezzo sopra EMA50'; return; }
 
-  // ── 5. RSI FILTER ──
-  // BUY: RSI tra 45 e rsiMax (forza senza ipercomprato)
-  // SELL: RSI tra rsiMin e 55 (debolezza senza ipervenduto)
+  // ── 4. RSI FILTER (soglie per livello) ──
   var rsi = calcRSI(st.candles, 14);
   if (dir==='BUY') {
-    if (rsi > symF.rsiMax) { st.stats.lastFilter='RSI ipercomprato ('+rsi.toFixed(1)+' > '+symF.rsiMax+')'; return; }
-    if (rsi < 40)          { st.stats.lastFilter='RSI troppo basso per BUY ('+rsi.toFixed(1)+' < 40)'; return; }
+    if (rsi > rsiMax) { st.stats.lastFilter='RSI alto ('+rsi.toFixed(1)+' > '+rsiMax+') ['+trendLevel+']'; return; }
+    if (rsi < 38)     { st.stats.lastFilter='RSI basso per BUY ('+rsi.toFixed(1)+' < 38)'; return; }
   }
   if (dir==='SELL') {
-    if (rsi < symF.rsiMin) { st.stats.lastFilter='RSI ipervenduto ('+rsi.toFixed(1)+' < '+symF.rsiMin+')'; return; }
-    if (rsi > 60)          { st.stats.lastFilter='RSI troppo alto per SELL ('+rsi.toFixed(1)+' > 60)'; return; }
+    if (rsi < rsiMin) { st.stats.lastFilter='RSI basso ('+rsi.toFixed(1)+' < '+rsiMin+') ['+trendLevel+']'; return; }
+    if (rsi > 62)     { st.stats.lastFilter='RSI alto per SELL ('+rsi.toFixed(1)+' > 62)'; return; }
   }
 
-  // ── 6. MACD FILTER ──
-  // M15: crossover nella direzione del segnale
-  // H1:  MACD line sopra/sotto signal (trend confermato)
+  // ── 5. MACD FILTER ──
+  // TREND MODE: solo MACD H1 obbligatorio, M15 opzionale
+  // NORMAL MODE: MACD M15 crossover + H1 allineato
   var macdM15 = calcMACD(st.candles, 12, 26, 9);
   var macdH1  = st.candlesH1.length>=30 ? calcMACD(st.candlesH1, 12, 26, 9) : null;
 
-  if (macdM15 && macdM15.length >= 2) {
-    var m15Last = macdM15[macdM15.length-1];
-    var m15Prev = macdM15[macdM15.length-2];
-    var macdCrossUp   = m15Prev.macd <= m15Prev.signal && m15Last.macd > m15Last.signal;
-    var macdCrossDown = m15Prev.macd >= m15Prev.signal && m15Last.macd < m15Last.signal;
-    // Crossover recente (ultime 3 candele)
+  if (trendLevel === 'NORMAL' && macdM15) {
+    // In NORMAL mode: require recent M15 crossover OR M15 MACD aligned
     var recentCrossUp = false, recentCrossDown = false;
-    for (var k = Math.max(0, macdM15.length-4); k < macdM15.length-1; k++) {
-      if (macdM15[k].macd <= macdM15[k].signal && macdM15[k+1].macd > macdM15[k+1].signal) recentCrossUp = true;
-      if (macdM15[k].macd >= macdM15[k].signal && macdM15[k+1].macd < macdM15[k+1].signal) recentCrossDown = true;
-    }
-    if (dir==='BUY'  && !recentCrossUp   && m15Last.macd < m15Last.signal) {
-      st.stats.lastFilter='MACD M15 ribassista (no crossover BUY)'; return;
-    }
-    if (dir==='SELL' && !recentCrossDown && m15Last.macd > m15Last.signal) {
-      st.stats.lastFilter='MACD M15 rialzista (no crossover SELL)'; return;
+    if (macdM15.length >= 2) {
+      for (var k = Math.max(0, macdM15.length-4); k < macdM15.length-1; k++) {
+        if (macdM15[k].macd <= macdM15[k].signal && macdM15[k+1].macd > macdM15[k+1].signal) recentCrossUp = true;
+        if (macdM15[k].macd >= macdM15[k].signal && macdM15[k+1].macd < macdM15[k+1].signal) recentCrossDown = true;
+      }
+      var m15Last = macdM15[macdM15.length-1];
+      if (dir==='BUY'  && !recentCrossUp   && m15Last.macd < m15Last.signal) {
+        st.stats.lastFilter='MACD M15 ribassista'; return;
+      }
+      if (dir==='SELL' && !recentCrossDown && m15Last.macd > m15Last.signal) {
+        st.stats.lastFilter='MACD M15 rialzista'; return;
+      }
     }
   }
 
-  if (macdH1 && macdH1.length >= 2) {
-    var h1Last = macdH1[macdH1.length-1];
-    if (dir==='BUY'  && h1Last.macd < h1Last.signal) { st.stats.lastFilter='MACD H1 contro trend (BUY)'; return; }
-    if (dir==='SELL' && h1Last.macd > h1Last.signal) { st.stats.lastFilter='MACD H1 contro trend (SELL)'; return; }
+  // MACD H1 always required in both TREND and NORMAL
+  if (macdH1) {
+    var h1MacdLast = macdH1[macdH1.length-1];
+    if (dir==='BUY'  && h1MacdLast.macd < h1MacdLast.signal) { st.stats.lastFilter='MACD H1 contro trend (BUY)'; return; }
+    if (dir==='SELL' && h1MacdLast.macd > h1MacdLast.signal) { st.stats.lastFilter='MACD H1 contro trend (SELL)'; return; }
   }
 
-  // ── 7. SESSION FILTER ──
+  // ── 6. SESSION FILTER ──
+  // TREND MODE: extended from 06:00 UTC
+  // NORMAL MODE: standard London + NY
   var sesName = getSessionName(sym);
-  if (CRYPTO.indexOf(sym)===-1 && !isOptimalSession(sym)) {
-    st.stats.lastFilter='Sessione inattiva ('+sesName+')'; return;
-  }
-  if (CRYPTO.indexOf(sym)!==-1 && sesName==='Off-session') {
-    var adxOff = calcADX(st.candles,14);
-    if (adxOff < 25) { st.stats.lastFilter='Crypto off-session ADX basso ('+adxOff.toFixed(1)+')'; return; }
+  if (CRYPTO.indexOf(sym)===-1 && !isOptimalSession(sym, trendLevel)) {
+    st.stats.lastFilter='Sessione inattiva ('+sesName+') ['+trendLevel+']'; return;
   }
 
-  // ── 8. MOMENTUM ── (candele nella direzione giusta)
+  // ── 7. MOMENTUM ──
+  // TREND MODE: 1/3 candele sufficienti (trend in corso)
+  // NORMAL MODE: 2/3 Forex, 3/3 Crypto
   var c = st.candles, len = c.length;
   var isCrypto = CRYPTO.indexOf(sym)!==-1;
-  var minC = isCrypto ? 3 : 2;
+  var minC = trendLevel==='TREND' ? 1 : (isCrypto ? 3 : 2);
   var greenCount = (c[len-1].close>c[len-1].open?1:0)+(c[len-2].close>c[len-2].open?1:0)+(c[len-3].close>c[len-3].open?1:0);
   var redCount   = (c[len-1].close<c[len-1].open?1:0)+(c[len-2].close<c[len-2].open?1:0)+(c[len-3].close<c[len-3].open?1:0);
   var momentumOk = dir==='BUY'
     ? (c[len-1].close>c[len-1].open && greenCount>=minC)
     : (c[len-1].close<c[len-1].open && redCount>=minC);
   if (!momentumOk) {
-    st.stats.lastFilter='Momentum '+dir+': '+(dir==='BUY'?greenCount:redCount)+'/'+minC+' candele'; return;
+    st.stats.lastFilter='Momentum '+dir+': '+(dir==='BUY'?greenCount:redCount)+'/'+minC+' ['+trendLevel+']'; return;
   }
 
   // ── INFO ONLY (non bloccano) ──
