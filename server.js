@@ -71,7 +71,7 @@ const YAHOO_MAP = {
 const PRICE_RANGES = {
   BTCUSD:[20000,200000], ETHUSD:[500,20000], SOLUSD:[10,1000],
   XRPUSD:[0.1,100], BNBUSD:[100,5000], ADAUSD:[0.01,10],
-  XAUUSD:[1000,8000], XAGUSD:[10,200],
+  XAUUSD:[1000,8000], XAGUSD:[10,100],
   WTIUSD:[40,150], BRNUSD:[40,150], USOIL:[40,150], UKOIL:[40,150],
   EURUSD:[0.8,1.6], GBPUSD:[0.9,1.8], USDJPY:[80,200],
   GBPJPY:[100,250], AUDUSD:[0.5,1.1], USDCAD:[1.0,1.8],
@@ -590,6 +590,10 @@ async function fetchYahoo(sym, interval, range, target, st) {
         parsed.push({open:+q.open[i].toFixed(5),high:+q.high[i].toFixed(5),low:+q.low[i].toFixed(5),close:+q.close[i].toFixed(5),vol:q.volume[i]||0});
     }
     if (parsed.length<10) return false;
+    // XAGUSD fix: Yahoo SI=F sometimes returns cents instead of dollars
+    if (sym==='XAGUSD' && parsed[parsed.length-1].close > 100) {
+      parsed = parsed.map(function(c){return{open:c.open/100,high:c.high/100,low:c.low/100,close:c.close/100,vol:c.vol};});
+    }
     if (!isValidPrice(sym, parsed[parsed.length-1].close)) return false;
     st[target]=parsed;
     return true;
@@ -611,7 +615,7 @@ async function fetchTD(sym, interval, outputsize, target, st) {
 }
 
 function genDemo(sym, target, st, limit) {
-  var seeds = {XAUUSD:4700,XAGUSD:33,BTCUSD:67000,ETHUSD:1800,SOLUSD:130,EURUSD:1.082,GBPUSD:1.29,USDJPY:150,XRPUSD:0.5};
+  var seeds = {XAUUSD:4780,XAGUSD:32,BTCUSD:67000,ETHUSD:1800,SOLUSD:130,EURUSD:1.082,GBPUSD:1.29,USDJPY:150,XRPUSD:0.5};
   var p = seeds[sym]||1.0, arr=[];
   for (var i=0;i<(limit||150);i++) {
     var ch=(Math.random()-.488)*p*.003,o=p,c=p+ch;
