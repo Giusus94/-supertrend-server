@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+
 <html lang="it">
 <head>
 <meta charset="UTF-8">
@@ -564,6 +565,7 @@ select.ctrl-inp option{background:var(--bg-3);color:var(--tx-hi);}
 <div class="app">
 
 <!-- TOP BAR -->
+
 <div class="topbar">
   <div class="logo">ST<em>.</em>EA <sup>v2</sup></div>
   <div class="topbar-status">
@@ -575,9 +577,11 @@ select.ctrl-inp option{background:var(--bg-3);color:var(--tx-hi);}
 </div>
 
 <!-- TICKER BAR -->
+
 <div class="ticker" id="symBar"></div>
 
 <!-- NAV -->
+
 <div class="nav">
   <div class="nav-tab active" onclick="showPage('analysis',this)">ANALYSIS</div>
   <div class="nav-tab" onclick="showPage('signals',this)">SIGNALS</div>
@@ -588,9 +592,11 @@ select.ctrl-inp option{background:var(--bg-3);color:var(--tx-hi);}
 </div>
 
 <!-- APP BODY -->
+
 <div class="app-body">
 
 <!-- ANALYSIS PAGE -->
+
 <div class="page active" id="page-analysis">
   <div class="main-layout">
     <div>
@@ -633,40 +639,44 @@ select.ctrl-inp option{background:var(--bg-3);color:var(--tx-hi);}
         </div>
       </div>
 
-      <!-- INDICATORS -->
-      <div class="card">
-        <div class="card-head"><span class="card-title">Indicators</span></div>
-        <div class="ind-grid">
-          <div class="ind-cell"><div class="ind-label">M15</div><div class="ind-value" id="iM15">—</div></div>
-          <div class="ind-cell"><div class="ind-label">H1</div><div class="ind-value" id="iH1">—</div></div>
-          <div class="ind-cell"><div class="ind-label">RSI</div><div class="ind-value" id="iRSI">—</div></div>
-          <div class="ind-cell"><div class="ind-label">EMA50</div><div class="ind-value" id="iEMA">—</div></div>
-          <div class="ind-cell"><div class="ind-label">ADX</div><div class="ind-value" id="iADX">—</div></div>
-          <div class="ind-cell"><div class="ind-label">Volume</div><div class="ind-value" id="iVOL">—</div></div>
-        </div>
-      </div>
-
-      <!-- FILTER STATUS -->
-      <div class="card">
-        <div class="card-head"><span class="card-title">Filter Status</span></div>
-        <div id="filterList"><div class="empty">— No data —</div></div>
-      </div>
+```
+  <!-- INDICATORS -->
+  <div class="card">
+    <div class="card-head"><span class="card-title">Indicators</span></div>
+    <div class="ind-grid">
+      <div class="ind-cell"><div class="ind-label">M15</div><div class="ind-value" id="iM15">—</div></div>
+      <div class="ind-cell"><div class="ind-label">H1</div><div class="ind-value" id="iH1">—</div></div>
+      <div class="ind-cell"><div class="ind-label">RSI</div><div class="ind-value" id="iRSI">—</div></div>
+      <div class="ind-cell"><div class="ind-label">EMA50</div><div class="ind-value" id="iEMA">—</div></div>
+      <div class="ind-cell"><div class="ind-label">ADX</div><div class="ind-value" id="iADX">—</div></div>
+      <div class="ind-cell"><div class="ind-label">Volume</div><div class="ind-value" id="iVOL">—</div></div>
     </div>
+  </div>
 
-    <!-- RIGHT COLUMN -->
-    <div>
-      <div class="card">
-        <div class="card-head">
-          <span class="card-title">Support & Resistance</span>
-          <span class="badge badge-c">AUTO</span>
-        </div>
-        <div id="srList"><div class="empty">— No data —</div></div>
-      </div>
+  <!-- FILTER STATUS -->
+  <div class="card">
+    <div class="card-head"><span class="card-title">Filter Status</span></div>
+    <div id="filterList"><div class="empty">— No data —</div></div>
+  </div>
+</div>
+
+<!-- RIGHT COLUMN -->
+<div>
+  <div class="card">
+    <div class="card-head">
+      <span class="card-title">Support & Resistance</span>
+      <span class="badge badge-c">AUTO</span>
     </div>
+    <div id="srList"><div class="empty">— No data —</div></div>
+  </div>
+</div>
+```
+
   </div>
 </div>
 
 <!-- SIGNALS PAGE -->
+
 <div class="page" id="page-signals">
   <div class="two-col">
     <div class="card">
@@ -684,6 +694,7 @@ select.ctrl-inp option{background:var(--bg-3);color:var(--tx-hi);}
 </div>
 
 <!-- RISK PAGE -->
+
 <div class="page" id="page-risk">
   <div class="two-col">
     <div class="card">
@@ -725,6 +736,7 @@ select.ctrl-inp option{background:var(--bg-3);color:var(--tx-hi);}
 </div>
 
 <!-- SETTINGS PAGE -->
+
 <div class="page" id="page-settings">
   <div class="two-col">
     <div>
@@ -789,6 +801,7 @@ select.ctrl-inp option{background:var(--bg-3);color:var(--tx-hi);}
 </div>
 
 <!-- PA BOT PAGE -->
+
 <div class="page" id="page-pa">
   <div class="two-col">
     <div class="card">
@@ -832,6 +845,7 @@ select.ctrl-inp option{background:var(--bg-3);color:var(--tx-hi);}
 </div>
 
 <!-- STATS PAGE -->
+
 <div class="page" id="page-stats">
   <div class="two-col">
     <div class="card">
@@ -1167,5 +1181,6 @@ switchSym('XAUUSD');
 pollStatus();
 setInterval(pollStatus,5000);
 </script>
+
 </body>
 </html>
