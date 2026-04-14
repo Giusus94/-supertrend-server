@@ -430,13 +430,22 @@ function isOptimalSession(sym, trendLevel) {
   var utcTime = now.getUTCHours() * 100 + now.getUTCMinutes();
 
   // Sessions
-  var preOpen    = utcTime >= 600  && utcTime <= 700;   // Pre-London (TREND only)
+  var preOpen    = utcTime >= 600  && utcTime <= 700;    // Pre-London (TREND only)
   var londonOpen = utcTime >= 700  && utcTime <= 1200;
   var nyOpen     = utcTime >= 1330 && utcTime <= 1730;
   var tokyoOpen  = utcTime >= 0    && utcTime <= 300;
 
+  // Gold/Silver/Oil: also active 23:00-00:30 UTC (CME reopen after daily pause)
+  // Daily pause is approx 22:00-23:00 UTC
+  var metalReopen = utcTime >= 2300 || utcTime <= 30;
+
   // In TREND MODE: extend session by 1 hour (from 06:00 UTC)
   var extendedOpen = trendLevel==='TREND' ? (preOpen || londonOpen || nyOpen) : (londonOpen || nyOpen);
+
+  // Metals: add CME reopen session
+  if (METALS.indexOf(sym) !== -1) {
+    return extendedOpen || metalReopen;
+  }
 
   // JPY pairs: also include Tokyo
   if (sym === 'USDJPY' || sym === 'GBPJPY') {
@@ -453,6 +462,7 @@ function getSessionName(sym) {
   if (utcTime >= 1330 && utcTime <= 1600) return 'London+NY';
   if (utcTime >= 1600 && utcTime <= 1730) return 'NY';
   if (utcTime >= 0    && utcTime <= 300)  return 'Tokyo';
+  if ((utcTime >= 2300 || utcTime <= 30)) return 'CME Reopen';
   return 'Off-session';
 }
 
