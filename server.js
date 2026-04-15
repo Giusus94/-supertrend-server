@@ -1030,7 +1030,7 @@ async function checkPreSignal(sym, consensus) {
       '⚡ <b>PREPARATI</b> — '+name+nl+
       'Direzione: <b>'+m15Dir+'</b> @ '+price.toFixed(dec)+nl+
       'RSI: '+rsi.toFixed(1)+' | ADX: '+adx.toFixed(1)+nl+
-      '<i>Conferma in arrivo entro 5 min...</i>'
+      '<i>Conferma in arrivo entro 15 min...</i>'
     );
     if(ok){
       st.lastPreTime=Date.now();
@@ -1039,10 +1039,10 @@ async function checkPreSignal(sym, consensus) {
       st.pendingPreDir=m15Dir;
       st.pendingPreTime=Date.now();
 
-      // Monitor conditions every 2 minutes (max 3 checks = 6 min window)
+      // Monitor conditions every 5 minutes (max 3 checks = 15 min window)
       // A signal is FALSE if market conditions reverse before confirmation
       var checkCount = 0;
-      var maxChecks  = 3; // 3 checks × 2 min = 6 minutes max
+      var maxChecks  = 3; // 3 checks × 5 min = 15 minutes max
       var checkInterval = setInterval(async function(){
         checkCount++;
 
@@ -1102,7 +1102,7 @@ async function checkPreSignal(sym, consensus) {
           );
           console.log('False signal: '+sym+' '+m15Dir+' | '+reason);
         }
-      }, 2*60*1000); // check every 2 minutes
+      }, 5*60*1000); // check every 5 minutes
     }
   }
 }
