@@ -845,21 +845,11 @@ async function checkSignal(sym, consensus, cooldownMin) {
 
   var price = st.candles[st.candles.length-1].close;
 
-  // ── 2. H1 FILTER ──
-  // Se c'è un flip 3/3 su M15, H1 diventa opzionale (il flip è la conferma)
-  // Se non c'è flip (es. segnale in trend), H1 è obbligatorio
+  // ── 2. H1 INFO ── (non blocca più — solo informativo)
   var h1Dir = null;
   if (st.candlesH1.length>=2) {
     var stH1 = calcST(st.candlesH1,14,3.0);
     if (stH1.length) h1Dir = stH1[stH1.length-1].dir===1?'BUY':'SELL';
-  }
-  if (h1Dir && h1Dir!==dir) {
-    if (!flipped) {
-      // No flip — H1 obbligatorio
-      st.stats.lastFilter='H1 contro trend (H1='+h1Dir+')'; return;
-    }
-    // Flip presente — H1 contrario è accettabile ma lo segnaliamo
-    console.log('FLIP signal with H1 contra: '+sym+' '+dir+' H1='+h1Dir);
   }
 
   // ── 3. RSI — solo filtro estremo ──
