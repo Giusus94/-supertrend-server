@@ -818,17 +818,19 @@ async function checkSignal(sym, consensus, cooldownMin) {
   if (!dir) { st.stats.lastFilter='['+trendLevel+'] ST M15: '+bv+' BUY / '+sv+' SELL (serve '+consensus+')'; return; }
 
   // ── FLIP OBBLIGATORIO ──
-  // Il segnale Telegram parte SOLO quando tutte e 3 le linee flippano
-  // nella stessa direzione in questa candela o nella precedente
+  // Segnale parte SOLO quando tutte e 3 le linee cambiano direzione
+  // BUY flip:  ora tutte e 3 BUY, prima erano almeno 2 SELL
+  // SELL flip: ora tutte e 3 SELL, prima erano almeno 2 BUY
   var flipped = (dir==='BUY'  && bv===3 && svPrev>=2) ||
                 (dir==='SELL' && sv===3 && bvPrev>=2);
 
+  // Flip nelle ultime 3 candele
   var recentFlip = flipped ||
                    (dir==='BUY'  && bv===3 && svPrev2>=2) ||
                    (dir==='SELL' && sv===3 && bvPrev2>=2);
 
   if (!recentFlip) {
-    st.stats.lastFilter='Nessun flip ST 3/3 (BUY:'+bv+'/3 prev:'+bvPrev+'/3)';
+    st.stats.lastFilter='Nessun flip (BUY:'+bv+'/3 SELL:'+sv+'/3 prevBUY:'+bvPrev+' prevSELL:'+svPrev+')';
     return;
   }
 
