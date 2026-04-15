@@ -163,7 +163,7 @@ function isValidPrice(sym, price) {
 // Set AUTO_START=true to auto-start EA on deploy
 var ENV_SYMBOLS = process.env.DEFAULT_SYMBOLS ? process.env.DEFAULT_SYMBOLS.split(',').map(function(s){return s.trim();}) : null;
 var AUTO_START  = process.env.AUTO_START === 'true';
-var ENV_REFRESH = parseInt(process.env.REFRESH_SEC)||120;
+var ENV_REFRESH = parseInt(process.env.REFRESH_SEC)||60;
 var ENV_COOLDOWN= parseInt(process.env.COOLDOWN_MIN)||15;
 var ENV_CONSENSUS= parseInt(process.env.CONSENSUS)||3;
 
@@ -780,7 +780,11 @@ async function checkSignal(sym, consensus, cooldownMin) {
   cooldownMin = cooldownMin||15;
   var st = symbolState[sym];
   if (!st||!st.candles.length||!isRunning) return;
-  if (Date.now()-st.lastSignalTime < cooldownMin*60*1000) return;
+
+  // Adaptive cooldown: shorter in TREND MODE to catch pullback entries
+  var trendInfoCool = getTrendLevel(sym);
+  var effectiveCooldown = trendInfoCool.level==='TREND' ? Math.min(cooldownMin, 5) : cooldownMin;
+  if (Date.now()-st.lastSignalTime < effectiveCooldown*60*1000) return;
 
   // Market hours
   var mStatus = getMarketStatus(sym);
@@ -800,17 +804,36 @@ async function checkSignal(sym, consensus, cooldownMin) {
   var rsiMax = trendLevel==='TREND' ? symF.rsiMaxTrend : symF.rsiMax;
   var rsiMin = trendLevel==='TREND' ? symF.rsiMinTrend : symF.rsiMin;
 
-  // ── 1. ST M15 CONSENSUS ──
-  var bv=0, sv=0;
+  // ── 1. ST M15 CONSENSUS + FLIP DETECTION ──
+  var bv=0, sv=0, bvPrev=0, svPrev=0, bvPrev2=0, svPrev2=0;
   for (var i=0;i<strategies.length;i++) {
     var r = calcST(st.candles,strategies[i].atr,strategies[i].mult);
     if (!r.length) continue;
     if (r[r.length-1].dir===1) bv++; else sv++;
+    if (r.length>=2) { if (r[r.length-2].dir===1) bvPrev++; else svPrev++; }
+    if (r.length>=3) { if (r[r.length-3].dir===1) bvPrev2++; else svPrev2++; }
   }
   var dir = null;
   if (bv>=consensus) dir='BUY'; else if (sv>=consensus) dir='SELL';
   if (!dir) { st.stats.lastFilter='['+trendLevel+'] ST M15: '+bv+' BUY / '+sv+' SELL (serve '+consensus+')'; return; }
-  if (dir===st.lastDir) { st.stats.lastFilter='Cooldown: '+dir+' già inviato'; return; }
+
+  // ── FLIP OBBLIGATORIO ──
+  // Il segnale Telegram parte SOLO quando tutte e 3 le linee flippano
+  // nella stessa direzione in questa candela o nella precedente
+  var flipped = (dir==='BUY'  && bv===3 && svPrev>=2) ||
+                (dir==='SELL' && sv===3 && bvPrev>=2);
+
+  var recentFlip = flipped ||
+                   (dir==='BUY'  && bv===3 && svPrev2>=2) ||
+                   (dir==='SELL' && sv===3 && bvPrev2>=2);
+
+  if (!recentFlip) {
+    st.stats.lastFilter='Nessun flip ST 3/3 (BUY:'+bv+'/3 prev:'+bvPrev+'/3)';
+    return;
+  }
+
+  // Flip resetta il cooldown — nuovo ingresso anche se lastDir è uguale
+  if (dir===st.lastDir && !flipped) { st.stats.lastFilter='Cooldown: '+dir+' già inviato'; return; }
 
   // In TREND MODE: signal must align with trend direction
   if (trendLevel==='TREND' && trendInfo.dir && dir!==trendInfo.dir) {
