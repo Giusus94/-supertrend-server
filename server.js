@@ -862,74 +862,22 @@ async function checkSignal(sym, consensus, cooldownMin) {
     console.log('FLIP signal with H1 contra: '+sym+' '+dir+' H1='+h1Dir);
   }
 
-  // ── 3. EMA50 M15 ──
-  var ema50 = calcEMA(st.candles, 50);
-  if (dir==='BUY'  && price < ema50) { st.stats.lastFilter='Prezzo sotto EMA50'; return; }
-  if (dir==='SELL' && price > ema50) { st.stats.lastFilter='Prezzo sopra EMA50'; return; }
-
-  // ── 4. RSI FILTER (soglie per livello) ──
+  // ── 3. RSI — solo filtro estremo ──
+  // Non blocca su ipercomprato in trend — solo su valori estremi
   var rsi = calcRSI(st.candles, 14);
-  if (dir==='BUY') {
-    if (rsi > rsiMax) { st.stats.lastFilter='RSI alto ('+rsi.toFixed(1)+' > '+rsiMax+') ['+trendLevel+']'; return; }
-    if (rsi < 38)     { st.stats.lastFilter='RSI basso per BUY ('+rsi.toFixed(1)+' < 38)'; return; }
-  }
-  if (dir==='SELL') {
-    if (rsi < rsiMin) { st.stats.lastFilter='RSI basso ('+rsi.toFixed(1)+' < '+rsiMin+') ['+trendLevel+']'; return; }
-    if (rsi > 62)     { st.stats.lastFilter='RSI alto per SELL ('+rsi.toFixed(1)+' > 62)'; return; }
-  }
+  if (dir==='BUY'  && rsi > rsiMax) { st.stats.lastFilter='RSI estremo ('+rsi.toFixed(1)+' > '+rsiMax+')'; return; }
+  if (dir==='SELL' && rsi < rsiMin) { st.stats.lastFilter='RSI estremo ('+rsi.toFixed(1)+' < '+rsiMin+')'; return; }
 
-  // ── 5. MACD FILTER ──
-  // TREND MODE: solo MACD H1 obbligatorio, M15 opzionale
-  // NORMAL MODE: MACD M15 crossover + H1 allineato
-  var macdM15 = calcMACD(st.candles, 12, 26, 9);
-  var macdH1  = st.candlesH1.length>=30 ? calcMACD(st.candlesH1, 12, 26, 9) : null;
-
-  if (trendLevel === 'NORMAL' && macdM15) {
-    // In NORMAL mode: require recent M15 crossover OR M15 MACD aligned
-    var recentCrossUp = false, recentCrossDown = false;
-    if (macdM15.length >= 2) {
-      for (var k = Math.max(0, macdM15.length-4); k < macdM15.length-1; k++) {
-        if (macdM15[k].macd <= macdM15[k].signal && macdM15[k+1].macd > macdM15[k+1].signal) recentCrossUp = true;
-        if (macdM15[k].macd >= macdM15[k].signal && macdM15[k+1].macd < macdM15[k+1].signal) recentCrossDown = true;
-      }
-      var m15Last = macdM15[macdM15.length-1];
-      if (dir==='BUY'  && !recentCrossUp   && m15Last.macd < m15Last.signal) {
-        st.stats.lastFilter='MACD M15 ribassista'; return;
-      }
-      if (dir==='SELL' && !recentCrossDown && m15Last.macd > m15Last.signal) {
-        st.stats.lastFilter='MACD M15 rialzista'; return;
-      }
-    }
-  }
-
-  // MACD H1 always required in both TREND and NORMAL
-  if (macdH1) {
-    var h1MacdLast = macdH1[macdH1.length-1];
-    if (dir==='BUY'  && h1MacdLast.macd < h1MacdLast.signal) { st.stats.lastFilter='MACD H1 contro trend (BUY)'; return; }
-    if (dir==='SELL' && h1MacdLast.macd > h1MacdLast.signal) { st.stats.lastFilter='MACD H1 contro trend (SELL)'; return; }
-  }
-
-  // ── 6. SESSION FILTER ──
-  // TREND MODE: extended from 06:00 UTC
-  // NORMAL MODE: standard London + NY
+  // ── 4. SESSION FILTER ──
   var sesName = getSessionName(sym);
   if (CRYPTO.indexOf(sym)===-1 && !isOptimalSession(sym, trendLevel)) {
-    st.stats.lastFilter='Sessione inattiva ('+sesName+') ['+trendLevel+']'; return;
+    st.stats.lastFilter='Sessione inattiva ('+sesName+')'; return;
   }
 
-  // ── 7. MOMENTUM ──
-  // TREND MODE: 1/3 candele sufficienti (trend in corso)
-  // NORMAL MODE: 2/3 Forex, 3/3 Crypto
-  var c = st.candles, len = c.length;
-  var isCrypto = CRYPTO.indexOf(sym)!==-1;
-  var minC = trendLevel==='TREND' ? 1 : (isCrypto ? 3 : 2);
-  var greenCount = (c[len-1].close>c[len-1].open?1:0)+(c[len-2].close>c[len-2].open?1:0)+(c[len-3].close>c[len-3].open?1:0);
-  var redCount   = (c[len-1].close<c[len-1].open?1:0)+(c[len-2].close<c[len-2].open?1:0)+(c[len-3].close<c[len-3].open?1:0);
-  var momentumOk = dir==='BUY'
-    ? (c[len-1].close>c[len-1].open && greenCount>=minC)
-    : (c[len-1].close<c[len-1].open && redCount>=minC);
-  if (!momentumOk) {
-    st.stats.lastFilter='Momentum '+dir+': '+(dir==='BUY'?greenCount:redCount)+'/'+minC+' ['+trendLevel+']'; return;
+  // ── 5. RANGE FILTER ──
+  // Nessun segnale in mercato laterale
+  if (trendLevel==='RANGE') {
+    st.stats.lastFilter='Mercato laterale (ADX '+trendInfo.adx.toFixed(1)+')'; return;
   }
 
   // ── INFO ONLY (non bloccano) ──
