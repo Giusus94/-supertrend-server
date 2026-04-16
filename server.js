@@ -50,7 +50,7 @@ var SYMBOL_FILTERS = {
   ETHUSD:{ adxTrend:25, adxNormal:20, rsiMax:70, rsiMaxTrend:71, rsiMin:26, rsiMinTrend:27, noVol:false, consensus:3, slMult:2.0, tpMult:3.0 },
   SOLUSD:{ adxTrend:25, adxNormal:20, rsiMax:70, rsiMaxTrend:71, rsiMin:26, rsiMinTrend:27, noVol:false, consensus:3, slMult:2.0, tpMult:3.0 },
   XRPUSD:{ adxTrend:25, adxNormal:20, rsiMax:70, rsiMaxTrend:71, rsiMin:26, rsiMinTrend:27, noVol:false, consensus:3, slMult:2.0, tpMult:3.0 },
-  BNBUSD:{ adxTrend:25, adxNormal:20, rsiMax:70, rsiMaxTrend:71, rsiMin:26!, rsiMinTrend:27, noVol:false, consensus:3, slMult:2.0, tpMult:3.0 },
+  BNBUSD:{ adxTrend:25, adxNormal:20, rsiMax:70, rsiMaxTrend:71, rsiMin:26, rsiMinTrend:27, noVol:false, consensus:3, slMult:2.0, tpMult:3.0 },
 };
 
 function getSymbolFilters(sym) {
