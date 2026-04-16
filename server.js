@@ -14,7 +14,7 @@ const RENDER_URL  = process.env.RENDER_URL || '';
 // ==============================
 // SYMBOL CONFIG
 // ==============================
-const CRYPTO  = ['BTCUSD','ETHUSD','SOLUSD','XRPUSD','BNBUSD','ADAUSD'];
+const CRYPTO  = ['BTCUSD','ETHUSD','SOLUSD','XRPUSD','ADAUSD'];
 const METALS  = ['XAUUSD','XAGUSD','WTIUSD','BRNUSD','USOIL','UKOIL'];
 const FOREX   = ['EURUSD','GBPUSD','USDJPY','GBPJPY','AUDUSD','USDCAD','USDCHF','NZDUSD'];
 
@@ -45,7 +45,6 @@ var SYMBOL_FILTERS = {
   USOIL: { adxTrend:28, adxNormal:15, rsiMax:70, rsiMaxTrend:72, rsiMin:29, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5 },
   UKOIL: { adxTrend:28, adxNormal:15, rsiMax:70, rsiMaxTrend:72, rsiMin:29, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5 },
   WTIUSD:{ adxTrend:28, adxNormal:15, rsiMax:70, rsiMaxTrend:72, rsiMin:29, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5 },
-  BRNUSD:{ adxTrend:28, adxNormal:15, rsiMax:70, rsiMaxTrend:72, rsiMin:29, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5 },
   // Crypto
   BTCUSD:{ adxTrend:25, adxNormal:20, rsiMax:70, rsiMaxTrend:71, rsiMin:26, rsiMinTrend:27, noVol:false, consensus:3, slMult:2.0, tpMult:3.0 },
   ETHUSD:{ adxTrend:25, adxNormal:20, rsiMax:70, rsiMaxTrend:71, rsiMin:26, rsiMinTrend:27, noVol:false, consensus:3, slMult:2.0, tpMult:3.0 },
