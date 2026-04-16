@@ -30,32 +30,32 @@ const FOREX   = ['EURUSD','GBPUSD','USDJPY','GBPJPY','AUDUSD','USDCAD','USDCHF',
 // ==============================
 var SYMBOL_FILTERS = {
   // Forex
-  EURUSD:{ adxTrend:25, adxNormal:15, rsiMax:72, rsiMaxTrend:74, rsiMin:28, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
-  GBPUSD:{ adxTrend:25, adxNormal:15, rsiMax:72, rsiMaxTrend:74, rsiMin:28, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
-  USDJPY:{ adxTrend:25, adxNormal:15, rsiMax:76, rsiMaxTrend:78, rsiMin:24, rsiMinTrend:22, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
-  GBPJPY:{ adxTrend:25, adxNormal:15, rsiMax:78, rsiMaxTrend:80, rsiMin:22, rsiMinTrend:20, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
-  AUDUSD:{ adxTrend:25, adxNormal:15, rsiMax:72, rsiMaxTrend:74, rsiMin:28, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
-  USDCAD:{ adxTrend:25, adxNormal:15, rsiMax:72, rsiMaxTrend:74, rsiMin:28, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
-  USDCHF:{ adxTrend:25, adxNormal:15, rsiMax:72, rsiMaxTrend:74, rsiMin:28, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
-  NZDUSD:{ adxTrend:25, adxNormal:15, rsiMax:72, rsiMaxTrend:74, rsiMin:28, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
+  EURUSD:{ adxTrend:20, adxNormal:12, rsiMax:70, rsiMaxTrend:71, rsiMin:28, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
+  GBPUSD:{ adxTrend:20, adxNormal:12, rsiMax:70, rsiMaxTrend:71, rsiMin:28, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
+  USDJPY:{ adxTrend:20, adxNormal:12, rsiMax:70, rsiMaxTrend:71, rsiMin:24, rsiMinTrend:22, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
+  GBPJPY:{ adxTrend:20, adxNormal:12, rsiMax:70, rsiMaxTrend:71, rsiMin:22, rsiMinTrend:20, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
+  AUDUSD:{ adxTrend:20, adxNormal:12, rsiMax:70, rsiMaxTrend:71, rsiMin:28, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
+  USDCAD:{ adxTrend:20, adxNormal:12, rsiMax:70, rsiMaxTrend:71, rsiMin:28, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
+  USDCHF:{ adxTrend:20, adxNormal:12, rsiMax:70, rsiMaxTrend:71, rsiMin:28, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
+  NZDUSD:{ adxTrend:20, adxNormal:12, rsiMax:70, rsiMaxTrend:71, rsiMin:28, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.5, tpMult:2.0 },
   // Metals
-  XAUUSD:{ adxTrend:30, adxNormal:15, rsiMax:71, rsiMaxTrend:75, rsiMin:29, rsiMinTrend:25, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5 },
-  XAGUSD:{ adxTrend:30, adxNormal:15, rsiMax:71, rsiMaxTrend:75, rsiMin:29, rsiMinTrend:25, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5 },
+  XAUUSD:{ adxTrend:25, adxNormal:12, rsiMax:70, rsiMaxTrend:71, rsiMin:29, rsiMinTrend:25, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5 },
+  XAGUSD:{ adxTrend:25, adxNormal:12, rsiMax:70, rsiMaxTrend:71, rsiMin:29, rsiMinTrend:25, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5 },
   // Oil
-  USOIL: { adxTrend:28, adxNormal:15, rsiMax:71, rsiMaxTrend:74, rsiMin:29, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5 },
-  UKOIL: { adxTrend:28, adxNormal:15, rsiMax:71, rsiMaxTrend:74, rsiMin:29, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5 },
-  WTIUSD:{ adxTrend:28, adxNormal:15, rsiMax:71, rsiMaxTrend:74, rsiMin:29, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5 },
-  BRNUSD:{ adxTrend:28, adxNormal:15, rsiMax:71, rsiMaxTrend:74, rsiMin:29, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5 },
+  USOIL: { adxTrend:28, adxNormal:15, rsiMax:70, rsiMaxTrend:72, rsiMin:29, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5 },
+  UKOIL: { adxTrend:28, adxNormal:15, rsiMax:70, rsiMaxTrend:72, rsiMin:29, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5 },
+  WTIUSD:{ adxTrend:28, adxNormal:15, rsiMax:70, rsiMaxTrend:72, rsiMin:29, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5 },
+  BRNUSD:{ adxTrend:28, adxNormal:15, rsiMax:70, rsiMaxTrend:72, rsiMin:29, rsiMinTrend:26, noVol:true,  consensus:2, slMult:1.8, tpMult:2.5 },
   // Crypto
-  BTCUSD:{ adxTrend:30, adxNormal:20, rsiMax:70, rsiMaxTrend:73, rsiMin:30, rsiMinTrend:27, noVol:false, consensus:3, slMult:2.0, tpMult:3.0 },
-  ETHUSD:{ adxTrend:30, adxNormal:20, rsiMax:70, rsiMaxTrend:73, rsiMin:30, rsiMinTrend:27, noVol:false, consensus:3, slMult:2.0, tpMult:3.0 },
-  SOLUSD:{ adxTrend:30, adxNormal:20, rsiMax:70, rsiMaxTrend:73, rsiMin:30, rsiMinTrend:27, noVol:false, consensus:3, slMult:2.0, tpMult:3.0 },
-  XRPUSD:{ adxTrend:30, adxNormal:20, rsiMax:70, rsiMaxTrend:73, rsiMin:30, rsiMinTrend:27, noVol:false, consensus:3, slMult:2.0, tpMult:3.0 },
-  BNBUSD:{ adxTrend:30, adxNormal:20, rsiMax:70, rsiMaxTrend:73, rsiMin:30, rsiMinTrend:27, noVol:false, consensus:3, slMult:2.0, tpMult:3.0 },
+  BTCUSD:{ adxTrend:25, adxNormal:20, rsiMax:70, rsiMaxTrend:71, rsiMin:26, rsiMinTrend:27, noVol:false, consensus:3, slMult:2.0, tpMult:3.0 },
+  ETHUSD:{ adxTrend:25, adxNormal:20, rsiMax:70, rsiMaxTrend:71, rsiMin:26, rsiMinTrend:27, noVol:false, consensus:3, slMult:2.0, tpMult:3.0 },
+  SOLUSD:{ adxTrend:25, adxNormal:20, rsiMax:70, rsiMaxTrend:71, rsiMin:26, rsiMinTrend:27, noVol:false, consensus:3, slMult:2.0, tpMult:3.0 },
+  XRPUSD:{ adxTrend:25, adxNormal:20, rsiMax:70, rsiMaxTrend:71, rsiMin:26, rsiMinTrend:27, noVol:false, consensus:3, slMult:2.0, tpMult:3.0 },
+  BNBUSD:{ adxTrend:25, adxNormal:20, rsiMax:70, rsiMaxTrend:71, rsiMin:26!, rsiMinTrend:27, noVol:false, consensus:3, slMult:2.0, tpMult:3.0 },
 };
 
 function getSymbolFilters(sym) {
-  return SYMBOL_FILTERS[sym] || { adxTrend:25, adxNormal:15, rsiMax:72, rsiMaxTrend:74, rsiMin:28, rsiMinTrend:26, noVol:true, consensus:2 };
+  return SYMBOL_FILTERS[sym] || { adxTrend:20, adxNormal:12, rsiMax:70, rsiMaxTrend:71, rsiMin:25, rsiMinTrend:25, noVol:true, consensus:2 };
 }
 
 // ==============================
@@ -70,12 +70,12 @@ function getTrendLevel(sym) {
   if (!st || !st.candles.length) return { level:'RANGE', dir:null, adx:0 };
 
   var symF = getSymbolFilters(sym);
-  var adx  = calcADX(st.candles, 14);
+  var adx  = calcADX(st.candles, 12);
 
   // H1 direction
   var h1Dir = null;
   if (st.candlesH1.length >= 2) {
-    var stH1 = calcST(st.candlesH1, 14, 3.0);
+    var stH1 = calcST(st.candlesH1, 12, 3.0);
     if (stH1.length) h1Dir = stH1[stH1.length-1].dir===1 ? 'BUY' : 'SELL';
   }
 
@@ -218,7 +218,7 @@ function calcST(c, period, mult) {
 }
 
 function calcRSI(c, p) {
-  p = p||14;
+  p = p||12;
   if (c.length < p+1) return 50;
   var g=0, l=0;
   for (var i = c.length-p; i < c.length; i++) {
@@ -494,7 +494,7 @@ function isNearKeyLevel(price, dir, srLevels, obs, atr) {
 // ADX - Average Directional Index
 // Returns ADX value (>25 = strong trend, <20 = weak/lateral)
 function calcADX(c, period) {
-  period = period || 14;
+  period = period ||) 12;
   if (c.length < period*2) return 0;
   var trArr=[], plusDM=[], minusDM=[];
   for (var i=1;i<c.length;i++) {
@@ -528,67 +528,8 @@ function calcADX(c, period) {
   return adx;
 }
 
-// ══════════════════════════════════════════
-// MACD - Moving Average Convergence Divergence
-// fast=12, slow=26, signal=9 (standard)
-// Returns { macd, signal, hist, cross }
-// cross: 'BUY' = macd crossed above signal (bullish)
-//        'SELL'= macd crossed below signal (bearish)
-//        null  = no cross on last candle
-// ══════════════════════════════════════════
-function calcMACD(candles, fast, slow, sigLen) {
-  fast   = fast   || 12;
-  slow   = slow   || 26;
-  sigLen = sigLen || 9;
-  if (candles.length < slow + sigLen + 2) return null;
 
-  // EMA helper
-  function ema(arr, period) {
-    var k = 2 / (period + 1), e = arr[0];
-    for (var i = 1; i < arr.length; i++) e = arr[i] * k + e * (1 - k);
-    return e;
-  }
-  function emaArr(arr, period) {
-    var k = 2 / (period + 1);
-    var out = [arr[0]];
-    for (var i = 1; i < arr.length; i++) out.push(arr[i] * k + out[i-1] * (1 - k));
-    return out;
-  }
-
-  var closes = candles.map(function(c){ return c.close; });
-  var emaFast = emaArr(closes, fast);
-  var emaSlow = emaArr(closes, slow);
-
-  // MACD line
-  var macdLine = [];
-  for (var i = 0; i < closes.length; i++) macdLine.push(emaFast[i] - emaSlow[i]);
-
-  // Signal line = EMA9 of MACD
-  var sigLine = emaArr(macdLine, sigLen);
-
-  var last  = macdLine[macdLine.length-1];
-  var prev  = macdLine[macdLine.length-2];
-  var lastS = sigLine[sigLine.length-1];
-  var prevS = sigLine[sigLine.length-2];
-  var hist  = last - lastS;
-  var histP = prev - prevS;
-
-  // Crossover detection
-  var cross = null;
-  if (prev <= prevS && last > lastS) cross = 'BUY';   // MACD crossed above signal
-  if (prev >= prevS && last < lastS) cross = 'SELL';  // MACD crossed below signal
-
-  return { macd: last, signal: lastS, hist: hist, histPrev: histP, cross: cross };
-}
-
-function calcLotSize(sym, balance, riskPct, slDist) {
-  var riskAmt = balance*(riskPct/100);
-  var pipVal  = PIP_VALUE[sym]||10;
-  var dec     = slDist>10?2:slDist>1?4:5;
-  var pips    = dec===2?slDist:slDist/(dec===4?0.0001:0.00001);
-  var lot     = riskAmt/(pips*pipVal*100);
-  return Math.min(10, Math.max(0.01, Math.round(lot*100)/100));
-}
+  
 
 // ==============================
 // MARKET HOURS (New York ET)
