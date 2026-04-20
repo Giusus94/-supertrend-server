@@ -819,20 +819,19 @@ async function checkSignal(sym, consensus, cooldownMin) {
   if (bv>=consensus) dir='BUY'; else if (sv>=consensus) dir='SELL';
   if (!dir) { st.stats.lastFilter='['+trendLevel+'] ST M15: '+bv+' BUY / '+sv+' SELL (serve '+consensus+')'; return; }
 
-  // ── FLIP OBBLIGATORIO ──
-  // Segnale parte SOLO quando tutte e 3 le linee cambiano direzione
-  // BUY flip:  ora tutte e 3 BUY, prima erano almeno 2 SELL
-  // SELL flip: ora tutte e 3 SELL, prima erano almeno 2 BUY
-  var flipped = (dir==='BUY'  && bv===3 && svPrev>=2) ||
-                (dir==='SELL' && sv===3 && bvPrev>=2);
+  // ── FLIP — qualsiasi cambio verso 3/3 recente ──
+  // BUY:  ora tutte 3 BUY, prima almeno 1 era SELL
+  // SELL: ora tutte 3 SELL, prima almeno 1 era BUY
+  var flipped = (dir==='BUY'  && bv===3 && svPrev>=1) ||
+                (dir==='SELL' && sv===3 && bvPrev>=1);
 
   // Flip nelle ultime 3 candele
   var recentFlip = flipped ||
-                   (dir==='BUY'  && bv===3 && svPrev2>=2) ||
-                   (dir==='SELL' && sv===3 && bvPrev2>=2);
+                   (dir==='BUY'  && bv===3 && svPrev2>=1) ||
+                   (dir==='SELL' && sv===3 && bvPrev2>=1);
 
   if (!recentFlip) {
-    st.stats.lastFilter='Nessun flip (BUY:'+bv+'/3 SELL:'+sv+'/3 prevBUY:'+bvPrev+' prevSELL:'+svPrev+')';
+    st.stats.lastFilter='Nessun flip (BUY:'+bv+'/3 SELL:'+sv+'/3 prev:'+bvPrev+'B/'+svPrev+'S)';
     return;
   }
 
