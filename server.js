@@ -602,15 +602,17 @@ function getNYTime() {
 function isMarketOpen(sym) {
   if (CRYPTO.indexOf(sym) !== -1) return true;
   var ny = getNYTime();
-  if (ny.day===0||ny.day===6) return false;
+  // Forex apre domenica 17:00 NY ET e chiude venerdi 17:00 NY ET
+  // day: 0=dom, 1=lun, 2=mar, 3=mer, 4=gio, 5=ven, 6=sab
+  if (ny.day === 6) return false;                          // sabato chiuso
+  if (ny.day === 0 && ny.time < 1700) return false;        // dom prima delle 17:00
+  if (ny.day === 5 && ny.time >= 1700) return false;       // ven dopo le 17:00
   return true;
 }
 
 function getMarketStatus(sym) {
   if (isMarketOpen(sym)) return null;
-  var ny = getNYTime();
-  if (ny.day===0||ny.day===6) return 'Mercato chiuso (weekend)';
-  return 'Mercato chiuso';
+  return 'Mercato chiuso (weekend)';
 }
 
 // ==============================
