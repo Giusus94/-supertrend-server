@@ -314,13 +314,21 @@ async function fetchCandles(sym) {
   var st = symbolState[sym];
   if (!st) return;
   if (CRYPTO.indexOf(sym) !== -1) {
+    // Crypto: OKX e' eccellente e gratuito, restiamo qui
     await fetchOKX(sym, '15m', 200, 'candles', st);
   } else {
-    var ok = await fetchYahoo(sym, '15m', '5d', 'candles', st);
-    if (!ok) await fetchTD(sym, '15min', 200, 'candles', st);
+    // Forex e metalli: Twelve Data come primario (piano a pagamento attivo).
+    // Yahoo Finance resta come fallback automatico se Twelve Data fallisce
+    // per qualunque ragione (rate limit, downtime, simbolo non disponibile).
+    var ok = await fetchTD(sym, '15min', 200, 'candles', st);
+    if (!ok) {
+      console.log(sym + ' TD failed, fallback to Yahoo');
+      await fetchYahoo(sym, '15m', '5d', 'candles', st);
+    }
   }
   var last = st.candles.length ? st.candles[st.candles.length-1].close : 0;
-  console.log(sym + ' @ ' + last + ' (M15: ' + st.candles.length + ' candles)');
+  var src = CRYPTO.indexOf(sym) !== -1 ? 'OKX' : 'TD';
+  console.log(sym + ' @ ' + last + ' (M15: ' + st.candles.length + ' candles, src=' + src + ')');
 }
 
 // ══════════════════════════════════════
@@ -586,6 +594,21 @@ app.get('/api/test', async function(req, res) {
   res.json({ ok: ok });
 });
 
+// Endpoint diagnostico per verificare con certezza quale versione del server
+// sta effettivamente girando in produzione. Utile per evitare confusioni
+// di deploy: chiamando questo URL si vede subito la versione attiva.
+app.get('/api/version', function(req, res) {
+  res.json({
+    version: 'ST-EA Minimal v3.1',
+    dataPrimary: { forex: 'TwelveData', metals: 'TwelveData', crypto: 'OKX' },
+    dataFallback: { forex: 'Yahoo', metals: 'Yahoo', crypto: 'none' },
+    logic: 'triple SuperTrend + flip 3/3 strict + ADX min filter',
+    activeSymbols: activeSymbols,
+    isRunning: isRunning,
+    uptimeSec: Math.floor(process.uptime())
+  });
+});
+
 app.post('/api/test', async function(req, res) {
   var ok = await tgSend('ST-EA Minimal - Test OK!\nSimboli: ' + activeSymbols.join(', '));
   res.json({ ok: ok });
@@ -629,6 +652,6 @@ app.listen(PORT, function() {
     startLoop(ENV_REFRESH, ENV_COOLDOWN);
     lastLoopTime = Date.now();
     console.log('EA auto-started');
-    await tgSend('<b>ST-EA Minimal Online</b>\nSimboli: ' + activeSymbols.join(', ') + '\nLogica: triplo SuperTrend + flip 3/3 + ADX minimo');
+    await tgSend('<b>ST-EA Minimal v3.1 Online</b>\nSimboli: ' + activeSymbols.join(', ') + '\nLogica: triplo SuperTrend + flip 3/3 + ADX minimo\nDati: TwelveData (forex/metalli) + OKX (crypto)');
   }, 5000);
 });
