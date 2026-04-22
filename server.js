@@ -599,12 +599,27 @@ app.get('/api/test', async function(req, res) {
 // di deploy: chiamando questo URL si vede subito la versione attiva.
 app.get('/api/version', function(req, res) {
   res.json({
-    version: 'ST-EA Minimal v3.1',
-    dataPrimary: { forex: 'TwelveData', metals: 'TwelveData', crypto: 'OKX' },
-    dataFallback: { forex: 'Yahoo', metals: 'Yahoo', crypto: 'none' },
-    logic: 'triple SuperTrend + flip 3/3 strict + ADX min filter',
-    activeSymbols: activeSymbols,
-    isRunning: isRunning,
+    version: 'ST-EA Minimal v3.2 (Dual Bot)',
+    trendBot: {
+      enabled: true,
+      running: isRunning,
+      symbols: activeSymbols,
+      timeframe: 'M15',
+      logic: 'triple SuperTrend + flip 3/3 strict + ADX min filter'
+    },
+    paBot: {
+      enabled: true,
+      running: paRunning,
+      symbols: PA_SYMBOLS,
+      timeframe: 'D1',
+      logic: 'candle patterns + D1/H4 trend alignment + S/R proximity',
+      cooldownHours: PA_COOLDOWN_HOURS
+    },
+    dataSources: {
+      forex: 'TwelveData (primary) + Yahoo (fallback)',
+      metals: 'TwelveData (primary) + Yahoo (fallback)',
+      crypto: 'OKX (only)'
+    },
     uptimeSec: Math.floor(process.uptime())
   });
 });
@@ -629,21 +644,611 @@ app.get('/api/candles', function(req, res) {
   res.json({ candles: st.candles.slice(-60), candlesH1: [], candlesM5: [] });
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// ██████████████████████████████████████████████████████████████████████████████
+// PA BOT D1 — Price Action su timeframe giornaliero
+// ██████████████████████████████████████████████████████████████████████████████
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// Modulo autonomo che gira in parallelo al trend bot M15. Monitora pattern
+// di candele su timeframe D1 (giornaliero) e segnala setup di price action
+// confermati da allineamento trend D1 + H4 e prossimita a livelli S/R.
+//
+// Caratteristiche:
+//   - Timeframe D1 per pattern, H4 per trend di conferma
+//   - Pattern: Morning Star, Evening Star, Engulfing, Pin Bar
+//   - Richiede pattern forte (strength >=3) + allineamento D1 e H4 + S/R
+//   - Cooldown 24h per simbolo per evitare spam di segnali giornalieri
+//   - Dati: Twelve Data (primario) + Yahoo (fallback) + OKX (crypto)
+//   - ADX differenziato per asset class come il trend bot
+//   - Notifiche Telegram con tag [PA-EA] distintivo
+//   - Loop ogni ora (3600 sec), sufficiente per timeframe D1
+//
+// Architettura: modulo autonomo con stato separato (paState) e loop separato
+// (paTimer). Condivide solo le funzioni di calcolo indicatori (calcATR,
+// calcEMA, calcADX, calcSR) con il trend bot, nel rispetto del principio DRY.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Configurazione PA Bot: simboli monitorati e cooldown
+var PA_SYMBOLS = process.env.PA_SYMBOLS ? process.env.PA_SYMBOLS.split(',').map(function(s){return s.trim();}) : DEFAULT_SYMBOLS.slice();
+var PA_COOLDOWN_HOURS = parseInt(process.env.PA_COOLDOWN_HOURS) || 24;
+var PA_REFRESH_SEC = parseInt(process.env.PA_REFRESH_SEC) || 3600;
+
+// Stato per ciascun simbolo PA
+var paState = {};
+var paRunning = false;
+var paTimer = null;
+var lastPALoopTime = 0;
+
+function initPA(s) {
+  paState[s] = {
+    candlesD1: [],
+    candlesH4: [],
+    lastDir: null,
+    lastSignalTime: 0,
+    stats: {
+      total: 0,
+      buys: 0,
+      sells: 0,
+      lastSignal: '--',
+      lastPattern: '--'
+    }
+  };
+}
+PA_SYMBOLS.forEach(initPA);
+
+// ══════════════════════════════════════
+// FETCH DATI D1 E H4 PER PA BOT
+// ══════════════════════════════════════
+// Segue la stessa logica del trend bot: Twelve Data primario, Yahoo fallback,
+// OKX per crypto. L'unica differenza e che qui scarichiamo candele D1 e H4
+// invece che M15, e popoliamo paState invece che symbolState.
+
+async function fetchPAD1(sym) {
+  var st = paState[sym];
+  if (!st) return;
+
+  // Crypto: usa OKX per D1 e 4H
+  if (CRYPTO.indexOf(sym) !== -1) {
+    try {
+      var pair = sym.replace('USD', '-USDT');
+      // D1
+      var urlD1 = 'https://www.okx.com/api/v5/market/candles?instId=' + pair + '&bar=1D&limit=100';
+      var resD1 = await fetch(urlD1);
+      var dataD1 = await resD1.json();
+      if (dataD1.code === '0' && Array.isArray(dataD1.data) && dataD1.data.length > 10) {
+        st.candlesD1 = dataD1.data.reverse().map(function(k) {
+          return { open: +k[1], high: +k[2], low: +k[3], close: +k[4], vol: +k[5] };
+        });
+      }
+      // H4
+      var urlH4 = 'https://www.okx.com/api/v5/market/candles?instId=' + pair + '&bar=4H&limit=60';
+      var resH4 = await fetch(urlH4);
+      var dataH4 = await resH4.json();
+      if (dataH4.code === '0' && Array.isArray(dataH4.data) && dataH4.data.length > 10) {
+        st.candlesH4 = dataH4.data.reverse().map(function(k) {
+          return { open: +k[1], high: +k[2], low: +k[3], close: +k[4], vol: +k[5] };
+        });
+      }
+    } catch(e) {
+      console.error('PA OKX ' + sym + ': ' + e.message);
+    }
+    return;
+  }
+
+  // Forex e metalli: Twelve Data primario
+  if (TD_KEY) {
+    try {
+      var mapped = TD_MAP[sym] || sym;
+      // D1
+      var urlTD1 = 'https://api.twelvedata.com/time_series?symbol=' + encodeURIComponent(mapped) +
+                   '&interval=1day&outputsize=100&apikey=' + TD_KEY;
+      var resTD1 = await fetch(urlTD1);
+      var dataTD1 = await resTD1.json();
+      if (dataTD1.status !== 'error' && dataTD1.values) {
+        var parsedD1 = dataTD1.values.reverse().map(function(c) {
+          return { open: +c.open, high: +c.high, low: +c.low, close: +c.close, vol: +(c.volume || 0) };
+        });
+        if (parsedD1.length > 10 && isValidPrice(sym, parsedD1[parsedD1.length-1].close)) {
+          st.candlesD1 = parsedD1;
+        }
+      }
+      await new Promise(function(r) { setTimeout(r, 500); });
+
+      // H4
+      var urlTH4 = 'https://api.twelvedata.com/time_series?symbol=' + encodeURIComponent(mapped) +
+                   '&interval=4h&outputsize=60&apikey=' + TD_KEY;
+      var resTH4 = await fetch(urlTH4);
+      var dataTH4 = await resTH4.json();
+      if (dataTH4.status !== 'error' && dataTH4.values) {
+        var parsedH4 = dataTH4.values.reverse().map(function(c) {
+          return { open: +c.open, high: +c.high, low: +c.low, close: +c.close, vol: +(c.volume || 0) };
+        });
+        if (parsedH4.length > 10 && isValidPrice(sym, parsedH4[parsedH4.length-1].close)) {
+          st.candlesH4 = parsedH4;
+        }
+      }
+    } catch(e) {
+      console.error('PA TD ' + sym + ': ' + e.message);
+    }
+  }
+
+  // Fallback Yahoo se Twelve Data ha fallito per uno o entrambi i timeframe
+  if (!st.candlesD1.length || !st.candlesH4.length) {
+    try {
+      var ticker = YAHOO_MAP[sym];
+      if (ticker) {
+        // D1 se mancante
+        if (!st.candlesD1.length) {
+          var urlYD1 = 'https://query2.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(ticker) +
+                       '?interval=1d&range=6mo';
+          var resYD1 = await fetch(urlYD1, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+          var dataYD1 = await resYD1.json();
+          var chartD1 = dataYD1 && dataYD1.chart && dataYD1.chart.result && dataYD1.chart.result[0];
+          if (chartD1 && chartD1.timestamp) {
+            var q = chartD1.indicators.quote[0];
+            var parsed = [];
+            for (var i = 0; i < chartD1.timestamp.length; i++) {
+              if (q.open[i] && q.high[i] && q.low[i] && q.close[i]) {
+                parsed.push({
+                  open: +q.open[i].toFixed(5),
+                  high: +q.high[i].toFixed(5),
+                  low: +q.low[i].toFixed(5),
+                  close: +q.close[i].toFixed(5),
+                  vol: q.volume[i] || 0
+                });
+              }
+            }
+            if (parsed.length > 10) st.candlesD1 = parsed;
+          }
+        }
+        // H4 ricostruito da H1 di Yahoo (che non ha H4 nativo)
+        if (!st.candlesH4.length) {
+          await new Promise(function(r) { setTimeout(r, 500); });
+          var urlYH4 = 'https://query2.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(ticker) +
+                       '?interval=1h&range=60d';
+          var resYH4 = await fetch(urlYH4, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+          var dataYH4 = await resYH4.json();
+          var chartH4 = dataYH4 && dataYH4.chart && dataYH4.chart.result && dataYH4.chart.result[0];
+          if (chartH4 && chartH4.timestamp) {
+            var qH = chartH4.indicators.quote[0];
+            var h1cands = [];
+            for (var j = 0; j < chartH4.timestamp.length; j++) {
+              if (qH.open[j] && qH.high[j] && qH.low[j] && qH.close[j]) {
+                h1cands.push({
+                  open: +qH.open[j].toFixed(5),
+                  high: +qH.high[j].toFixed(5),
+                  low: +qH.low[j].toFixed(5),
+                  close: +qH.close[j].toFixed(5),
+                  vol: qH.volume[j] || 0
+                });
+              }
+            }
+            // Raggruppa H1 in H4 (ogni 4 candele)
+            var h4cands = [];
+            for (var k = 0; k + 3 < h1cands.length; k += 4) {
+              var g = h1cands.slice(k, k + 4);
+              h4cands.push({
+                open: g[0].open,
+                high: Math.max.apply(null, g.map(function(c){return c.high;})),
+                low: Math.min.apply(null, g.map(function(c){return c.low;})),
+                close: g[g.length-1].close,
+                vol: g.reduce(function(s,c){return s + (c.vol||0);}, 0)
+              });
+            }
+            if (h4cands.length > 10) st.candlesH4 = h4cands;
+          }
+        }
+      }
+    } catch(e) {
+      console.error('PA Yahoo ' + sym + ': ' + e.message);
+    }
+  }
+
+  var srcD1 = st.candlesD1.length ? 'OK' : 'EMPTY';
+  var srcH4 = st.candlesH4.length ? 'OK' : 'EMPTY';
+  console.log('PA ' + sym + ' D1:' + srcD1 + '/' + st.candlesD1.length + ' H4:' + srcH4 + '/' + st.candlesH4.length);
+}
+
+// ══════════════════════════════════════
+// TREND FILTERS D1 E H4
+// ══════════════════════════════════════
+// getD1Trend usa EMA50 su D1 come riferimento di lungo periodo.
+// getH4Trend usa EMA20 su H4 come riferimento di medio periodo.
+// Un pattern D1 e valido solo se entrambi i trend sono allineati nella
+// direzione del pattern (filtro anti-controtrend).
+
+function getD1Trend(candles) {
+  if (!candles || candles.length < 50) return null;
+  var ema50 = calcEMA(candles, 50);
+  var last = candles[candles.length-1].close;
+  return last > ema50 ? 'BUY' : 'SELL';
+}
+
+function getH4Trend(candles) {
+  if (!candles || candles.length < 20) return null;
+  var ema20 = calcEMA(candles, 20);
+  var last = candles[candles.length-1].close;
+  return last > ema20 ? 'BUY' : 'SELL';
+}
+
+// ══════════════════════════════════════
+// PATTERN DETECTION — candlestick D1
+// ══════════════════════════════════════
+// Strict pattern detection: solo setup di alta qualita contano.
+// Richiediamo che la candela corrente abbia range > 70% della media
+// delle ultime 10 candele, cosi filtriamo giorni di basso movimento.
+
+function detectPAPatterns(candles) {
+  if (candles.length < 6) return [];
+  var patterns = [];
+  var len = candles.length;
+  var c0 = candles[len-1];
+  var c1 = candles[len-2];
+  var c2 = candles[len-3];
+
+  var body0 = Math.abs(c0.close - c0.open);
+  var body1 = Math.abs(c1.close - c1.open);
+  var body2 = Math.abs(c2.close - c2.open);
+  var range0 = c0.high - c0.low;
+  var range1 = c1.high - c1.low;
+  var isBull0 = c0.close > c0.open;
+  var isBull1 = c1.close > c1.open;
+  var isBull2 = c2.close > c2.open;
+  var upper0 = c0.high - Math.max(c0.open, c0.close);
+  var lower0 = Math.min(c0.open, c0.close) - c0.low;
+
+  // Range medio delle ultime 10 candele per filtrare giorni piatti
+  var avgRange = 0;
+  for (var i = len-10; i < len; i++) {
+    if (i >= 0) avgRange += (candles[i].high - candles[i].low);
+  }
+  avgRange = avgRange / 10;
+
+  // Candela troppo piccola: nessun pattern significativo
+  if (range0 < avgRange * 0.7) return [];
+
+  // Contesto: serve una candela a distanza 5 per valutare se c'era trend precedente
+  var c5 = candles[len-6];
+  var priorDown = c5 && c5.close > c2.open;
+  var priorUp = c5 && c5.close < c2.open;
+
+  // MORNING STAR: 3 candele dopo downtrend
+  // c2 bearish forte, c1 doji/piccola, c0 bullish forte che chiude sopra meta di c2
+  if (priorDown && !isBull2 && body2 > avgRange * 0.5 &&
+      body1 < range1 * 0.25 && range1 > 0 &&
+      isBull0 && body0 > avgRange * 0.5 &&
+      c0.close > (c2.open + c2.close) / 2) {
+    patterns.push({ name: 'Morning Star', dir: 'BUY', strength: 4 });
+  }
+
+  // EVENING STAR: 3 candele dopo uptrend (speculare a Morning Star)
+  if (priorUp && isBull2 && body2 > avgRange * 0.5 &&
+      body1 < range1 * 0.25 && range1 > 0 &&
+      !isBull0 && body0 > avgRange * 0.5 &&
+      c0.close < (c2.open + c2.close) / 2) {
+    patterns.push({ name: 'Evening Star', dir: 'SELL', strength: 4 });
+  }
+
+  // BULLISH ENGULFING: c0 bullish che engloba completamente c1 bearish dopo downtrend
+  var priorDown2 = !isBull1 && !isBull2;
+  if (priorDown2 && isBull0 &&
+      c0.open < c1.close && c0.close > c1.open &&
+      body0 > body1 * 1.5 && body0 > avgRange * 0.6) {
+    patterns.push({ name: 'Bullish Engulfing', dir: 'BUY', strength: 3 });
+  }
+
+  // BEARISH ENGULFING: speculare a Bullish Engulfing
+  var priorUp2 = isBull1 && isBull2;
+  if (priorUp2 && !isBull0 &&
+      c0.open > c1.close && c0.close < c1.open &&
+      body0 > body1 * 1.5 && body0 > avgRange * 0.6) {
+    patterns.push({ name: 'Bearish Engulfing', dir: 'SELL', strength: 3 });
+  }
+
+  // PIN BAR BULLISH: wick inferiore 3x body, upper wick piccolo
+  if (lower0 > body0 * 3 && upper0 < body0 * 0.5 && body0 > 0 && range0 > avgRange * 0.8) {
+    patterns.push({ name: 'Pin Bar Bull', dir: 'BUY', strength: 3 });
+  }
+
+  // PIN BAR BEARISH: speculare
+  if (upper0 > body0 * 3 && lower0 < body0 * 0.5 && body0 > 0 && range0 > avgRange * 0.8) {
+    patterns.push({ name: 'Pin Bar Bear', dir: 'SELL', strength: 3 });
+  }
+
+  return patterns;
+}
+
+// ══════════════════════════════════════
+// S/R PROXIMITY PER PA
+// ══════════════════════════════════════
+// Funzione locale per calcolare livelli S/R dalle candele D1
+// (simile a calcSR del trend bot ma ottimizzata per D1)
+
+function calcPASR(candles, lookback) {
+  lookback = lookback || 60;
+  var r = candles.slice(-lookback);
+  var levels = [];
+  for (var i = 2; i < r.length - 2; i++) {
+    // Swing high
+    if (r[i].high > r[i-1].high && r[i].high > r[i-2].high &&
+        r[i].high > r[i+1].high && r[i].high > r[i+2].high) {
+      levels.push({ price: r[i].high, type: 'R', strength: 1 });
+    }
+    // Swing low
+    if (r[i].low < r[i-1].low && r[i].low < r[i-2].low &&
+        r[i].low < r[i+1].low && r[i].low < r[i+2].low) {
+      levels.push({ price: r[i].low, type: 'S', strength: 1 });
+    }
+  }
+  // Consolidamento livelli vicini (entro 0.4%)
+  var merged = [];
+  for (var k = 0; k < levels.length; k++) {
+    var lv = levels[k];
+    var nb = null;
+    for (var m = 0; m < merged.length; m++) {
+      if (Math.abs(merged[m].price - lv.price) / lv.price < 0.004) {
+        nb = merged[m];
+        break;
+      }
+    }
+    if (nb) nb.strength++;
+    else merged.push({ price: lv.price, type: lv.type, strength: 1 });
+  }
+  merged.sort(function(a, b) { return b.strength - a.strength; });
+  return merged.slice(0, 8);
+}
+
+function isPANearSR(price, srLevels, atr) {
+  for (var i = 0; i < srLevels.length; i++) {
+    if (Math.abs(srLevels[i].price - price) < atr * 1.5) return true;
+  }
+  return false;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CHECK PA SIGNAL — il cuore del PA Bot
+// ══════════════════════════════════════════════════════════════════════════════
+// Processo di validazione in cascata: se un controllo fallisce, il segnale
+// non viene emesso. Questo garantisce che solo setup con TUTTI i filtri
+// passati arrivino fino all'utente via Telegram.
+// 1. Cooldown 24h
+// 2. Mercato aperto
+// 3. Pattern rilevato con strength >= 3
+// 4. Trend D1 allineato
+// 5. Trend H4 allineato
+// 6. Prezzo vicino a livello S/R
+// 7. Direzione diversa dall'ultimo segnale (evita duplicati direzionali)
+
+async function checkPASignal(sym) {
+  try {
+    var st = paState[sym];
+    if (!st || !st.candlesD1.length || !paRunning) return;
+
+    // 1. Cooldown
+    if (Date.now() - st.lastSignalTime < PA_COOLDOWN_HOURS * 60 * 60 * 1000) return;
+
+    // 2. Mercato aperto
+    var ms = getMarketStatus(sym);
+    if (ms) {
+      st.stats.lastPattern = '[CHIUSO] ' + ms;
+      return;
+    }
+
+    var c = st.candlesD1;
+
+    // 3. Pattern detection
+    var patterns = detectPAPatterns(c);
+    if (!patterns.length) {
+      st.stats.lastPattern = 'Nessun pattern';
+      return;
+    }
+
+    // Filtra solo pattern forti (>= 3)
+    var strong = patterns.filter(function(p) { return p.strength >= 3; });
+    if (!strong.length) {
+      st.stats.lastPattern = 'Pattern deboli';
+      return;
+    }
+
+    strong.sort(function(a, b) { return b.strength - a.strength; });
+    var best = strong[0];
+
+    // 4. D1 trend
+    var d1Trend = getD1Trend(c);
+    if (d1Trend && d1Trend !== best.dir) {
+      st.stats.lastPattern = 'D1 trend contro (' + d1Trend + ' vs ' + best.dir + ')';
+      return;
+    }
+
+    // 5. H4 trend
+    var h4Trend = getH4Trend(st.candlesH4);
+    if (h4Trend && h4Trend !== best.dir) {
+      st.stats.lastPattern = 'H4 trend contro (' + h4Trend + ')';
+      return;
+    }
+
+    // 6. Evita ripetizione stessa direzione
+    if (best.dir === st.lastDir) {
+      st.stats.lastPattern = 'Stessa direzione precedente';
+      return;
+    }
+
+    var price = c[c.length-1].close;
+    var dec = price > 1000 ? 2 : price > 10 ? 3 : 4;
+    var atrArr = calcATR(c, 14);
+    var atr = atrArr[atrArr.length-1] || 0;
+
+    // 7. Vicinanza a S/R
+    var srLevels = calcPASR(c, 60);
+    if (!isPANearSR(price, srLevels, atr)) {
+      st.stats.lastPattern = best.name + ' ma non su S/R';
+      return;
+    }
+
+    // Tutti i filtri passati: calcolo SL/TP e invio notifica
+    // SL basato su ATR D1 moltiplicato per 2.0 (pattern D1 richiede piu respiro)
+    // Floor minimo 0.8% per evitare SL ridicolmente stretti in giorni piatti
+    var slDist = Math.max(atr * 2.0, price * 0.008);
+    var tpDist = slDist * 2.5; // Risk/Reward 1:2.5
+    var sl = (best.dir === 'BUY' ? price - slDist : price + slDist).toFixed(dec);
+    var tp = (best.dir === 'BUY' ? price + tpDist : price - tpDist).toFixed(dec);
+
+    // Lot size su diversi bankroll al 3% rischio
+    var lots = [100, 500, 1000].map(function(b) {
+      return b + 'EUR: ' + calcLotSize(sym, b, 3, slDist) + ' lot';
+    }).join(' | ');
+
+    // S/R nelle vicinanze per contesto nel messaggio
+    var nearbySR = srLevels.filter(function(l) { return Math.abs(l.price - price) < atr * 3; })
+                           .map(function(l) { return l.type + ': ' + l.price.toFixed(dec); })
+                           .join(' | ');
+
+    var name = SYMBOL_NAMES[sym] || sym;
+    var time = new Date().toUTCString().slice(0, 25);
+    var nl = '\n';
+
+    var msg =
+      '<b>[PA-EA] ' + (best.dir === 'BUY' ? '[BUY]' : '[SELL]') + ' ' + name + '</b>' + nl +
+      'Pattern D1: <b>' + best.name + '</b> (' + best.strength + '/4)' + nl +
+      '<b>Prezzo:</b> ' + price.toFixed(dec) + nl +
+      '<b>SL:</b> ' + sl + ' | <b>TP:</b> ' + tp + nl +
+      '<b>R:R:</b> 1:2.5' + nl +
+      'Trend D1: ' + (d1Trend || '--') + ' | H4: ' + (h4Trend || '--') + nl +
+      (nearbySR ? 'S/R vicini: ' + nearbySR + nl : '') +
+      '<b>Lot (3% rischio):</b>' + nl + lots + nl +
+      '<i>' + time + ' UTC</i>';
+
+    var ok = await tgSend(msg);
+    if (ok) {
+      st.stats.total++;
+      if (best.dir === 'BUY') st.stats.buys++; else st.stats.sells++;
+      st.stats.lastSignal = best.dir;
+      st.stats.lastPattern = best.name + ' @ ' + price.toFixed(dec);
+      st.lastSignalTime = Date.now();
+      st.lastDir = best.dir;
+      globalStats.total++;
+      if (best.dir === 'BUY') globalStats.buys++; else globalStats.sells++;
+      globalLog.unshift({
+        dir: best.dir, price: price.toFixed(dec), time: time,
+        sym: sym, pattern: best.name, source: 'PA'
+      });
+      if (globalLog.length > 50) globalLog.pop();
+      console.log('PA SIGNAL: ' + sym + ' ' + best.dir + ' ' + best.name + ' @ ' + price.toFixed(dec));
+    }
+  } catch(e) {
+    console.error('checkPASignal ' + sym + ': ' + e.message);
+  }
+}
+
+// ══════════════════════════════════════
+// PA LOOP
+// ══════════════════════════════════════
+
+async function runPALoop() {
+  lastPALoopTime = Date.now();
+  for (var i = 0; i < PA_SYMBOLS.length; i++) {
+    var sym = PA_SYMBOLS[i];
+    try {
+      await fetchPAD1(sym);
+      await checkPASignal(sym);
+      // Delay tra simboli per non saturare le API
+      var delay = CRYPTO.indexOf(sym) !== -1 ? 500 : 2000;
+      await new Promise(function(r) { setTimeout(r, delay); });
+    } catch(e) {
+      console.error('PA Loop ' + sym + ': ' + e.message);
+    }
+  }
+  console.log('PA Loop completato @ ' + new Date().toUTCString().slice(17, 25));
+}
+
+function startPALoop() {
+  if (paTimer) clearInterval(paTimer);
+  runPALoop(); // esecuzione immediata
+  paTimer = setInterval(runPALoop, PA_REFRESH_SEC * 1000);
+}
+
+// Watchdog PA: riavvia se il loop e bloccato da oltre 2 ore
+setInterval(async function() {
+  if (!paRunning) return;
+  var elapsed = Date.now() - lastPALoopTime;
+  if (lastPALoopTime > 0 && elapsed > 2 * 60 * 60 * 1000) {
+    console.log('PA Watchdog: loop bloccato da ' + Math.round(elapsed/60000) + 'min, riavvio...');
+    if (paTimer) clearInterval(paTimer);
+    startPALoop();
+    await tgSend('<i>PA Bot riavviato dal watchdog</i>');
+  }
+}, 10 * 60 * 1000);
+
+// ══════════════════════════════════════
+// API ENDPOINTS PA BOT
+// ══════════════════════════════════════
+
+app.get('/api/pa-status', function(req, res) {
+  var paPs = {};
+  for (var i = 0; i < PA_SYMBOLS.length; i++) {
+    var st = paState[PA_SYMBOLS[i]];
+    if (st) {
+      paPs[PA_SYMBOLS[i]] = {
+        stats: st.stats,
+        candlesD1Count: st.candlesD1.length,
+        candlesH4Count: st.candlesH4.length,
+        lastPrice: st.candlesD1.length ? st.candlesD1[st.candlesD1.length-1].close : 0
+      };
+    }
+  }
+  res.json({
+    paRunning: paRunning,
+    paSymbols: PA_SYMBOLS,
+    cooldownHours: PA_COOLDOWN_HOURS,
+    refreshSec: PA_REFRESH_SEC,
+    lastLoopTime: lastPALoopTime,
+    state: paPs,
+    paLog: globalLog.filter(function(l){ return l.source === 'PA'; }).slice(0, 20)
+  });
+});
+
+app.post('/api/pa-start', async function(req, res) {
+  paRunning = true;
+  startPALoop();
+  await tgSend('<b>PA Bot D1 avviato</b>\nSimboli: ' + PA_SYMBOLS.join(', ') + '\nCooldown: ' + PA_COOLDOWN_HOURS + 'h');
+  res.json({ ok: true, message: 'PA Bot avviato su ' + PA_SYMBOLS.join(', ') });
+});
+
+app.post('/api/pa-stop', async function(req, res) {
+  paRunning = false;
+  if (paTimer) clearInterval(paTimer);
+  await tgSend('PA Bot D1 fermato');
+  res.json({ ok: true });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██████████████████████████████████████████████████████████████████████████████
+// FINE MODULO PA BOT D1
+// ██████████████████████████████████████████████████████████████████████████████
+// ══════════════════════════════════════════════════════════════════════════════
+
 // ══════════════════════════════════════
 // AVVIO SERVER
 // ══════════════════════════════════════
 app.listen(PORT, function() {
-  console.log('ST-EA Minimal Server on port ' + PORT);
+  console.log('ST-EA Minimal v3.2 Server on port ' + PORT);
   console.log('TG: ' + (TG_TOKEN ? 'OK' : '--') + ' | TD: ' + (TD_KEY ? 'OK' : '--'));
-  console.log('Symbols: ' + DEFAULT_SYMBOLS.join(', '));
+  console.log('Trend Bot Symbols: ' + DEFAULT_SYMBOLS.join(', '));
+  console.log('PA Bot Symbols: ' + PA_SYMBOLS.join(', '));
 
-  // Auto-start all'avvio
-  console.log('Auto-starting EA on: ' + DEFAULT_SYMBOLS.join(', '));
+  // Auto-start del trend bot
+  console.log('Auto-starting Trend EA on: ' + DEFAULT_SYMBOLS.join(', '));
   activeSymbols = DEFAULT_SYMBOLS.slice();
   activeSymbols.forEach(function(s) { if (!symbolState[s]) initSymbol(s); });
   isRunning = true;
 
+  // Auto-start del PA bot
+  console.log('Auto-starting PA Bot on: ' + PA_SYMBOLS.join(', '));
+  paRunning = true;
+
   setTimeout(async function() {
+    // Prima inizializzazione trend bot
     for (var i = 0; i < activeSymbols.length; i++) {
       try { await fetchCandles(activeSymbols[i]); }
       catch(e) { console.error(activeSymbols[i], e.message); }
@@ -651,7 +1256,21 @@ app.listen(PORT, function() {
     }
     startLoop(ENV_REFRESH, ENV_COOLDOWN);
     lastLoopTime = Date.now();
-    console.log('EA auto-started');
-    await tgSend('<b>ST-EA Minimal v3.1 Online</b>\nSimboli: ' + activeSymbols.join(', ') + '\nLogica: triplo SuperTrend + flip 3/3 + ADX minimo\nDati: TwelveData (forex/metalli) + OKX (crypto)');
+    console.log('Trend EA auto-started');
+
+    // Poi avvio PA bot (prima fetch iniziale, poi loop regolare)
+    for (var j = 0; j < PA_SYMBOLS.length; j++) {
+      try { await fetchPAD1(PA_SYMBOLS[j]); }
+      catch(e) { console.error('PA init ' + PA_SYMBOLS[j] + ': ' + e.message); }
+      var paDelay = CRYPTO.indexOf(PA_SYMBOLS[j]) !== -1 ? 500 : 2500;
+      await new Promise(function(r) { setTimeout(r, paDelay); });
+    }
+    startPALoop();
+    console.log('PA Bot auto-started');
+
+    await tgSend('<b>ST-EA v3.2 Online — Dual Bot</b>' +
+                 '\n<b>Trend M15:</b> ' + activeSymbols.join(', ') +
+                 '\n<b>PA D1:</b> ' + PA_SYMBOLS.join(', ') +
+                 '\nDati: TwelveData + OKX + Yahoo fallback');
   }, 5000);
 });
