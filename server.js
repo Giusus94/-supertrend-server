@@ -599,7 +599,8 @@ app.get('/api/test', async function(req, res) {
 // di deploy: chiamando questo URL si vede subito la versione attiva.
 app.get('/api/version', function(req, res) {
   res.json({
-    version: 'ST-EA v3.3 (Triple Bot: Trend + PA + Macro)',
+    version: 'ST-EA v3.3.1 (Triple Bot: Trend + PA + Macro — Macro hotfix)',
+    hotfix: 'v3.3.1 rimuove Twelve Data dal Macro Monitor (ticker sbagliati causavano dati corrotti). Ora solo Yahoo Finance con validazione range prezzi.',
     trendBot: {
       enabled: true,
       running: isRunning,
@@ -623,13 +624,14 @@ app.get('/api/version', function(req, res) {
       alertPct: MACRO_ALERT_PCT,
       weeklyBrief: MACRO_BRIEF_ENABLED,
       briefDay: MACRO_BRIEF_DAY,
-      briefHourUTC: MACRO_BRIEF_HOUR
+      briefHourUTC: MACRO_BRIEF_HOUR,
+      dataSource: 'Yahoo Finance only with price range validation'
     },
     dataSources: {
       forex: 'TwelveData (primary) + Yahoo (fallback)',
       metals: 'TwelveData (primary) + Yahoo (fallback)',
       crypto: 'OKX (only)',
-      indices: 'TwelveData where available + Yahoo for VIX/bonds'
+      indices_macro: 'Yahoo Finance only (validated)'
     },
     uptimeSec: Math.floor(process.uptime())
   });
@@ -1273,20 +1275,32 @@ app.post('/api/pa-stop', async function(req, res) {
 // ══════════════════════════════════════
 // Ogni strumento ha: nome completo, simbolo Twelve Data (se disponibile),
 // simbolo Yahoo come fallback, e categoria per organizzare il briefing.
-// Note tecniche: gli indici su Twelve Data richiedono formato "SPX" o "SPX500"
-// a seconda del piano, mentre Yahoo usa i ticker ^GSPC, ^IXIC etc. Il VIX
-// e disponibile solo su Yahoo come ^VIX. Il bond 10Y USA come ^TNX (yield).
+// Note tecniche: usiamo Yahoo Finance come fonte primaria per il Macro Monitor
+// perche ha ticker standard documentati per tutti gli indici, il VIX e i bond.
+// I ticker yahoo sono con carattere ^ URL-encoded come %5E.
+// Ogni strumento ha un range di prezzo valido: dati fuori range vengono
+// rifiutati come corrotti. Questo protegge dal bug v3.3 dove ticker sbagliati
+// producevano dati crypto casuali presentati come indici.
 
 var MACRO_INSTRUMENTS = [
-  { id: 'SPX',    name: 'S&P 500',           category: 'US_EQUITY',  yahoo: '%5EGSPC',  td: 'SPX' },
-  { id: 'NDX',    name: 'Nasdaq 100',        category: 'US_EQUITY',  yahoo: '%5ENDX',   td: 'NDX' },
-  { id: 'SX5E',   name: 'Euro Stoxx 50',     category: 'EU_EQUITY',  yahoo: '%5ESTOXX50E', td: 'SX5E' },
-  { id: 'FTSEMIB',name: 'FTSE MIB',          category: 'EU_EQUITY',  yahoo: 'FTSEMIB.MI',  td: null },
-  { id: 'DAX',    name: 'DAX',               category: 'EU_EQUITY',  yahoo: '%5EGDAXI', td: 'DAX' },
-  { id: 'XAUUSD', name: 'Oro',               category: 'SAFE_HAVEN', yahoo: 'GC=F',     td: 'XAU/USD' },
-  { id: 'WTI',    name: 'Petrolio WTI',      category: 'COMMODITY',  yahoo: 'CL=F',     td: 'WTI/USD' },
-  { id: 'VIX',    name: 'VIX (volatilita USA)', category: 'VOLATILITY', yahoo: '%5EVIX', td: null },
-  { id: 'US10Y',  name: 'US Treasury 10Y',   category: 'BOND',       yahoo: '%5ETNX',   td: null }
+  { id: 'SPX',    name: 'S&P 500',           category: 'US_EQUITY',
+    yahoo: '%5EGSPC',    minPrice: 2000, maxPrice: 15000 },
+  { id: 'NDX',    name: 'Nasdaq 100',        category: 'US_EQUITY',
+    yahoo: '%5ENDX',     minPrice: 5000, maxPrice: 50000 },
+  { id: 'SX5E',   name: 'Euro Stoxx 50',     category: 'EU_EQUITY',
+    yahoo: '%5ESTOXX50E', minPrice: 2000, maxPrice: 10000 },
+  { id: 'FTSEMIB',name: 'FTSE MIB',          category: 'EU_EQUITY',
+    yahoo: 'FTSEMIB.MI', minPrice: 15000, maxPrice: 80000 },
+  { id: 'DAX',    name: 'DAX',               category: 'EU_EQUITY',
+    yahoo: '%5EGDAXI',   minPrice: 8000, maxPrice: 40000 },
+  { id: 'XAUUSD', name: 'Oro',               category: 'SAFE_HAVEN',
+    yahoo: 'GC=F',       minPrice: 1000, maxPrice: 10000 },
+  { id: 'WTI',    name: 'Petrolio WTI',      category: 'COMMODITY',
+    yahoo: 'CL=F',       minPrice: 20, maxPrice: 200 },
+  { id: 'VIX',    name: 'VIX (volatilita USA)', category: 'VOLATILITY',
+    yahoo: '%5EVIX',     minPrice: 8, maxPrice: 100 },
+  { id: 'US10Y',  name: 'US Treasury 10Y',   category: 'BOND',
+    yahoo: '%5ETNX',     minPrice: 0.5, maxPrice: 10 }
 ];
 
 // Soglie di drawdown configurabili via env
@@ -1326,69 +1340,89 @@ function initMacro(instr) {
 MACRO_INSTRUMENTS.forEach(initMacro);
 
 // ══════════════════════════════════════
-// FETCH DATI MACRO
+// FETCH DATI MACRO — Yahoo Finance con validazione range
 // ══════════════════════════════════════
-// Gli indici e il VIX sono particolari perche Yahoo usa formato %5E (^ URL-encoded).
-// Twelve Data accetta alcuni indici come SPX, NDX ma non tutti. Strategia:
-// prima Twelve Data se il ticker e mappato, poi Yahoo come fallback robusto.
+// Dopo il bug della v3.3 (dove ticker Twelve Data sbagliati hanno causato
+// fetch di dati casuali presentati come indici), abbiamo semplificato:
+// una sola fonte dati (Yahoo Finance), ticker standard e ben documentati,
+// e validazione di sanita obbligatoria su ogni dato ricevuto.
+//
+// La validazione confronta il prezzo di chiusura ricevuto con il range
+// minPrice/maxPrice definito nella configurazione dello strumento. Se il
+// prezzo e fuori range, TUTTI i dati vengono scartati e lo strumento resta
+// in stato 'no_data' invece di essere aggiornato con dati corrotti.
 
 async function fetchMacroData(instr) {
   var st = macroState[instr.id];
   if (!st) return false;
 
-  // Tentativo 1: Twelve Data se ticker disponibile
-  if (TD_KEY && instr.td) {
-    try {
-      var urlTD = 'https://api.twelvedata.com/time_series?symbol=' +
-                  encodeURIComponent(instr.td) +
-                  '&interval=1day&outputsize=180&apikey=' + TD_KEY;
-      var resTD = await fetch(urlTD);
-      var dataTD = await resTD.json();
-      if (dataTD.status !== 'error' && dataTD.values && dataTD.values.length > 30) {
-        var parsed = dataTD.values.reverse().map(function(c) {
-          return { open: +c.open, high: +c.high, low: +c.low, close: +c.close, vol: +(c.volume||0) };
-        });
-        if (parsed.length > 30 && parsed[parsed.length-1].close > 0) {
-          st.candlesD1 = parsed;
-          return true;
-        }
-      }
-    } catch(e) {
-      console.error('Macro TD ' + instr.id + ': ' + e.message);
-    }
-  }
-
-  // Tentativo 2: Yahoo Finance
   try {
     var urlY = 'https://query2.finance.yahoo.com/v8/finance/chart/' + instr.yahoo +
                '?interval=1d&range=6mo';
     var resY = await fetch(urlY, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+
+    if (!resY.ok) {
+      console.error('Macro Yahoo ' + instr.id + ': HTTP ' + resY.status);
+      return false;
+    }
+
     var dataY = await resY.json();
     var chart = dataY && dataY.chart && dataY.chart.result && dataY.chart.result[0];
-    if (chart && chart.timestamp) {
-      var q = chart.indicators.quote[0];
-      var parsed2 = [];
-      for (var i = 0; i < chart.timestamp.length; i++) {
-        if (q.open[i] && q.high[i] && q.low[i] && q.close[i]) {
-          parsed2.push({
-            open: +q.open[i].toFixed(4),
-            high: +q.high[i].toFixed(4),
-            low: +q.low[i].toFixed(4),
-            close: +q.close[i].toFixed(4),
-            vol: q.volume[i] || 0
-          });
-        }
-      }
-      if (parsed2.length > 30) {
-        st.candlesD1 = parsed2;
-        return true;
+    if (!chart || !chart.timestamp) {
+      console.error('Macro Yahoo ' + instr.id + ': no chart data');
+      return false;
+    }
+
+    var q = chart.indicators.quote[0];
+    var parsed = [];
+    for (var i = 0; i < chart.timestamp.length; i++) {
+      if (q.open[i] && q.high[i] && q.low[i] && q.close[i]) {
+        parsed.push({
+          open: +q.open[i].toFixed(4),
+          high: +q.high[i].toFixed(4),
+          low: +q.low[i].toFixed(4),
+          close: +q.close[i].toFixed(4),
+          vol: q.volume[i] || 0
+        });
       }
     }
+
+    // Servono almeno 30 candele per calcoli significativi
+    if (parsed.length < 30) {
+      console.error('Macro ' + instr.id + ': too few candles (' + parsed.length + ')');
+      return false;
+    }
+
+    // ── VALIDAZIONE DI SANITA ──
+    // Verifico che il prezzo piu recente sia nel range plausibile. Questo
+    // protegge contro: ticker sbagliati che restituiscono asset casuali,
+    // errori decimali (es. Yahoo che ritorna prezzi in cents), dati corrotti.
+    var latestClose = parsed[parsed.length-1].close;
+    if (latestClose < instr.minPrice || latestClose > instr.maxPrice) {
+      console.error('Macro ' + instr.id + ': price ' + latestClose +
+                    ' OUT OF RANGE [' + instr.minPrice + ', ' + instr.maxPrice + '] — data rejected');
+      return false;
+    }
+
+    // Verifico anche il massimo storico della serie sia plausibile
+    var maxInSeries = 0;
+    for (var k = 0; k < parsed.length; k++) {
+      if (parsed[k].high > maxInSeries) maxInSeries = parsed[k].high;
+    }
+    if (maxInSeries < instr.minPrice || maxInSeries > instr.maxPrice * 2) {
+      console.error('Macro ' + instr.id + ': max ' + maxInSeries + ' implausible — data rejected');
+      return false;
+    }
+
+    // Dati validi: salva
+    st.candlesD1 = parsed;
+    console.log('Macro ' + instr.id + ': ' + parsed.length + ' candles, last=' + latestClose.toFixed(2));
+    return true;
+
   } catch(e) {
     console.error('Macro Yahoo ' + instr.id + ': ' + e.message);
+    return false;
   }
-
-  return false;
 }
 
 // ══════════════════════════════════════
