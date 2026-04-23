@@ -1188,6 +1188,210 @@ select.ctrl-inp option { background:var(--bg-deep); color:var(--tx-hi); }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
+   MACRO PAGE — regime, instruments, opportunities
+   ══════════════════════════════════════════════════════════════════════════ */
+.macro-hero {
+  padding:24px 20px;
+  background:radial-gradient(ellipse at top right, var(--bg-panel3) 0%, var(--bg-panel) 70%);
+  border-bottom:1px solid var(--bd-1);
+  display:grid;
+  grid-template-columns:1fr;
+  gap:12px;
+}
+@media(min-width:768px) { .macro-hero { grid-template-columns:2fr 1fr; gap:20px; } }
+
+.macro-regime-label {
+  font-family:var(--ff-display);
+  font-size:9px;
+  color:var(--tx-dim);
+  letter-spacing:2.5px;
+  text-transform:uppercase;
+  margin-bottom:6px;
+}
+
+.macro-regime-val {
+  font-family:var(--ff-display);
+  font-size:28px;
+  font-weight:700;
+  letter-spacing:-0.8px;
+  line-height:1.1;
+  margin-bottom:6px;
+}
+.macro-regime-val.riskoff { color:var(--red); text-shadow:0 0 20px var(--red-glow); }
+.macro-regime-val.riskon { color:var(--green); text-shadow:0 0 20px var(--green-glow); }
+.macro-regime-val.normal { color:var(--gold); text-shadow:0 0 20px var(--gold-glow); }
+.macro-regime-val.neutral { color:var(--tx-sub); }
+
+.macro-regime-sub {
+  font-family:var(--ff-mono);
+  font-size:10px;
+  color:var(--tx-body);
+  letter-spacing:0.3px;
+  line-height:1.5;
+}
+
+.macro-vix-box {
+  background:var(--bg-panel);
+  border:1px solid var(--bd-2);
+  border-radius:var(--r-md);
+  padding:12px 16px;
+  text-align:center;
+}
+.macro-vix-label {
+  font-family:var(--ff-display);
+  font-size:8px;
+  color:var(--tx-dim);
+  letter-spacing:1.8px;
+  text-transform:uppercase;
+  margin-bottom:6px;
+}
+.macro-vix-val {
+  font-family:var(--ff-display);
+  font-size:28px;
+  font-weight:700;
+  letter-spacing:-1px;
+  line-height:1;
+}
+.macro-vix-val.low { color:var(--green); }
+.macro-vix-val.mid { color:var(--gold); }
+.macro-vix-val.high { color:var(--red); text-shadow:0 0 15px var(--red-glow); }
+.macro-vix-interp {
+  font-family:var(--ff-mono);
+  font-size:9px;
+  color:var(--tx-sub);
+  letter-spacing:0.3px;
+  margin-top:4px;
+}
+
+/* Category sections inside macro page */
+.macro-cat-head {
+  font-family:var(--ff-display);
+  font-size:9px;
+  font-weight:700;
+  color:var(--tx-sub);
+  letter-spacing:1.8px;
+  text-transform:uppercase;
+  padding:12px 16px 8px;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  border-bottom:1px solid var(--bd-1);
+  background:var(--bg-panel2);
+}
+
+.macro-row {
+  display:grid;
+  grid-template-columns:14px 1fr auto auto;
+  align-items:center;
+  gap:12px;
+  padding:12px 16px;
+  border-bottom:1px solid var(--bd-1);
+  transition:background 0.15s;
+  position:relative;
+}
+.macro-row:last-child { border-bottom:none; }
+.macro-row:hover { background:var(--bg-panel2); }
+
+.macro-dot {
+  width:8px;
+  height:8px;
+  border-radius:50%;
+  flex-shrink:0;
+}
+.macro-dot.ok { background:var(--green); box-shadow:0 0 6px var(--green-glow); }
+.macro-dot.warn { background:var(--gold); box-shadow:0 0 6px var(--gold-glow); }
+.macro-dot.alert { background:var(--red); box-shadow:0 0 8px var(--red-glow); animation:pulse 2s infinite; }
+.macro-dot.noData { background:var(--tx-ghost); }
+
+.macro-name {
+  font-family:var(--ff-display);
+  font-size:11px;
+  font-weight:600;
+  color:var(--tx-hi);
+  letter-spacing:0.3px;
+}
+
+.macro-price {
+  font-family:var(--ff-mono);
+  font-size:12px;
+  color:var(--tx-white);
+  font-weight:600;
+  letter-spacing:-0.3px;
+  text-align:right;
+}
+
+.macro-dd {
+  font-family:var(--ff-mono);
+  font-size:10px;
+  font-weight:600;
+  text-align:right;
+  min-width:60px;
+  letter-spacing:-0.2px;
+}
+.macro-dd.pos { color:var(--green); }
+.macro-dd.neg { color:var(--red); }
+.macro-dd.warn { color:var(--gold); }
+.macro-dd.alert { color:var(--red); font-weight:700; }
+
+/* Opportunities card */
+.opp-card {
+  background:linear-gradient(135deg, rgba(240,180,41,0.03) 0%, var(--bg-panel) 100%);
+  border-color:rgba(240,180,41,0.2);
+}
+.opp-empty {
+  padding:24px 16px;
+  text-align:center;
+  font-family:var(--ff-mono);
+  font-size:10px;
+  color:var(--tx-dim);
+  letter-spacing:0.5px;
+}
+.opp-row {
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding:12px 16px;
+  border-bottom:1px solid var(--bd-1);
+  transition:background 0.15s;
+}
+.opp-row:last-child { border-bottom:none; }
+.opp-row:hover { background:var(--bg-panel2); }
+.opp-rank {
+  font-family:var(--ff-display);
+  font-size:14px;
+  font-weight:700;
+  color:var(--gold);
+  width:24px;
+  text-align:center;
+  letter-spacing:-0.5px;
+}
+.opp-name {
+  font-family:var(--ff-display);
+  font-size:11px;
+  font-weight:600;
+  color:var(--tx-hi);
+  flex:1;
+}
+.opp-dd {
+  font-family:var(--ff-mono);
+  font-size:12px;
+  font-weight:700;
+  color:var(--red);
+  letter-spacing:-0.3px;
+}
+.opp-badge {
+  font-family:var(--ff-mono);
+  font-size:8px;
+  font-weight:700;
+  letter-spacing:1px;
+  padding:3px 8px;
+  border-radius:var(--r-xs);
+  text-transform:uppercase;
+}
+.opp-badge.warn { background:var(--gold-dim); color:var(--gold); border:1px solid rgba(240,180,41,0.3); }
+.opp-badge.alert { background:var(--red-dim); color:var(--red); border:1px solid rgba(255,56,96,0.3); }
+
+/* ══════════════════════════════════════════════════════════════════════════
    STATS
    ══════════════════════════════════════════════════════════════════════════ */
 .stats-row {
@@ -1312,6 +1516,7 @@ select.ctrl-inp option { background:var(--bg-deep); color:var(--tx-hi); }
       <div class="pill"><span class="dot dot-off" id="dotData"></span>Data</div>
       <div class="pill"><span class="dot dot-off" id="dotTG"></span>TG</div>
       <div class="pill"><span class="dot dot-off" id="dotPA"></span>PA</div>
+      <div class="pill"><span class="dot dot-off" id="dotMacro"></span>Macro</div>
       <div class="pill"><span class="status-live off" id="eaStatus">Stopped</span></div>
     </div>
 
@@ -1331,6 +1536,7 @@ select.ctrl-inp option { background:var(--bg-deep); color:var(--tx-hi); }
     <div class="nav-tab" onclick="showPage('signals',this)">Signals</div>
     <div class="nav-tab" onclick="showPage('risk',this)">Risk</div>
     <div class="nav-tab" onclick="showPage('pa',this)">PA Bot<span class="nav-tab-badge">D1</span></div>
+    <div class="nav-tab" onclick="showPage('macro',this)">Macro<span class="nav-tab-badge">NEW</span></div>
     <div class="nav-tab" onclick="showPage('settings',this)">Settings</div>
     <div class="nav-tab" onclick="showPage('stats',this)">Stats</div>
   </div>
@@ -1530,6 +1736,81 @@ select.ctrl-inp option { background:var(--bg-deep); color:var(--tx-hi); }
       </div>
     </div>
 
+    <!-- ============ MACRO PAGE ============ -->
+    <div class="page" id="page-macro">
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">Macro Monitor — Market Regime</span>
+          <span class="badge badge-gold" id="macroStatusBadge">Loading</span>
+        </div>
+        <div class="macro-hero">
+          <div>
+            <div class="macro-regime-label">Current Regime</div>
+            <div class="macro-regime-val neutral" id="macroRegime">Loading…</div>
+            <div class="macro-regime-sub" id="macroRegimeSub">Waiting for data from server…</div>
+          </div>
+          <div class="macro-vix-box">
+            <div class="macro-vix-label">VIX Index</div>
+            <div class="macro-vix-val low" id="macroVixVal">—</div>
+            <div class="macro-vix-interp" id="macroVixInterp">—</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div class="card opp-card">
+          <div class="card-head">
+            <span class="card-title">💡 Current Opportunities</span>
+            <span class="badge badge-gold" id="oppCount">0</span>
+          </div>
+          <div id="oppList"><div class="opp-empty">— No drawdown opportunities at the moment —</div></div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">Drawdown Thresholds</span>
+            <span class="badge badge-d" id="macroThresholds">5% / 10%</span>
+          </div>
+          <div style="padding:16px;font-family:var(--ff-mono);font-size:11px;color:var(--tx-body);line-height:1.8">
+            <b style="color:var(--gold)">Warning</b> (<span id="macroWarnPct">5</span>%): first signs of weakness from 3-month highs<br>
+            <b style="color:var(--red)">Alert</b> (<span id="macroAlertPct">10</span>%): significant drawdown from 6-month highs<br>
+            <br>
+            <i style="color:var(--tx-dim)">Weekly brief delivered every Monday at <span id="macroBriefHour">9</span>:00 UTC via Telegram.</i>
+          </div>
+        </div>
+      </div>
+
+      <!-- US EQUITY -->
+      <div class="card">
+        <div class="macro-cat-head">🇺🇸 US Equity</div>
+        <div id="macroCatUS"><div class="empty">— Loading —</div></div>
+      </div>
+
+      <!-- EU EQUITY -->
+      <div class="card">
+        <div class="macro-cat-head">🇪🇺 EU Equity</div>
+        <div id="macroCatEU"><div class="empty">— Loading —</div></div>
+      </div>
+
+      <div class="two-col">
+        <!-- SAFE HAVEN -->
+        <div class="card">
+          <div class="macro-cat-head">🏛️ Safe Haven</div>
+          <div id="macroCatSafe"><div class="empty">— Loading —</div></div>
+        </div>
+        <!-- COMMODITY -->
+        <div class="card">
+          <div class="macro-cat-head">🛢️ Commodity</div>
+          <div id="macroCatCommodity"><div class="empty">— Loading —</div></div>
+        </div>
+      </div>
+
+      <!-- BOND -->
+      <div class="card">
+        <div class="macro-cat-head">🏦 Bond</div>
+        <div id="macroCatBond"><div class="empty">— Loading —</div></div>
+      </div>
+    </div>
+
     <!-- ============ SETTINGS PAGE ============ -->
     <div class="page" id="page-settings">
       <div class="two-col">
@@ -1582,6 +1863,10 @@ select.ctrl-inp option { background:var(--bg-deep); color:var(--tx-hi); }
                 <div class="ctrl-label">PA Bot</div>
                 <div id="ctrlPAStatus" class="ctrl-stat off">Stopped</div>
               </div>
+              <div class="ctrl-cell">
+                <div class="ctrl-label">Macro Monitor</div>
+                <div id="ctrlMacroStatus" class="ctrl-stat off">Stopped</div>
+              </div>
             </div>
           </div>
         </div>
@@ -1592,7 +1877,10 @@ select.ctrl-inp option { background:var(--bg-deep); color:var(--tx-hi); }
             <button class="btn btn-stop" onclick="stopEA()">■ Stop Trend Bot</button>
             <button class="btn btn-pa" onclick="startPA()">▶ Start PA Bot</button>
             <button class="btn btn-pa" onclick="stopPA()">■ Stop PA Bot</button>
+            <button class="btn btn-test" onclick="startMacro()">▶ Start Macro</button>
+            <button class="btn btn-test" onclick="stopMacro()">■ Stop Macro</button>
             <button class="btn btn-test" onclick="testTG()">✈ Test Telegram</button>
+            <button class="btn btn-test" onclick="briefNow()">📨 Send Brief Now</button>
           </div>
           <div class="ctrl-result" id="ctrlResult"></div>
         </div>
@@ -2094,6 +2382,9 @@ async function pollStatus() {
 
   // Poll PA bot separately
   await pollPAStatus();
+
+  // Poll Macro monitor separately
+  await pollMacroStatus();
 }
 
 async function pollPAStatus() {
@@ -2168,6 +2459,149 @@ async function pollPAStatus() {
   } catch(e) {
     document.getElementById('dotPA').className = 'dot dot-off';
   }
+}
+
+async function pollMacroStatus() {
+  try {
+    var r = await fetch('/api/macro-status');
+    var d = await r.json();
+
+    // Status dot
+    document.getElementById('dotMacro').className = 'dot ' + (d.macroRunning ? 'dot-on' : 'dot-off');
+    var cms = document.getElementById('ctrlMacroStatus');
+    if (cms) {
+      cms.textContent = d.macroRunning ? 'Running' : 'Stopped';
+      cms.className = 'ctrl-stat ' + (d.macroRunning ? 'on' : 'off');
+    }
+
+    // Badge
+    var badge = document.getElementById('macroStatusBadge');
+    if (badge) {
+      badge.textContent = d.macroRunning ? 'Live' : 'Stopped';
+      badge.className = 'badge ' + (d.macroRunning ? 'badge-g' : 'badge-d');
+    }
+
+    // Thresholds
+    setEl('macroWarnPct', d.warnPct || 5);
+    setEl('macroAlertPct', d.alertPct || 10);
+    setEl('macroThresholds', (d.warnPct||5) + '% / ' + (d.alertPct||10) + '%');
+
+    // Regime
+    if (d.regime) {
+      var rg = d.regime.regime || 'Neutro';
+      var rgEl = document.getElementById('macroRegime');
+      var rgSub = document.getElementById('macroRegimeSub');
+      var rgClass = 'neutral';
+      if (rg.indexOf('Risk-Off') !== -1) rgClass = 'riskoff';
+      else if (rg.indexOf('Risk-On') !== -1) rgClass = 'riskon';
+      else if (rg.indexOf('Normale') !== -1) rgClass = 'normal';
+      if (rgEl) {
+        rgEl.textContent = rg;
+        rgEl.className = 'macro-regime-val ' + rgClass;
+      }
+      if (rgSub) rgSub.textContent = d.regime.reasoning || '—';
+    }
+
+    // VIX display
+    var vix = d.state && d.state['VIX'] ? d.state['VIX'] : null;
+    if (vix && vix.currentPrice) {
+      var vx = document.getElementById('macroVixVal');
+      var vi = document.getElementById('macroVixInterp');
+      var vxClass = 'low';
+      var vxInterp = 'Normal';
+      if (vix.currentPrice > 25) { vxClass = 'high'; vxInterp = 'Elevated fear — potential opportunity'; }
+      else if (vix.currentPrice > 20) { vxClass = 'mid'; vxInterp = 'Moderate fear'; }
+      else if (vix.currentPrice < 15) { vxClass = 'low'; vxInterp = 'Complacency'; }
+      else { vxClass = 'low'; vxInterp = 'Normal range'; }
+      if (vx) {
+        vx.textContent = vix.currentPrice.toFixed(2);
+        vx.className = 'macro-vix-val ' + vxClass;
+      }
+      if (vi) vi.textContent = vxInterp;
+    }
+
+    // Render category blocks
+    if (d.state) {
+      renderMacroCategory('macroCatUS', d.state, 'US_EQUITY');
+      renderMacroCategory('macroCatEU', d.state, 'EU_EQUITY');
+      renderMacroCategory('macroCatSafe', d.state, 'SAFE_HAVEN');
+      renderMacroCategory('macroCatCommodity', d.state, 'COMMODITY');
+      renderMacroCategory('macroCatBond', d.state, 'BOND');
+    }
+
+    // Opportunities
+    renderOpportunities(d.state || {});
+  } catch(e) {
+    document.getElementById('dotMacro').className = 'dot dot-off';
+  }
+}
+
+function renderMacroCategory(elId, state, category) {
+  var el = document.getElementById(elId);
+  if (!el) return;
+  var items = Object.keys(state)
+    .filter(function(id) { return state[id].category === category; })
+    .map(function(id) { return Object.assign({ id: id }, state[id]); });
+
+  if (!items.length) {
+    el.innerHTML = '<div class="empty">— No data —</div>';
+    return;
+  }
+
+  el.innerHTML = items.map(function(it) {
+    var statusClass = it.status === 'alert' ? 'alert' : it.status === 'warn' ? 'warn' : it.status === 'no_data' ? 'noData' : 'ok';
+    var price = it.currentPrice || 0;
+    var dec = price > 1000 ? 0 : price > 100 ? 2 : 4;
+    var dd = it.drawdown6m || 0;
+    var ddClass = dd <= -10 ? 'alert' : dd <= -5 ? 'warn' : dd < 0 ? 'neg' : 'pos';
+    var ddText = (dd > 0 ? '+' : '') + dd.toFixed(2) + '%';
+
+    // VIX: no drawdown display
+    if (it.id === 'VIX') {
+      ddText = '—';
+      ddClass = 'pos';
+    }
+
+    return '<div class="macro-row">' +
+      '<span class="macro-dot ' + statusClass + '"></span>' +
+      '<span class="macro-name">' + (it.name || it.id) + '</span>' +
+      '<span class="macro-price">' + price.toFixed(dec) + '</span>' +
+      '<span class="macro-dd ' + ddClass + '">' + ddText + '</span>' +
+      '</div>';
+  }).join('');
+}
+
+function renderOpportunities(state) {
+  var el = document.getElementById('oppList');
+  var cnt = document.getElementById('oppCount');
+  if (!el) return;
+
+  var opps = Object.keys(state)
+    .filter(function(id) {
+      var s = state[id];
+      return id !== 'VIX' && (s.status === 'alert' || s.status === 'warn');
+    })
+    .map(function(id) { return Object.assign({ id: id }, state[id]); })
+    .sort(function(a, b) { return (a.drawdown6m || 0) - (b.drawdown6m || 0); });
+
+  if (cnt) cnt.textContent = opps.length;
+
+  if (!opps.length) {
+    el.innerHTML = '<div class="opp-empty">— No drawdown opportunities at the moment —</div>';
+    return;
+  }
+
+  el.innerHTML = opps.map(function(o, i) {
+    var badgeClass = o.status === 'alert' ? 'alert' : 'warn';
+    var badgeText = o.status === 'alert' ? 'Alert' : 'Warning';
+    var dd = (o.drawdown6m || 0).toFixed(2);
+    return '<div class="opp-row">' +
+      '<span class="opp-rank">0' + (i+1) + '</span>' +
+      '<span class="opp-name">' + (o.name || o.id) + '</span>' +
+      '<span class="opp-dd">' + dd + '%</span>' +
+      '<span class="opp-badge ' + badgeClass + '">' + badgeText + '</span>' +
+      '</div>';
+  }).join('');
 }
 
 function renderLog(log) {
@@ -2247,6 +2681,37 @@ async function stopPA() {
   var d = await r.json();
   showCtrl(d.ok ? 'ok' : 'err', d.ok ? 'PA bot stopped' : 'Error');
   toast('PA bot stopped');
+}
+
+async function startMacro() {
+  showCtrl('loading', 'Starting Macro Monitor…');
+  try {
+    var r = await fetch('/api/macro-start', { method:'POST' });
+    var d = await r.json();
+    showCtrl(d.ok ? 'ok' : 'err', d.ok ? 'Macro Monitor started' : 'Error: ' + d.message);
+    if (d.ok) toast('Macro Monitor started', 'ok');
+  } catch(e) {
+    showCtrl('err', 'Network error');
+  }
+}
+
+async function stopMacro() {
+  var r = await fetch('/api/macro-stop', { method:'POST' });
+  var d = await r.json();
+  showCtrl(d.ok ? 'ok' : 'err', d.ok ? 'Macro Monitor stopped' : 'Error');
+  toast('Macro Monitor stopped');
+}
+
+async function briefNow() {
+  showCtrl('loading', 'Sending macro brief…');
+  try {
+    var r = await fetch('/api/macro-brief-now', { method:'POST' });
+    var d = await r.json();
+    showCtrl(d.ok ? 'ok' : 'err', d.ok ? 'Brief sent — check Telegram' : 'Error sending brief');
+    if (d.ok) toast('Brief sent', 'ok');
+  } catch(e) {
+    showCtrl('err', 'Network error');
+  }
 }
 
 async function testTG() {
