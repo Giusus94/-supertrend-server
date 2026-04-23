@@ -599,7 +599,7 @@ app.get('/api/test', async function(req, res) {
 // di deploy: chiamando questo URL si vede subito la versione attiva.
 app.get('/api/version', function(req, res) {
   res.json({
-    version: 'ST-EA Minimal v3.2 (Dual Bot)',
+    version: 'ST-EA v3.3 (Triple Bot: Trend + PA + Macro)',
     trendBot: {
       enabled: true,
       running: isRunning,
@@ -615,10 +615,21 @@ app.get('/api/version', function(req, res) {
       logic: 'candle patterns + D1/H4 trend alignment + S/R proximity',
       cooldownHours: PA_COOLDOWN_HOURS
     },
+    macroMonitor: {
+      enabled: true,
+      running: macroRunning,
+      instruments: MACRO_INSTRUMENTS.length,
+      warnPct: MACRO_WARN_PCT,
+      alertPct: MACRO_ALERT_PCT,
+      weeklyBrief: MACRO_BRIEF_ENABLED,
+      briefDay: MACRO_BRIEF_DAY,
+      briefHourUTC: MACRO_BRIEF_HOUR
+    },
     dataSources: {
       forex: 'TwelveData (primary) + Yahoo (fallback)',
       metals: 'TwelveData (primary) + Yahoo (fallback)',
-      crypto: 'OKX (only)'
+      crypto: 'OKX (only)',
+      indices: 'TwelveData where available + Yahoo for VIX/bonds'
     },
     uptimeSec: Math.floor(process.uptime())
   });
@@ -1228,27 +1239,552 @@ app.post('/api/pa-stop', async function(req, res) {
 // ██████████████████████████████████████████████████████████████████████████████
 // ══════════════════════════════════════════════════════════════════════════════
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██████████████████████████████████████████████████████████████████████████████
+// MACRO MONITOR — alert di drawdown + briefing settimanale
+// ██████████████████████████████████████████████████████████████████════════════
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// Terzo modulo del sistema. Non e un bot di trading, e un sistema di
+// monitoraggio del contesto macro che serve due scopi complementari:
+//
+//   1. ALERT DI DRAWDOWN: manda notifica Telegram quando un indice o asset
+//      scende significativamente dai suoi massimi recenti. Due soglie:
+//      warning -5% dal max 3 mesi, alert -10% dal max 6 mesi.
+//      Cooldown per evitare spam se l'asset rimane in zona warning.
+//
+//   2. BRIEFING SETTIMANALE: ogni lunedi mattina alle 9 UTC invia un report
+//      completo sullo stato di tutti i 9 strumenti monitorati, con stato
+//      attuale, drawdown dai massimi, valutazione sintetica del regime.
+//
+// Il modulo e progettato per chi vuole fare investimento di lungo periodo
+// (ETF, indici, azioni) senza dover monitorare i mercati ogni giorno.
+// Logica di fondo: comprare quando c'e paura (drawdown significativi),
+// mantenere informazione di contesto senza distrazione quotidiana.
+//
+// Architettura: modulo autonomo con stato separato (macroState), loop di
+// monitoraggio ogni ora (macroTimer), scheduler separato per briefing
+// settimanale (macroBriefTimer). Nessuna dipendenza dai bot di trading.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ══════════════════════════════════════
+// CONFIGURAZIONE STRUMENTI MACRO
+// ══════════════════════════════════════
+// Ogni strumento ha: nome completo, simbolo Twelve Data (se disponibile),
+// simbolo Yahoo come fallback, e categoria per organizzare il briefing.
+// Note tecniche: gli indici su Twelve Data richiedono formato "SPX" o "SPX500"
+// a seconda del piano, mentre Yahoo usa i ticker ^GSPC, ^IXIC etc. Il VIX
+// e disponibile solo su Yahoo come ^VIX. Il bond 10Y USA come ^TNX (yield).
+
+var MACRO_INSTRUMENTS = [
+  { id: 'SPX',    name: 'S&P 500',           category: 'US_EQUITY',  yahoo: '%5EGSPC',  td: 'SPX' },
+  { id: 'NDX',    name: 'Nasdaq 100',        category: 'US_EQUITY',  yahoo: '%5ENDX',   td: 'NDX' },
+  { id: 'SX5E',   name: 'Euro Stoxx 50',     category: 'EU_EQUITY',  yahoo: '%5ESTOXX50E', td: 'SX5E' },
+  { id: 'FTSEMIB',name: 'FTSE MIB',          category: 'EU_EQUITY',  yahoo: 'FTSEMIB.MI',  td: null },
+  { id: 'DAX',    name: 'DAX',               category: 'EU_EQUITY',  yahoo: '%5EGDAXI', td: 'DAX' },
+  { id: 'XAUUSD', name: 'Oro',               category: 'SAFE_HAVEN', yahoo: 'GC=F',     td: 'XAU/USD' },
+  { id: 'WTI',    name: 'Petrolio WTI',      category: 'COMMODITY',  yahoo: 'CL=F',     td: 'WTI/USD' },
+  { id: 'VIX',    name: 'VIX (volatilita USA)', category: 'VOLATILITY', yahoo: '%5EVIX', td: null },
+  { id: 'US10Y',  name: 'US Treasury 10Y',   category: 'BOND',       yahoo: '%5ETNX',   td: null }
+];
+
+// Soglie di drawdown configurabili via env
+var MACRO_WARN_PCT = parseFloat(process.env.MACRO_WARN_PCT) || 5.0;   // -5% dal max 3 mesi
+var MACRO_ALERT_PCT = parseFloat(process.env.MACRO_ALERT_PCT) || 10.0; // -10% dal max 6 mesi
+var MACRO_REFRESH_SEC = parseInt(process.env.MACRO_REFRESH_SEC) || 3600; // 1 ora
+var MACRO_COOLDOWN_HOURS = parseInt(process.env.MACRO_COOLDOWN_HOURS) || 24; // anti-spam
+var MACRO_BRIEF_ENABLED = process.env.MACRO_BRIEF_ENABLED !== 'false'; // default on
+var MACRO_BRIEF_DAY = parseInt(process.env.MACRO_BRIEF_DAY) || 1; // 1=lunedi
+var MACRO_BRIEF_HOUR = parseInt(process.env.MACRO_BRIEF_HOUR) || 9; // 9 UTC
+
+// ══════════════════════════════════════
+// STATO MACRO
+// ══════════════════════════════════════
+var macroState = {};
+var macroRunning = false;
+var macroTimer = null;
+var macroBriefTimer = null;
+var lastMacroLoopTime = 0;
+var lastBriefSent = 0; // timestamp ultimo briefing inviato
+
+function initMacro(instr) {
+  macroState[instr.id] = {
+    instrument: instr,
+    candlesD1: [],           // ultimi 180 giorni
+    currentPrice: 0,
+    max3m: 0,                // massimo ultimi 60 giorni di trading
+    max6m: 0,                // massimo ultimi 120 giorni di trading
+    drawdown3m: 0,           // % sotto max 3m
+    drawdown6m: 0,           // % sotto max 6m
+    lastAlertTime: 0,        // timestamp ultimo alert inviato
+    lastAlertLevel: null,    // 'warn' | 'alert' | null
+    lastUpdateTime: 0,
+    status: 'init'           // init | ok | warn | alert | no_data
+  };
+}
+MACRO_INSTRUMENTS.forEach(initMacro);
+
+// ══════════════════════════════════════
+// FETCH DATI MACRO
+// ══════════════════════════════════════
+// Gli indici e il VIX sono particolari perche Yahoo usa formato %5E (^ URL-encoded).
+// Twelve Data accetta alcuni indici come SPX, NDX ma non tutti. Strategia:
+// prima Twelve Data se il ticker e mappato, poi Yahoo come fallback robusto.
+
+async function fetchMacroData(instr) {
+  var st = macroState[instr.id];
+  if (!st) return false;
+
+  // Tentativo 1: Twelve Data se ticker disponibile
+  if (TD_KEY && instr.td) {
+    try {
+      var urlTD = 'https://api.twelvedata.com/time_series?symbol=' +
+                  encodeURIComponent(instr.td) +
+                  '&interval=1day&outputsize=180&apikey=' + TD_KEY;
+      var resTD = await fetch(urlTD);
+      var dataTD = await resTD.json();
+      if (dataTD.status !== 'error' && dataTD.values && dataTD.values.length > 30) {
+        var parsed = dataTD.values.reverse().map(function(c) {
+          return { open: +c.open, high: +c.high, low: +c.low, close: +c.close, vol: +(c.volume||0) };
+        });
+        if (parsed.length > 30 && parsed[parsed.length-1].close > 0) {
+          st.candlesD1 = parsed;
+          return true;
+        }
+      }
+    } catch(e) {
+      console.error('Macro TD ' + instr.id + ': ' + e.message);
+    }
+  }
+
+  // Tentativo 2: Yahoo Finance
+  try {
+    var urlY = 'https://query2.finance.yahoo.com/v8/finance/chart/' + instr.yahoo +
+               '?interval=1d&range=6mo';
+    var resY = await fetch(urlY, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    var dataY = await resY.json();
+    var chart = dataY && dataY.chart && dataY.chart.result && dataY.chart.result[0];
+    if (chart && chart.timestamp) {
+      var q = chart.indicators.quote[0];
+      var parsed2 = [];
+      for (var i = 0; i < chart.timestamp.length; i++) {
+        if (q.open[i] && q.high[i] && q.low[i] && q.close[i]) {
+          parsed2.push({
+            open: +q.open[i].toFixed(4),
+            high: +q.high[i].toFixed(4),
+            low: +q.low[i].toFixed(4),
+            close: +q.close[i].toFixed(4),
+            vol: q.volume[i] || 0
+          });
+        }
+      }
+      if (parsed2.length > 30) {
+        st.candlesD1 = parsed2;
+        return true;
+      }
+    }
+  } catch(e) {
+    console.error('Macro Yahoo ' + instr.id + ': ' + e.message);
+  }
+
+  return false;
+}
+
+// ══════════════════════════════════════
+// CALCOLO DRAWDOWN E STATO
+// ══════════════════════════════════════
+// Per ogni strumento calcoliamo il massimo degli ultimi N giorni di trading
+// e confrontiamo con il prezzo attuale. Utilizziamo candlesD1[-N:] che nei
+// mercati azionari corrisponde a circa N/20 mesi di calendario (20 giorni
+// di trading per mese approssimativi).
+
+function updateMacroStats(instrId) {
+  var st = macroState[instrId];
+  if (!st || !st.candlesD1.length) {
+    if (st) st.status = 'no_data';
+    return;
+  }
+
+  var candles = st.candlesD1;
+  var current = candles[candles.length-1].close;
+  st.currentPrice = current;
+  st.lastUpdateTime = Date.now();
+
+  // Massimo 3 mesi (ultimi 60 giorni di trading)
+  var slice3m = candles.slice(-60);
+  var max3m = 0;
+  for (var i = 0; i < slice3m.length; i++) {
+    if (slice3m[i].high > max3m) max3m = slice3m[i].high;
+  }
+  st.max3m = max3m;
+  st.drawdown3m = max3m > 0 ? ((current - max3m) / max3m) * 100 : 0;
+
+  // Massimo 6 mesi (ultimi 120 giorni di trading, o tutto se meno)
+  var slice6m = candles.slice(-120);
+  var max6m = 0;
+  for (var j = 0; j < slice6m.length; j++) {
+    if (slice6m[j].high > max6m) max6m = slice6m[j].high;
+  }
+  st.max6m = max6m;
+  st.drawdown6m = max6m > 0 ? ((current - max6m) / max6m) * 100 : 0;
+
+  // Classificazione stato
+  // Nota: il VIX si comporta al contrario. Qui applichiamo la logica ai prezzi
+  // normali (drawdown negativo = male). Per il VIX interpretiamo separatamente
+  // nel briefing (VIX alto = paura = potenziale opportunita di acquisto).
+  if (st.drawdown6m <= -MACRO_ALERT_PCT) {
+    st.status = 'alert';
+  } else if (st.drawdown3m <= -MACRO_WARN_PCT) {
+    st.status = 'warn';
+  } else {
+    st.status = 'ok';
+  }
+}
+
+// ══════════════════════════════════════
+// INVIO ALERT DRAWDOWN
+// ══════════════════════════════════════
+// Logica anti-spam: se lo stesso strumento era gia in alert livello 'alert'
+// non rimandiamo un altro 'alert' prima di MACRO_COOLDOWN_HOURS. Mandiamo
+// pero un alert se passiamo da warn ad alert (escalation). Non mandiamo
+// alert se passiamo da alert a warn (de-escalation), solo log interno.
+
+async function checkMacroAlert(instrId) {
+  var st = macroState[instrId];
+  if (!st || st.status === 'init' || st.status === 'no_data' || st.status === 'ok') return;
+
+  var instr = st.instrument;
+  var now = Date.now();
+  var cooldownMs = MACRO_COOLDOWN_HOURS * 60 * 60 * 1000;
+
+  // Escalation warn->alert: invia sempre (importante)
+  var escalation = st.status === 'alert' && st.lastAlertLevel === 'warn';
+
+  // Nuovo alert o nuovo warn: verifica cooldown
+  var isRepeat = st.lastAlertLevel === st.status;
+  if (isRepeat && (now - st.lastAlertTime) < cooldownMs) return;
+
+  // Il VIX invertito: non e un drawdown, e un SPIKE. Skip dall'alert normale.
+  if (instr.id === 'VIX') return;
+
+  var nl = '\n';
+  var level = st.status === 'alert' ? 'ALERT' : 'WARNING';
+  var emoji = st.status === 'alert' ? '🔴' : '🟡';
+  var pct = st.status === 'alert' ? st.drawdown6m : st.drawdown3m;
+  var maxLabel = st.status === 'alert' ? '6 mesi' : '3 mesi';
+  var maxVal = st.status === 'alert' ? st.max6m : st.max3m;
+
+  var dec = st.currentPrice > 100 ? 2 : 4;
+  var tg = st.currentPrice > 100 ? 2 : 4;
+
+  var msg =
+    '<b>[MACRO ' + level + '] ' + emoji + ' ' + instr.name + '</b>' + nl +
+    'Drawdown: <b>' + pct.toFixed(2) + '%</b> dal max ' + maxLabel + nl +
+    'Prezzo attuale: <b>' + st.currentPrice.toFixed(dec) + '</b>' + nl +
+    'Max ' + maxLabel + ': ' + maxVal.toFixed(tg) + nl +
+    (escalation ? '<i>Escalation da warning ad alert</i>' + nl : '') +
+    '<i>' + (st.status === 'alert' ?
+      'Drawdown significativo. Valutare accumulo graduale.' :
+      'Primo segnale di debolezza. Monitorare evoluzione.') + '</i>';
+
+  var ok = await tgSend(msg);
+  if (ok) {
+    st.lastAlertTime = now;
+    st.lastAlertLevel = st.status;
+    console.log('MACRO ' + level + ': ' + instr.id + ' drawdown ' + pct.toFixed(2) + '%');
+  }
+}
+
+// ══════════════════════════════════════
+// LOOP MONITORAGGIO MACRO
+// ══════════════════════════════════════
+
+async function runMacroLoop() {
+  lastMacroLoopTime = Date.now();
+  for (var i = 0; i < MACRO_INSTRUMENTS.length; i++) {
+    var instr = MACRO_INSTRUMENTS[i];
+    try {
+      var fetchOk = await fetchMacroData(instr);
+      if (fetchOk) {
+        updateMacroStats(instr.id);
+        await checkMacroAlert(instr.id);
+      }
+      // Delay per non saturare le API
+      await new Promise(function(r) { setTimeout(r, 1500); });
+    } catch(e) {
+      console.error('Macro Loop ' + instr.id + ': ' + e.message);
+    }
+  }
+  console.log('Macro Loop completato @ ' + new Date().toUTCString().slice(17,25));
+}
+
+function startMacroLoop() {
+  if (macroTimer) clearInterval(macroTimer);
+  runMacroLoop(); // esecuzione immediata
+  macroTimer = setInterval(runMacroLoop, MACRO_REFRESH_SEC * 1000);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// BRIEFING SETTIMANALE
+// ══════════════════════════════════════════════════════════════════════════════
+// Ogni lunedi alle 9 UTC invia un report completo dello stato dei mercati.
+// Raggruppato per categoria: US Equity, EU Equity, Safe Haven, Commodity,
+// Volatilita, Bond. Valutazione sintetica del regime generale.
+// Schedule: il timer si attiva ogni ora per verificare se e il momento giusto.
+
+function isTimeForBrief() {
+  if (!MACRO_BRIEF_ENABLED) return false;
+  var now = new Date();
+  var day = now.getUTCDay(); // 0=dom, 1=lun
+  var hour = now.getUTCHours();
+  var minute = now.getUTCMinutes();
+  // Matchiamo solo nella finestra 9:00-9:59 del giorno target per essere sicuri
+  // che anche se il server riavvia non perdiamo il briefing
+  if (day !== MACRO_BRIEF_DAY) return false;
+  if (hour !== MACRO_BRIEF_HOUR) return false;
+  // Anti-duplicazione: se ne abbiamo mandato uno nelle ultime 23 ore, skip
+  if (Date.now() - lastBriefSent < 23 * 60 * 60 * 1000) return false;
+  return true;
+}
+
+function classifyRegime() {
+  // Valutazione euristica del regime attuale basata su VIX, drawdown US, oro.
+  // VIX < 15 e US equity ok = euphoric/risk-on
+  // VIX 15-25 e nessun alert = normal
+  // VIX > 25 o drawdown alert su US = risk-off / fear
+  var vix = macroState['VIX'];
+  var spx = macroState['SPX'];
+  var gold = macroState['XAUUSD'];
+
+  var vixPrice = vix && vix.currentPrice ? vix.currentPrice : null;
+  var spxStatus = spx ? spx.status : 'no_data';
+  var goldStatus = gold ? gold.status : 'no_data';
+
+  var regime = 'Neutro';
+  var reasoning = '';
+
+  if (vixPrice !== null) {
+    if (vixPrice > 25 || spxStatus === 'alert') {
+      regime = 'Risk-Off (paura)';
+      reasoning = 'VIX elevato e/o crollo significativo su azioni USA.';
+    } else if (vixPrice < 15 && spxStatus === 'ok') {
+      regime = 'Risk-On (euforia)';
+      reasoning = 'VIX basso e azioni USA in condizioni normali/rialziste.';
+    } else if (vixPrice >= 15 && vixPrice <= 25 && spxStatus !== 'alert') {
+      regime = 'Normale';
+      reasoning = 'VIX in range tipico, nessun drawdown critico.';
+    }
+  }
+
+  return { regime: regime, reasoning: reasoning };
+}
+
+async function sendWeeklyBrief() {
+  var now = new Date();
+  var dateStr = now.toUTCString().slice(0, 16);
+  var nl = '\n';
+
+  // Classificazione regime
+  var regimeInfo = classifyRegime();
+
+  // Raggruppa strumenti per categoria
+  var categories = {
+    'US_EQUITY': { title: '🇺🇸 Azioni USA', items: [] },
+    'EU_EQUITY': { title: '🇪🇺 Azioni Europa', items: [] },
+    'SAFE_HAVEN': { title: '🏛️ Beni Rifugio', items: [] },
+    'COMMODITY': { title: '🛢️ Commodities', items: [] },
+    'VOLATILITY': { title: '📊 Volatilita', items: [] },
+    'BOND': { title: '🏦 Obbligazioni', items: [] }
+  };
+
+  for (var i = 0; i < MACRO_INSTRUMENTS.length; i++) {
+    var instr = MACRO_INSTRUMENTS[i];
+    var st = macroState[instr.id];
+    if (!st || !st.currentPrice) continue;
+
+    var dec = st.currentPrice > 100 ? 2 : 4;
+    var icon = st.status === 'alert' ? '🔴' :
+               st.status === 'warn' ? '🟡' : '🟢';
+
+    // Interpretazione VIX speciale
+    var interpretation = '';
+    if (instr.id === 'VIX') {
+      if (st.currentPrice > 30) interpretation = ' (paura elevata — possibile opportunita)';
+      else if (st.currentPrice > 20) interpretation = ' (paura moderata)';
+      else if (st.currentPrice < 15) interpretation = ' (compiacenza)';
+      else interpretation = ' (normale)';
+      icon = st.currentPrice > 25 ? '🔴' : st.currentPrice > 20 ? '🟡' : '🟢';
+    }
+
+    var ddText = '';
+    if (instr.id !== 'VIX') {
+      ddText = ' | DD: <b>' + st.drawdown6m.toFixed(1) + '%</b>';
+    }
+
+    var line = icon + ' <b>' + instr.name + '</b>: ' + st.currentPrice.toFixed(dec) + ddText + interpretation;
+    if (categories[instr.category]) {
+      categories[instr.category].items.push(line);
+    }
+  }
+
+  // Costruisci messaggio
+  var msg = '<b>[MACRO] Briefing Settimanale</b>' + nl + '<i>' + dateStr + ' UTC</i>' + nl + nl +
+            '<b>Regime attuale: ' + regimeInfo.regime + '</b>' + nl;
+  if (regimeInfo.reasoning) {
+    msg += '<i>' + regimeInfo.reasoning + '</i>' + nl;
+  }
+  msg += nl;
+
+  Object.keys(categories).forEach(function(cat) {
+    var c = categories[cat];
+    if (c.items.length) {
+      msg += '<b>' + c.title + '</b>' + nl;
+      msg += c.items.join(nl) + nl + nl;
+    }
+  });
+
+  // Sintesi opportunita: strumenti in alert per possibili acquisti
+  var opportunities = MACRO_INSTRUMENTS
+    .map(function(instr) { return macroState[instr.id]; })
+    .filter(function(st) { return st && st.instrument.id !== 'VIX' &&
+                                  (st.status === 'alert' || st.status === 'warn'); })
+    .sort(function(a, b) { return a.drawdown6m - b.drawdown6m; });
+
+  if (opportunities.length > 0) {
+    msg += '<b>💡 Opportunita da monitorare</b>' + nl;
+    opportunities.forEach(function(st) {
+      msg += '• ' + st.instrument.name + ' a <b>' + st.drawdown6m.toFixed(1) + '%</b> dai massimi 6m' + nl;
+    });
+    msg += nl + '<i>Valutare ingressi scaglionati, non tutto in una volta.</i>';
+  } else {
+    msg += '<i>Nessun drawdown significativo in corso. Fase di mercato tranquilla.</i>';
+  }
+
+  var ok = await tgSend(msg);
+  if (ok) {
+    lastBriefSent = Date.now();
+    console.log('MACRO briefing settimanale inviato');
+  }
+}
+
+// Scheduler briefing: verifica ogni ora
+function startBriefScheduler() {
+  if (macroBriefTimer) clearInterval(macroBriefTimer);
+  macroBriefTimer = setInterval(async function() {
+    if (isTimeForBrief()) {
+      await sendWeeklyBrief();
+    }
+  }, 60 * 60 * 1000); // ogni ora
+}
+
+// Watchdog Macro: riavvia loop se bloccato oltre 3 ore
+setInterval(async function() {
+  if (!macroRunning) return;
+  var elapsed = Date.now() - lastMacroLoopTime;
+  if (lastMacroLoopTime > 0 && elapsed > 3 * 60 * 60 * 1000) {
+    console.log('Macro Watchdog: loop bloccato da ' + Math.round(elapsed/60000) + 'min, riavvio...');
+    if (macroTimer) clearInterval(macroTimer);
+    startMacroLoop();
+    await tgSend('<i>Macro Monitor riavviato dal watchdog</i>');
+  }
+}, 15 * 60 * 1000);
+
+// ══════════════════════════════════════
+// API ENDPOINTS MACRO
+// ══════════════════════════════════════
+
+app.get('/api/macro-status', function(req, res) {
+  var state = {};
+  MACRO_INSTRUMENTS.forEach(function(instr) {
+    var st = macroState[instr.id];
+    if (!st) return;
+    state[instr.id] = {
+      name: instr.name,
+      category: instr.category,
+      currentPrice: st.currentPrice,
+      max3m: st.max3m,
+      max6m: st.max6m,
+      drawdown3m: st.drawdown3m,
+      drawdown6m: st.drawdown6m,
+      status: st.status,
+      candleCount: st.candlesD1.length,
+      lastUpdateTime: st.lastUpdateTime,
+      lastAlertLevel: st.lastAlertLevel,
+      lastAlertTime: st.lastAlertTime
+    };
+  });
+  res.json({
+    macroRunning: macroRunning,
+    instruments: MACRO_INSTRUMENTS.map(function(i) { return i.id; }),
+    warnPct: MACRO_WARN_PCT,
+    alertPct: MACRO_ALERT_PCT,
+    refreshSec: MACRO_REFRESH_SEC,
+    briefEnabled: MACRO_BRIEF_ENABLED,
+    lastLoopTime: lastMacroLoopTime,
+    lastBriefSent: lastBriefSent,
+    state: state,
+    regime: classifyRegime()
+  });
+});
+
+app.post('/api/macro-start', async function(req, res) {
+  macroRunning = true;
+  startMacroLoop();
+  startBriefScheduler();
+  await tgSend('<b>Macro Monitor avviato</b>\n' +
+               'Strumenti: ' + MACRO_INSTRUMENTS.length + '\n' +
+               'Soglie: warn ' + MACRO_WARN_PCT + '% / alert ' + MACRO_ALERT_PCT + '%\n' +
+               'Briefing settimanale: ' + (MACRO_BRIEF_ENABLED ? 'attivo lunedi 9 UTC' : 'disattivo'));
+  res.json({ ok: true, message: 'Macro Monitor avviato' });
+});
+
+app.post('/api/macro-stop', async function(req, res) {
+  macroRunning = false;
+  if (macroTimer) clearInterval(macroTimer);
+  if (macroBriefTimer) clearInterval(macroBriefTimer);
+  await tgSend('Macro Monitor fermato');
+  res.json({ ok: true });
+});
+
+// Endpoint per forzare l'invio del briefing manualmente (per test)
+app.post('/api/macro-brief-now', async function(req, res) {
+  await sendWeeklyBrief();
+  res.json({ ok: true, message: 'Briefing inviato manualmente' });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██████████████████████████████████████████████████████████████████████████████
+// FINE MODULO MACRO MONITOR
+// ██████████████████████████████████████████████████████████████████████████████
+// ══════════════════════════════════════════════════════════════════════════════
+
 // ══════════════════════════════════════
 // AVVIO SERVER
 // ══════════════════════════════════════
 app.listen(PORT, function() {
-  console.log('ST-EA Minimal v3.2 Server on port ' + PORT);
+  console.log('ST-EA v3.3 Server on port ' + PORT);
   console.log('TG: ' + (TG_TOKEN ? 'OK' : '--') + ' | TD: ' + (TD_KEY ? 'OK' : '--'));
   console.log('Trend Bot Symbols: ' + DEFAULT_SYMBOLS.join(', '));
   console.log('PA Bot Symbols: ' + PA_SYMBOLS.join(', '));
+  console.log('Macro Monitor Instruments: ' + MACRO_INSTRUMENTS.length);
 
-  // Auto-start del trend bot
+  // Auto-start trend bot
   console.log('Auto-starting Trend EA on: ' + DEFAULT_SYMBOLS.join(', '));
   activeSymbols = DEFAULT_SYMBOLS.slice();
   activeSymbols.forEach(function(s) { if (!symbolState[s]) initSymbol(s); });
   isRunning = true;
 
-  // Auto-start del PA bot
+  // Auto-start PA bot
   console.log('Auto-starting PA Bot on: ' + PA_SYMBOLS.join(', '));
   paRunning = true;
 
+  // Auto-start Macro Monitor
+  console.log('Auto-starting Macro Monitor');
+  macroRunning = true;
+
   setTimeout(async function() {
-    // Prima inizializzazione trend bot
+    // 1. Trend bot init
     for (var i = 0; i < activeSymbols.length; i++) {
       try { await fetchCandles(activeSymbols[i]); }
       catch(e) { console.error(activeSymbols[i], e.message); }
@@ -1258,7 +1794,7 @@ app.listen(PORT, function() {
     lastLoopTime = Date.now();
     console.log('Trend EA auto-started');
 
-    // Poi avvio PA bot (prima fetch iniziale, poi loop regolare)
+    // 2. PA bot init
     for (var j = 0; j < PA_SYMBOLS.length; j++) {
       try { await fetchPAD1(PA_SYMBOLS[j]); }
       catch(e) { console.error('PA init ' + PA_SYMBOLS[j] + ': ' + e.message); }
@@ -1268,9 +1804,15 @@ app.listen(PORT, function() {
     startPALoop();
     console.log('PA Bot auto-started');
 
-    await tgSend('<b>ST-EA v3.2 Online — Dual Bot</b>' +
+    // 3. Macro Monitor init
+    startMacroLoop();
+    startBriefScheduler();
+    console.log('Macro Monitor auto-started');
+
+    await tgSend('<b>ST-EA v3.3 Online — Triple Bot</b>' +
                  '\n<b>Trend M15:</b> ' + activeSymbols.join(', ') +
                  '\n<b>PA D1:</b> ' + PA_SYMBOLS.join(', ') +
-                 '\nDati: TwelveData + OKX + Yahoo fallback');
+                 '\n<b>Macro:</b> ' + MACRO_INSTRUMENTS.length + ' strumenti monitorati' +
+                 '\nBriefing settimanale: lunedi ' + MACRO_BRIEF_HOUR + ':00 UTC');
   }, 5000);
 });
