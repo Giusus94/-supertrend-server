@@ -6,17 +6,13 @@ app.use(express.json());
 app.use(express.static('public'));
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ST-EA Server v3.4 -- Triple Bot Edition
+// ST-EA Server -- Triple Bot Edition
 //
 // Tre bot operativi indipendenti:
 //   1. Trend Bot M15  -- triplo SuperTrend con flip 3/3 stretto + ADX min
 //   2. PA Bot D1      -- pattern candlestick + trend D1/H4 + S/R
 //   3. ORB Bot        -- Opening Range Breakout su 5 indici globali
 //                       (US500, US100, GER40, UK100, JP225)
-//
-// Cambiamento v3.4 vs v3.3: il Macro Monitor (alert + briefing passivi) e'
-// stato sostituito dall'ORB Bot, un terzo bot operativo che genera segnali
-// di breakout sui mercati cash di NY, EU, UK e Tokyo.
 // ══════════════════════════════════════════════════════════════════════════════
 
 const PORT        = process.env.PORT       || 3000;
@@ -586,7 +582,7 @@ app.get('/api/candles', function(req, res) {
 
 app.get('/api/version', function(req, res) {
   res.json({
-    version: 'ST-EA v3.4 (Triple Bot: Trend + PA + ORB) -- Macro replaced by ORB',
+    version: 'ST-EA Triple Bot: Trend + PA + ORB',
     trendBot: {
       enabled: true,
       running: isRunning,
@@ -1087,9 +1083,8 @@ app.post('/api/pa-stop', async function(req, res) {
 // ██████████████████████████████████████████████████████████████████████████████
 // ══════════════════════════════════════════════════════════════════════════════
 //
-// Sostituisce il Macro Monitor della v3.3. E' un bot operativo (non solo alert)
-// che monitora 5 indici globali e genera segnali su breakout dell'Opening Range
-// dei primi 30 minuti dell'apertura cash di ogni mercato.
+// Bot operativo che monitora 5 indici globali e genera segnali su breakout
+// dell'Opening Range dei primi 30 minuti dell'apertura cash di ogni mercato.
 //
 // Strategia:
 //   1. All'apertura cash di ogni mercato (NY, EU, UK, JP), costruisce l'OR
@@ -1670,7 +1665,7 @@ app.post('/api/orb-stop', async function(req, res) {
 // AVVIO SERVER (auto-start tutti e 3 i bot)
 // ══════════════════════════════════════════════════════════════════════════════
 app.listen(PORT, function() {
-  console.log('ST-EA v3.4 Server on port ' + PORT);
+  console.log('ST-EA Server on port ' + PORT);
   console.log('TG: ' + (TG_TOKEN ? 'OK' : '--') + ' | TD: ' + (TD_KEY ? 'OK' : '--'));
   console.log('Trend Bot Symbols: ' + DEFAULT_SYMBOLS.join(', '));
   console.log('PA Bot Symbols: ' + PA_SYMBOLS.join(', '));
@@ -1724,10 +1719,9 @@ app.listen(PORT, function() {
     startOrbLoop();
     console.log('ORB Bot auto-started');
 
-    await tgSend('<b>ST-EA v3.4 Online -- Triple Bot</b>' +
+    await tgSend('<b>ST-EA Online -- Triple Bot</b>' +
                  '\n<b>Trend M15:</b> ' + activeSymbols.join(', ') +
                  '\n<b>PA D1:</b> ' + PA_SYMBOLS.join(', ') +
-                 '\n<b>ORB:</b> ' + ORB_SYMBOLS.join(', ');
-               
+                 '\n<b>ORB:</b> ' + ORB_SYMBOLS.join(', '));
   }, 5000);
 });
