@@ -6,16 +6,17 @@ app.use(express.json());
 app.use(express.static('public'));
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ST-EA Server v3 — Triplo SuperTrend Minimal
+// ST-EA Server v3.4 -- Triple Bot Edition
 //
-// Allineato all'indicator Pine ST-EA_M15_Indicator:
-//   - Triplo SuperTrend (2.0/7, 3.0/14, 4.5/21) con flip 3/3 stretto
-//   - Filtro ADX minimo (default 10)
-//   - SL/TP suggeriti per contesto nella notifica Telegram
-//   - Niente RSI, MACD, session, H1/H4, order blocks, FVG, pattern D1
+// Tre bot operativi indipendenti:
+//   1. Trend Bot M15  -- triplo SuperTrend con flip 3/3 stretto + ADX min
+//   2. PA Bot D1      -- pattern candlestick + trend D1/H4 + S/R
+//   3. ORB Bot        -- Opening Range Breakout su 5 indici globali
+//                       (US500, US100, GER40, UK100, JP225)
 //
-// La logica e intenzionalmente semplice per ridurre falsi segnali dovuti
-// a filtri troppo complessi che non avevano dimostrato utilita nei backtest.
+// Cambiamento v3.4 vs v3.3: il Macro Monitor (alert + briefing passivi) e'
+// stato sostituito dall'ORB Bot, un terzo bot operativo che genera segnali
+// di breakout sui mercati cash di NY, EU, UK e Tokyo.
 // ══════════════════════════════════════════════════════════════════════════════
 
 const PORT        = process.env.PORT       || 3000;
@@ -25,24 +26,19 @@ const TD_KEY      = process.env.TD_KEY     || '';
 const RENDER_URL  = process.env.RENDER_URL || '';
 
 // ══════════════════════════════════════
-// CONFIGURAZIONE SIMBOLI
+// CONFIGURAZIONE SIMBOLI (Trend + PA)
 // ══════════════════════════════════════
 const CRYPTO = ['BTCUSD','ETHUSD','SOLUSD','XRPUSD','BNBUSD','ADAUSD'];
 const METALS = ['XAUUSD','XAGUSD','WTIUSD','BRNUSD','USOIL','UKOIL'];
 const FOREX  = ['EURUSD','GBPUSD','USDJPY','GBPJPY','AUDUSD','USDCAD','USDCHF','NZDUSD'];
 
-// Configurazione per-simbolo: SL mult e ADX min ottimizzati per asset class.
-// Questi valori riflettono le conclusioni dei test: niente RSI/MACD/session,
-// solo SuperTrend flip + filtro ADX + risk management adeguato alla volatilita.
 const SYMBOL_CONFIG = {
-  // Metalli — volatili, SL largo, ADX moderato
   XAUUSD: { slMult: 1.8, rr: 2.0, adxMin: 10, allowLong: true, allowShort: false },
   XAGUSD: { slMult: 1.8, rr: 2.0, adxMin: 10, allowLong: true, allowShort: false },
   WTIUSD: { slMult: 1.8, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true  },
   BRNUSD: { slMult: 1.8, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true  },
   USOIL:  { slMult: 1.8, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true  },
   UKOIL:  { slMult: 1.8, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true  },
-  // Forex — volatilita media, SL piu stretto
   EURUSD: { slMult: 1.5, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true  },
   GBPUSD: { slMult: 1.5, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true  },
   USDJPY: { slMult: 1.5, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true  },
@@ -51,7 +47,6 @@ const SYMBOL_CONFIG = {
   USDCAD: { slMult: 1.5, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true  },
   USDCHF: { slMult: 1.5, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true  },
   NZDUSD: { slMult: 1.5, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true  },
-  // Crypto — volatilita alta, SL largo, ADX piu alto
   BTCUSD: { slMult: 2.0, rr: 2.0, adxMin: 15, allowLong: true, allowShort: true  },
   ETHUSD: { slMult: 2.0, rr: 2.0, adxMin: 15, allowLong: true, allowShort: true  },
   SOLUSD: { slMult: 2.0, rr: 2.0, adxMin: 15, allowLong: true, allowShort: true  },
@@ -112,7 +107,7 @@ function isValidPrice(sym, price) {
 }
 
 // ══════════════════════════════════════
-// STATO GLOBALE
+// STATO GLOBALE TREND BOT
 // ══════════════════════════════════════
 var ENV_SYMBOLS  = process.env.DEFAULT_SYMBOLS ? process.env.DEFAULT_SYMBOLS.split(',').map(function(s){return s.trim();}) : null;
 var ENV_REFRESH  = parseInt(process.env.REFRESH_SEC) || 300;
@@ -140,7 +135,7 @@ function initSymbol(s) {
 DEFAULT_SYMBOLS.forEach(initSymbol);
 
 // ══════════════════════════════════════
-// INDICATORI TECNICI
+// INDICATORI TECNICI (condivisi)
 // ══════════════════════════════════════
 function calcATR(c, p) {
   var t = [];
@@ -151,9 +146,6 @@ function calcATR(c, p) {
   return a;
 }
 
-// SuperTrend: ritorna array di { dir: +1/-1, line: number } per ogni candela.
-// dir = +1 quando il prezzo e sopra la banda inferiore (bullish)
-// dir = -1 quando il prezzo e sotto la banda superiore (bearish)
 function calcST(c, period, mult) {
   var atrs = calcATR(c, period);
   var res = [], dir = 1, pu = 0, pl = 0;
@@ -176,7 +168,6 @@ function calcST(c, period, mult) {
   return res;
 }
 
-// ADX: misura la forza del trend (non la direzione). Sopra 25 = trend forte.
 function calcADX(c, period) {
   period = period || 14;
   if (c.length < period * 2) return 0;
@@ -206,7 +197,15 @@ function calcADX(c, period) {
   return dxArr.slice(-period).reduce(function(a,b){return a+b;}, 0) / Math.min(period, dxArr.length);
 }
 
-// Lot size calculator (mantenuto per compatibilita con la dashboard)
+function calcEMA(c, p) {
+  if (c.length < p) return c[c.length-1].close;
+  var k = 2/(p+1), ema = 0;
+  for (var i = 0; i < p; i++) ema += c[i].close;
+  ema = ema/p;
+  for (var j = p; j < c.length; j++) ema = c[j].close*k + ema*(1-k);
+  return ema;
+}
+
 function calcLotSize(sym, balance, riskPct, slDist) {
   var riskAmt = balance * (riskPct / 100);
   var pipVal = PIP_VALUE[sym] || 10;
@@ -228,9 +227,9 @@ function getNYTime() {
 function isMarketOpen(sym) {
   if (CRYPTO.indexOf(sym) !== -1) return true;
   var ny = getNYTime();
-  if (ny.day === 6) return false;                   // sabato chiuso
-  if (ny.day === 0 && ny.time < 1700) return false; // dom prima delle 17:00
-  if (ny.day === 5 && ny.time >= 1700) return false;// ven dopo le 17:00
+  if (ny.day === 6) return false;
+  if (ny.day === 0 && ny.time < 1700) return false;
+  if (ny.day === 5 && ny.time >= 1700) return false;
   return true;
 }
 
@@ -314,12 +313,8 @@ async function fetchCandles(sym) {
   var st = symbolState[sym];
   if (!st) return;
   if (CRYPTO.indexOf(sym) !== -1) {
-    // Crypto: OKX e' eccellente e gratuito, restiamo qui
     await fetchOKX(sym, '15m', 200, 'candles', st);
   } else {
-    // Forex e metalli: Twelve Data come primario (piano a pagamento attivo).
-    // Yahoo Finance resta come fallback automatico se Twelve Data fallisce
-    // per qualunque ragione (rate limit, downtime, simbolo non disponibile).
     var ok = await fetchTD(sym, '15min', 200, 'candles', st);
     if (!ok) {
       console.log(sym + ' TD failed, fallback to Yahoo');
@@ -345,18 +340,8 @@ async function tgSend(text) {
     return (await res.json()).ok;
   } catch(e) { return false; }
 }
-
 // ══════════════════════════════════════════════════════════════════════════════
-// GENERAZIONE SEGNALE — cuore dell'allineamento con l'indicator Pine
-// ══════════════════════════════════════════════════════════════════════════════
-// Questa funzione replica esattamente la logica dell'indicator:
-//   1. Calcola i tre SuperTrend (2.0/7, 3.0/14, 4.5/21)
-//   2. Conta quanti sono bullish (bv) e quanti bearish (sv)
-//   3. Cerca il flip 3/3 stretto: richiede che sulla candela precedente
-//      almeno 2/3 fossero nella direzione opposta
-//   4. Accetta anche flip avvenuti una candela fa se il consenso 3/3 regge
-//   5. Filtro ADX minimo per evitare mercato piatto
-//   6. Rispetta allowLong/allowShort configurati per simbolo
+// GENERAZIONE SEGNALE TREND BOT
 // ══════════════════════════════════════════════════════════════════════════════
 async function checkSignal(sym, cooldownMin) {
   try {
@@ -366,14 +351,11 @@ async function checkSignal(sym, cooldownMin) {
     var cfg = getConfig(sym);
     cooldownMin = cooldownMin || 15;
 
-    // Cooldown: evita spam di segnali ravvicinati sulla stessa direzione
     if (Date.now() - st.lastSignalTime < cooldownMin * 60 * 1000) return;
 
-    // Mercato aperto?
     var mStatus = getMarketStatus(sym);
     if (mStatus) { st.stats.lastFilter = '[CHIUSO] ' + mStatus; return; }
 
-    // ── CALCOLO TRIPLO SUPERTREND ──
     var st1 = calcST(st.candles, 7, 2.0);
     var st2 = calcST(st.candles, 14, 3.0);
     var st3 = calcST(st.candles, 21, 4.5);
@@ -382,43 +364,35 @@ async function checkSignal(sym, cooldownMin) {
       return;
     }
 
-    // Direzione attuale (candela corrente)
     var b1 = st1[st1.length-1].dir === 1;
     var b2 = st2[st2.length-1].dir === 1;
     var b3 = st3[st3.length-1].dir === 1;
     var bv = (b1?1:0) + (b2?1:0) + (b3?1:0);
     var sv = 3 - bv;
 
-    // Direzione sulla candela -1
     var b1p = st1.length >= 2 ? st1[st1.length-2].dir === 1 : b1;
     var b2p = st2.length >= 2 ? st2[st2.length-2].dir === 1 : b2;
     var b3p = st3.length >= 2 ? st3[st3.length-2].dir === 1 : b3;
     var bvPrev = (b1p?1:0) + (b2p?1:0) + (b3p?1:0);
     var svPrev = 3 - bvPrev;
 
-    // Direzione sulla candela -2
     var b1p2 = st1.length >= 3 ? st1[st1.length-3].dir === 1 : b1p;
     var b2p2 = st2.length >= 3 ? st2[st2.length-3].dir === 1 : b2p;
     var b3p2 = st3.length >= 3 ? st3[st3.length-3].dir === 1 : b3p;
     var bvPrev2 = (b1p2?1:0) + (b2p2?1:0) + (b3p2?1:0);
     var svPrev2 = 3 - bvPrev2;
 
-    // ── RILEVAMENTO FLIP ──
-    // Flip stretto: serve che almeno 2/3 fossero opposti sulla candela prima
     var flippedBuy  = bv === 3 && svPrev >= 2;
     var flippedSell = sv === 3 && bvPrev >= 2;
 
-    // Accetta flip avvenuti anche una candela fa, purche il consenso 3/3 regga
     var recentFlipBuy  = flippedBuy  || (bv === 3 && svPrev2 >= 2);
     var recentFlipSell = flippedSell || (sv === 3 && bvPrev2 >= 2);
 
-    // Nessun flip recente? niente segnale
     if (!recentFlipBuy && !recentFlipSell) {
       st.stats.lastFilter = 'No flip (ST: ' + bv + 'B/' + sv + 'S)';
       return;
     }
 
-    // ── DIREZIONE FINALE ──
     var dir = null;
     if (recentFlipBuy && cfg.allowLong)   dir = 'BUY';
     if (recentFlipSell && cfg.allowShort) dir = 'SELL';
@@ -428,20 +402,17 @@ async function checkSignal(sym, cooldownMin) {
       return;
     }
 
-    // Evita doppio invio stessa direzione in successione rapida
     if (dir === st.lastDir) {
       st.stats.lastFilter = 'Cooldown: ' + dir + ' gia inviato';
       return;
     }
 
-    // ── FILTRO ADX ──
     var adx = calcADX(st.candles, 14);
     if (adx < cfg.adxMin) {
       st.stats.lastFilter = 'ADX ' + adx.toFixed(1) + ' < ' + cfg.adxMin + ' (mercato piatto)';
       return;
     }
 
-    // ── CALCOLO SL/TP SUGGERITI ──
     var price = st.candles[st.candles.length-1].close;
     var dec = price > 1000 ? 2 : price > 10 ? 3 : 4;
     var atrArr = calcATR(st.candles, 14);
@@ -450,7 +421,6 @@ async function checkSignal(sym, cooldownMin) {
     var sl = dir === 'BUY' ? price - slDist : price + slDist;
     var tp = dir === 'BUY' ? price + slDist * cfg.rr : price - slDist * cfg.rr;
 
-    // ── INVIO NOTIFICA TELEGRAM ──
     var name = SYMBOL_NAMES[sym] || sym;
     var nl = '\n';
     var time = new Date().toUTCString().slice(0, 25);
@@ -486,7 +456,7 @@ async function checkSignal(sym, cooldownMin) {
 }
 
 // ══════════════════════════════════════
-// LOOP PRINCIPALE
+// LOOP TREND BOT
 // ══════════════════════════════════════
 function startLoop(refreshSec, cooldown) {
   refreshSec = refreshSec || ENV_REFRESH;
@@ -514,7 +484,7 @@ function startLoop(refreshSec, cooldown) {
 }
 
 // ══════════════════════════════════════
-// KEEPALIVE + WATCHDOG
+// KEEPALIVE + WATCHDOG TREND
 // ══════════════════════════════════════
 if (RENDER_URL) {
   setInterval(async function() {
@@ -534,7 +504,7 @@ setInterval(async function() {
 }, 5 * 60 * 1000);
 
 // ══════════════════════════════════════
-// API ENDPOINTS
+// API ENDPOINTS TREND BOT
 // ══════════════════════════════════════
 app.get('/api/status', function(req, res) {
   var ps = {};
@@ -594,13 +564,29 @@ app.get('/api/test', async function(req, res) {
   res.json({ ok: ok });
 });
 
-// Endpoint diagnostico per verificare con certezza quale versione del server
-// sta effettivamente girando in produzione. Utile per evitare confusioni
-// di deploy: chiamando questo URL si vede subito la versione attiva.
+app.post('/api/test', async function(req, res) {
+  var ok = await tgSend('ST-EA Minimal - Test OK!\nSimboli: ' + activeSymbols.join(', '));
+  res.json({ ok: ok });
+});
+
+app.get('/api/candles/:symbol', function(req, res) {
+  var st = symbolState[req.params.symbol];
+  if (!st) return res.json({ candles: [], candlesH1: [], candlesM5: [] });
+  res.json({
+    candles: st.candles.slice(-60),
+    candlesH1: [],
+    candlesM5: []
+  });
+});
+
+app.get('/api/candles', function(req, res) {
+  var st = symbolState[activeSymbols[0]] || { candles: [] };
+  res.json({ candles: st.candles.slice(-60), candlesH1: [], candlesM5: [] });
+});
+
 app.get('/api/version', function(req, res) {
   res.json({
-    version: 'ST-EA v3.3.1 (Triple Bot: Trend + PA + Macro — Macro hotfix)',
-    hotfix: 'v3.3.1 rimuove Twelve Data dal Macro Monitor (ticker sbagliati causavano dati corrotti). Ora solo Yahoo Finance con validazione range prezzi.',
+    version: 'ST-EA v3.4 (Triple Bot: Trend + PA + ORB) -- Macro replaced by ORB',
     trendBot: {
       enabled: true,
       running: isRunning,
@@ -616,78 +602,34 @@ app.get('/api/version', function(req, res) {
       logic: 'candle patterns + D1/H4 trend alignment + S/R proximity',
       cooldownHours: PA_COOLDOWN_HOURS
     },
-    macroMonitor: {
+    orbBot: {
       enabled: true,
-      running: macroRunning,
-      instruments: MACRO_INSTRUMENTS.length,
-      warnPct: MACRO_WARN_PCT,
-      alertPct: MACRO_ALERT_PCT,
-      weeklyBrief: MACRO_BRIEF_ENABLED,
-      briefDay: MACRO_BRIEF_DAY,
-      briefHourUTC: MACRO_BRIEF_HOUR,
-      dataSource: 'Yahoo Finance only with price range validation'
+      running: orbRunning,
+      symbols: ORB_SYMBOLS,
+      timeframe: 'M15 intraday',
+      logic: 'Opening Range Breakout (30min) + EMA20 trailing exit',
+      orMinutes: 30,
+      tradingWindowMinutes: 240
     },
     dataSources: {
       forex: 'TwelveData (primary) + Yahoo (fallback)',
       metals: 'TwelveData (primary) + Yahoo (fallback)',
-      crypto: 'OKX (only)',
-      indices_macro: 'Yahoo Finance only (validated)'
+      crypto: 'OKX',
+      indices_orb: 'TwelveData (primary) + Yahoo (fallback)'
     },
     uptimeSec: Math.floor(process.uptime())
   });
 });
-
-app.post('/api/test', async function(req, res) {
-  var ok = await tgSend('ST-EA Minimal - Test OK!\nSimboli: ' + activeSymbols.join(', '));
-  res.json({ ok: ok });
-});
-
-app.get('/api/candles/:symbol', function(req, res) {
-  var st = symbolState[req.params.symbol];
-  if (!st) return res.json({ candles: [], candlesH1: [], candlesM5: [] });
-  res.json({
-    candles: st.candles.slice(-60),
-    candlesH1: [],  // compatibilita dashboard
-    candlesM5: []   // compatibilita dashboard
-  });
-});
-
-app.get('/api/candles', function(req, res) {
-  var st = symbolState[activeSymbols[0]] || { candles: [] };
-  res.json({ candles: st.candles.slice(-60), candlesH1: [], candlesM5: [] });
-});
-
 // ══════════════════════════════════════════════════════════════════════════════
 // ██████████████████████████████████████████████████████████████████████████████
-// PA BOT D1 — Price Action su timeframe giornaliero
+// PA BOT D1 -- Price Action su timeframe giornaliero
 // ██████████████████████████████████████████████████████████████████████████████
 // ══════════════════════════════════════════════════════════════════════════════
-//
-// Modulo autonomo che gira in parallelo al trend bot M15. Monitora pattern
-// di candele su timeframe D1 (giornaliero) e segnala setup di price action
-// confermati da allineamento trend D1 + H4 e prossimita a livelli S/R.
-//
-// Caratteristiche:
-//   - Timeframe D1 per pattern, H4 per trend di conferma
-//   - Pattern: Morning Star, Evening Star, Engulfing, Pin Bar
-//   - Richiede pattern forte (strength >=3) + allineamento D1 e H4 + S/R
-//   - Cooldown 24h per simbolo per evitare spam di segnali giornalieri
-//   - Dati: Twelve Data (primario) + Yahoo (fallback) + OKX (crypto)
-//   - ADX differenziato per asset class come il trend bot
-//   - Notifiche Telegram con tag [PA-EA] distintivo
-//   - Loop ogni ora (3600 sec), sufficiente per timeframe D1
-//
-// Architettura: modulo autonomo con stato separato (paState) e loop separato
-// (paTimer). Condivide solo le funzioni di calcolo indicatori (calcATR,
-// calcEMA, calcADX, calcSR) con il trend bot, nel rispetto del principio DRY.
-// ══════════════════════════════════════════════════════════════════════════════
 
-// Configurazione PA Bot: simboli monitorati e cooldown
 var PA_SYMBOLS = process.env.PA_SYMBOLS ? process.env.PA_SYMBOLS.split(',').map(function(s){return s.trim();}) : DEFAULT_SYMBOLS.slice();
 var PA_COOLDOWN_HOURS = parseInt(process.env.PA_COOLDOWN_HOURS) || 24;
 var PA_REFRESH_SEC = parseInt(process.env.PA_REFRESH_SEC) || 3600;
 
-// Stato per ciascun simbolo PA
 var paState = {};
 var paRunning = false;
 var paTimer = null;
@@ -699,33 +641,18 @@ function initPA(s) {
     candlesH4: [],
     lastDir: null,
     lastSignalTime: 0,
-    stats: {
-      total: 0,
-      buys: 0,
-      sells: 0,
-      lastSignal: '--',
-      lastPattern: '--'
-    }
+    stats: { total: 0, buys: 0, sells: 0, lastSignal: '--', lastPattern: '--' }
   };
 }
 PA_SYMBOLS.forEach(initPA);
-
-// ══════════════════════════════════════
-// FETCH DATI D1 E H4 PER PA BOT
-// ══════════════════════════════════════
-// Segue la stessa logica del trend bot: Twelve Data primario, Yahoo fallback,
-// OKX per crypto. L'unica differenza e che qui scarichiamo candele D1 e H4
-// invece che M15, e popoliamo paState invece che symbolState.
 
 async function fetchPAD1(sym) {
   var st = paState[sym];
   if (!st) return;
 
-  // Crypto: usa OKX per D1 e 4H
   if (CRYPTO.indexOf(sym) !== -1) {
     try {
       var pair = sym.replace('USD', '-USDT');
-      // D1
       var urlD1 = 'https://www.okx.com/api/v5/market/candles?instId=' + pair + '&bar=1D&limit=100';
       var resD1 = await fetch(urlD1);
       var dataD1 = await resD1.json();
@@ -734,7 +661,6 @@ async function fetchPAD1(sym) {
           return { open: +k[1], high: +k[2], low: +k[3], close: +k[4], vol: +k[5] };
         });
       }
-      // H4
       var urlH4 = 'https://www.okx.com/api/v5/market/candles?instId=' + pair + '&bar=4H&limit=60';
       var resH4 = await fetch(urlH4);
       var dataH4 = await resH4.json();
@@ -749,11 +675,9 @@ async function fetchPAD1(sym) {
     return;
   }
 
-  // Forex e metalli: Twelve Data primario
   if (TD_KEY) {
     try {
       var mapped = TD_MAP[sym] || sym;
-      // D1
       var urlTD1 = 'https://api.twelvedata.com/time_series?symbol=' + encodeURIComponent(mapped) +
                    '&interval=1day&outputsize=100&apikey=' + TD_KEY;
       var resTD1 = await fetch(urlTD1);
@@ -768,7 +692,6 @@ async function fetchPAD1(sym) {
       }
       await new Promise(function(r) { setTimeout(r, 500); });
 
-      // H4
       var urlTH4 = 'https://api.twelvedata.com/time_series?symbol=' + encodeURIComponent(mapped) +
                    '&interval=4h&outputsize=60&apikey=' + TD_KEY;
       var resTH4 = await fetch(urlTH4);
@@ -786,12 +709,10 @@ async function fetchPAD1(sym) {
     }
   }
 
-  // Fallback Yahoo se Twelve Data ha fallito per uno o entrambi i timeframe
   if (!st.candlesD1.length || !st.candlesH4.length) {
     try {
       var ticker = YAHOO_MAP[sym];
       if (ticker) {
-        // D1 se mancante
         if (!st.candlesD1.length) {
           var urlYD1 = 'https://query2.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(ticker) +
                        '?interval=1d&range=6mo';
@@ -815,7 +736,6 @@ async function fetchPAD1(sym) {
             if (parsed.length > 10) st.candlesD1 = parsed;
           }
         }
-        // H4 ricostruito da H1 di Yahoo (che non ha H4 nativo)
         if (!st.candlesH4.length) {
           await new Promise(function(r) { setTimeout(r, 500); });
           var urlYH4 = 'https://query2.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(ticker) +
@@ -837,7 +757,6 @@ async function fetchPAD1(sym) {
                 });
               }
             }
-            // Raggruppa H1 in H4 (ogni 4 candele)
             var h4cands = [];
             for (var k = 0; k + 3 < h1cands.length; k += 4) {
               var g = h1cands.slice(k, k + 4);
@@ -863,14 +782,6 @@ async function fetchPAD1(sym) {
   console.log('PA ' + sym + ' D1:' + srcD1 + '/' + st.candlesD1.length + ' H4:' + srcH4 + '/' + st.candlesH4.length);
 }
 
-// ══════════════════════════════════════
-// TREND FILTERS D1 E H4
-// ══════════════════════════════════════
-// getD1Trend usa EMA50 su D1 come riferimento di lungo periodo.
-// getH4Trend usa EMA20 su H4 come riferimento di medio periodo.
-// Un pattern D1 e valido solo se entrambi i trend sono allineati nella
-// direzione del pattern (filtro anti-controtrend).
-
 function getD1Trend(candles) {
   if (!candles || candles.length < 50) return null;
   var ema50 = calcEMA(candles, 50);
@@ -884,13 +795,6 @@ function getH4Trend(candles) {
   var last = candles[candles.length-1].close;
   return last > ema20 ? 'BUY' : 'SELL';
 }
-
-// ══════════════════════════════════════
-// PATTERN DETECTION — candlestick D1
-// ══════════════════════════════════════
-// Strict pattern detection: solo setup di alta qualita contano.
-// Richiediamo che la candela corrente abbia range > 70% della media
-// delle ultime 10 candele, cosi filtriamo giorni di basso movimento.
 
 function detectPAPatterns(candles) {
   if (candles.length < 6) return [];
@@ -911,23 +815,18 @@ function detectPAPatterns(candles) {
   var upper0 = c0.high - Math.max(c0.open, c0.close);
   var lower0 = Math.min(c0.open, c0.close) - c0.low;
 
-  // Range medio delle ultime 10 candele per filtrare giorni piatti
   var avgRange = 0;
   for (var i = len-10; i < len; i++) {
     if (i >= 0) avgRange += (candles[i].high - candles[i].low);
   }
   avgRange = avgRange / 10;
 
-  // Candela troppo piccola: nessun pattern significativo
   if (range0 < avgRange * 0.7) return [];
 
-  // Contesto: serve una candela a distanza 5 per valutare se c'era trend precedente
   var c5 = candles[len-6];
   var priorDown = c5 && c5.close > c2.open;
   var priorUp = c5 && c5.close < c2.open;
 
-  // MORNING STAR: 3 candele dopo downtrend
-  // c2 bearish forte, c1 doji/piccola, c0 bullish forte che chiude sopra meta di c2
   if (priorDown && !isBull2 && body2 > avgRange * 0.5 &&
       body1 < range1 * 0.25 && range1 > 0 &&
       isBull0 && body0 > avgRange * 0.5 &&
@@ -935,7 +834,6 @@ function detectPAPatterns(candles) {
     patterns.push({ name: 'Morning Star', dir: 'BUY', strength: 4 });
   }
 
-  // EVENING STAR: 3 candele dopo uptrend (speculare a Morning Star)
   if (priorUp && isBull2 && body2 > avgRange * 0.5 &&
       body1 < range1 * 0.25 && range1 > 0 &&
       !isBull0 && body0 > avgRange * 0.5 &&
@@ -943,7 +841,6 @@ function detectPAPatterns(candles) {
     patterns.push({ name: 'Evening Star', dir: 'SELL', strength: 4 });
   }
 
-  // BULLISH ENGULFING: c0 bullish che engloba completamente c1 bearish dopo downtrend
   var priorDown2 = !isBull1 && !isBull2;
   if (priorDown2 && isBull0 &&
       c0.open < c1.close && c0.close > c1.open &&
@@ -951,7 +848,6 @@ function detectPAPatterns(candles) {
     patterns.push({ name: 'Bullish Engulfing', dir: 'BUY', strength: 3 });
   }
 
-  // BEARISH ENGULFING: speculare a Bullish Engulfing
   var priorUp2 = isBull1 && isBull2;
   if (priorUp2 && !isBull0 &&
       c0.open > c1.close && c0.close < c1.open &&
@@ -959,12 +855,10 @@ function detectPAPatterns(candles) {
     patterns.push({ name: 'Bearish Engulfing', dir: 'SELL', strength: 3 });
   }
 
-  // PIN BAR BULLISH: wick inferiore 3x body, upper wick piccolo
   if (lower0 > body0 * 3 && upper0 < body0 * 0.5 && body0 > 0 && range0 > avgRange * 0.8) {
     patterns.push({ name: 'Pin Bar Bull', dir: 'BUY', strength: 3 });
   }
 
-  // PIN BAR BEARISH: speculare
   if (upper0 > body0 * 3 && lower0 < body0 * 0.5 && body0 > 0 && range0 > avgRange * 0.8) {
     patterns.push({ name: 'Pin Bar Bear', dir: 'SELL', strength: 3 });
   }
@@ -972,29 +866,20 @@ function detectPAPatterns(candles) {
   return patterns;
 }
 
-// ══════════════════════════════════════
-// S/R PROXIMITY PER PA
-// ══════════════════════════════════════
-// Funzione locale per calcolare livelli S/R dalle candele D1
-// (simile a calcSR del trend bot ma ottimizzata per D1)
-
 function calcPASR(candles, lookback) {
   lookback = lookback || 60;
   var r = candles.slice(-lookback);
   var levels = [];
   for (var i = 2; i < r.length - 2; i++) {
-    // Swing high
     if (r[i].high > r[i-1].high && r[i].high > r[i-2].high &&
         r[i].high > r[i+1].high && r[i].high > r[i+2].high) {
       levels.push({ price: r[i].high, type: 'R', strength: 1 });
     }
-    // Swing low
     if (r[i].low < r[i-1].low && r[i].low < r[i-2].low &&
         r[i].low < r[i+1].low && r[i].low < r[i+2].low) {
       levels.push({ price: r[i].low, type: 'S', strength: 1 });
     }
   }
-  // Consolidamento livelli vicini (entro 0.4%)
   var merged = [];
   for (var k = 0; k < levels.length; k++) {
     var lv = levels[k];
@@ -1019,29 +904,13 @@ function isPANearSR(price, srLevels, atr) {
   return false;
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// CHECK PA SIGNAL — il cuore del PA Bot
-// ══════════════════════════════════════════════════════════════════════════════
-// Processo di validazione in cascata: se un controllo fallisce, il segnale
-// non viene emesso. Questo garantisce che solo setup con TUTTI i filtri
-// passati arrivino fino all'utente via Telegram.
-// 1. Cooldown 24h
-// 2. Mercato aperto
-// 3. Pattern rilevato con strength >= 3
-// 4. Trend D1 allineato
-// 5. Trend H4 allineato
-// 6. Prezzo vicino a livello S/R
-// 7. Direzione diversa dall'ultimo segnale (evita duplicati direzionali)
-
 async function checkPASignal(sym) {
   try {
     var st = paState[sym];
     if (!st || !st.candlesD1.length || !paRunning) return;
 
-    // 1. Cooldown
     if (Date.now() - st.lastSignalTime < PA_COOLDOWN_HOURS * 60 * 60 * 1000) return;
 
-    // 2. Mercato aperto
     var ms = getMarketStatus(sym);
     if (ms) {
       st.stats.lastPattern = '[CHIUSO] ' + ms;
@@ -1049,15 +918,12 @@ async function checkPASignal(sym) {
     }
 
     var c = st.candlesD1;
-
-    // 3. Pattern detection
     var patterns = detectPAPatterns(c);
     if (!patterns.length) {
       st.stats.lastPattern = 'Nessun pattern';
       return;
     }
 
-    // Filtra solo pattern forti (>= 3)
     var strong = patterns.filter(function(p) { return p.strength >= 3; });
     if (!strong.length) {
       st.stats.lastPattern = 'Pattern deboli';
@@ -1067,21 +933,18 @@ async function checkPASignal(sym) {
     strong.sort(function(a, b) { return b.strength - a.strength; });
     var best = strong[0];
 
-    // 4. D1 trend
     var d1Trend = getD1Trend(c);
     if (d1Trend && d1Trend !== best.dir) {
       st.stats.lastPattern = 'D1 trend contro (' + d1Trend + ' vs ' + best.dir + ')';
       return;
     }
 
-    // 5. H4 trend
     var h4Trend = getH4Trend(st.candlesH4);
     if (h4Trend && h4Trend !== best.dir) {
       st.stats.lastPattern = 'H4 trend contro (' + h4Trend + ')';
       return;
     }
 
-    // 6. Evita ripetizione stessa direzione
     if (best.dir === st.lastDir) {
       st.stats.lastPattern = 'Stessa direzione precedente';
       return;
@@ -1092,27 +955,21 @@ async function checkPASignal(sym) {
     var atrArr = calcATR(c, 14);
     var atr = atrArr[atrArr.length-1] || 0;
 
-    // 7. Vicinanza a S/R
     var srLevels = calcPASR(c, 60);
     if (!isPANearSR(price, srLevels, atr)) {
       st.stats.lastPattern = best.name + ' ma non su S/R';
       return;
     }
 
-    // Tutti i filtri passati: calcolo SL/TP e invio notifica
-    // SL basato su ATR D1 moltiplicato per 2.0 (pattern D1 richiede piu respiro)
-    // Floor minimo 0.8% per evitare SL ridicolmente stretti in giorni piatti
     var slDist = Math.max(atr * 2.0, price * 0.008);
-    var tpDist = slDist * 2.5; // Risk/Reward 1:2.5
+    var tpDist = slDist * 2.5;
     var sl = (best.dir === 'BUY' ? price - slDist : price + slDist).toFixed(dec);
     var tp = (best.dir === 'BUY' ? price + tpDist : price - tpDist).toFixed(dec);
 
-    // Lot size su diversi bankroll al 3% rischio
     var lots = [100, 500, 1000].map(function(b) {
       return b + 'EUR: ' + calcLotSize(sym, b, 3, slDist) + ' lot';
     }).join(' | ');
 
-    // S/R nelle vicinanze per contesto nel messaggio
     var nearbySR = srLevels.filter(function(l) { return Math.abs(l.price - price) < atr * 3; })
                            .map(function(l) { return l.type + ': ' + l.price.toFixed(dec); })
                            .join(' | ');
@@ -1154,10 +1011,6 @@ async function checkPASignal(sym) {
   }
 }
 
-// ══════════════════════════════════════
-// PA LOOP
-// ══════════════════════════════════════
-
 async function runPALoop() {
   lastPALoopTime = Date.now();
   for (var i = 0; i < PA_SYMBOLS.length; i++) {
@@ -1165,7 +1018,6 @@ async function runPALoop() {
     try {
       await fetchPAD1(sym);
       await checkPASignal(sym);
-      // Delay tra simboli per non saturare le API
       var delay = CRYPTO.indexOf(sym) !== -1 ? 500 : 2000;
       await new Promise(function(r) { setTimeout(r, delay); });
     } catch(e) {
@@ -1177,25 +1029,20 @@ async function runPALoop() {
 
 function startPALoop() {
   if (paTimer) clearInterval(paTimer);
-  runPALoop(); // esecuzione immediata
+  runPALoop();
   paTimer = setInterval(runPALoop, PA_REFRESH_SEC * 1000);
 }
 
-// Watchdog PA: riavvia se il loop e bloccato da oltre 2 ore
 setInterval(async function() {
   if (!paRunning) return;
   var elapsed = Date.now() - lastPALoopTime;
   if (lastPALoopTime > 0 && elapsed > 2 * 60 * 60 * 1000) {
-    console.log('PA Watchdog: loop bloccato da ' + Math.round(elapsed/60000) + 'min, riavvio...');
+    console.log('PA Watchdog: loop bloccato, riavvio...');
     if (paTimer) clearInterval(paTimer);
     startPALoop();
     await tgSend('<i>PA Bot riavviato dal watchdog</i>');
   }
 }, 10 * 60 * 1000);
-
-// ══════════════════════════════════════
-// API ENDPOINTS PA BOT
-// ══════════════════════════════════════
 
 app.get('/api/pa-status', function(req, res) {
   var paPs = {};
@@ -1234,591 +1081,614 @@ app.post('/api/pa-stop', async function(req, res) {
   await tgSend('PA Bot D1 fermato');
   res.json({ ok: true });
 });
-
 // ══════════════════════════════════════════════════════════════════════════════
 // ██████████████████████████████████████████████████████████████████████████████
-// FINE MODULO PA BOT D1
+// ORB BOT -- Opening Range Breakout su indici
 // ██████████████████████████████████████████████████████████████████████████████
 // ══════════════════════════════════════════════════════════════════════════════
-
-
-// ══════════════════════════════════════════════════════════════════════════════
-// ██████████████████████████████████████████████████████████████████████████████
-// MACRO MONITOR — alert di drawdown + briefing settimanale
-// ██████████████████████████████████████████████████████████████████════════════
-// ══════════════════════════════════════════════════════════════════════════════
 //
-// Terzo modulo del sistema. Non e un bot di trading, e un sistema di
-// monitoraggio del contesto macro che serve due scopi complementari:
+// Sostituisce il Macro Monitor della v3.3. E' un bot operativo (non solo alert)
+// che monitora 5 indici globali e genera segnali su breakout dell'Opening Range
+// dei primi 30 minuti dell'apertura cash di ogni mercato.
 //
-//   1. ALERT DI DRAWDOWN: manda notifica Telegram quando un indice o asset
-//      scende significativamente dai suoi massimi recenti. Due soglie:
-//      warning -5% dal max 3 mesi, alert -10% dal max 6 mesi.
-//      Cooldown per evitare spam se l'asset rimane in zona warning.
+// Strategia:
+//   1. All'apertura cash di ogni mercato (NY, EU, UK, JP), costruisce l'OR
+//      con high/low dei primi 30 minuti
+//   2. Quando una candela M15 chiude oltre l'OR -> entry nella direzione del
+//      breakout, SL = lato opposto del range
+//   3. Trailing su EMA20 M15: chiude se candela chiude oltre EMA20 contro la
+//      direzione del trade
+//   4. Filtri qualita: OR width tra 0.3% e 1.5%, ADX H1 >= 15, finestra
+//      operativa max 4 ore post-OR, 1 trade per simbolo per sessione
 //
-//   2. BRIEFING SETTIMANALE: ogni lunedi mattina alle 9 UTC invia un report
-//      completo sullo stato di tutti i 9 strumenti monitorati, con stato
-//      attuale, drawdown dai massimi, valutazione sintetica del regime.
-//
-// Il modulo e progettato per chi vuole fare investimento di lungo periodo
-// (ETF, indici, azioni) senza dover monitorare i mercati ogni giorno.
-// Logica di fondo: comprare quando c'e paura (drawdown significativi),
-// mantenere informazione di contesto senza distrazione quotidiana.
-//
-// Architettura: modulo autonomo con stato separato (macroState), loop di
-// monitoraggio ogni ora (macroTimer), scheduler separato per briefing
-// settimanale (macroBriefTimer). Nessuna dipendenza dai bot di trading.
+// DST: orari di apertura sono in tz locale dell'exchange, i timestamp UTC
+// vengono ricalcolati ogni giorno automaticamente via Intl.DateTimeFormat
+// che gestisce il cambio ora legale per ogni timezone in modo nativo.
 // ══════════════════════════════════════════════════════════════════════════════
 
-// ══════════════════════════════════════
-// CONFIGURAZIONE STRUMENTI MACRO
-// ══════════════════════════════════════
-// Ogni strumento ha: nome completo, simbolo Twelve Data (se disponibile),
-// simbolo Yahoo come fallback, e categoria per organizzare il briefing.
-// Note tecniche: usiamo Yahoo Finance come fonte primaria per il Macro Monitor
-// perche ha ticker standard documentati per tutti gli indici, il VIX e i bond.
-// I ticker yahoo sono con carattere ^ URL-encoded come %5E.
-// Ogni strumento ha un range di prezzo valido: dati fuori range vengono
-// rifiutati come corrotti. Questo protegge dal bug v3.3 dove ticker sbagliati
-// producevano dati crypto casuali presentati come indici.
+var ORB_SYMBOLS = ['US500', 'US100', 'GER40', 'UK100', 'JP225'];
 
-var MACRO_INSTRUMENTS = [
-  { id: 'SPX',    name: 'S&P 500',           category: 'US_EQUITY',
-    yahoo: '%5EGSPC',    minPrice: 2000, maxPrice: 15000 },
-  { id: 'NDX',    name: 'Nasdaq 100',        category: 'US_EQUITY',
-    yahoo: '%5ENDX',     minPrice: 5000, maxPrice: 50000 },
-  { id: 'SX5E',   name: 'Euro Stoxx 50',     category: 'EU_EQUITY',
-    yahoo: '%5ESTOXX50E', minPrice: 2000, maxPrice: 10000 },
-  { id: 'FTSEMIB',name: 'FTSE MIB',          category: 'EU_EQUITY',
-    yahoo: 'FTSEMIB.MI', minPrice: 15000, maxPrice: 80000 },
-  { id: 'DAX',    name: 'DAX',               category: 'EU_EQUITY',
-    yahoo: '%5EGDAXI',   minPrice: 8000, maxPrice: 40000 },
-  { id: 'XAUUSD', name: 'Oro',               category: 'SAFE_HAVEN',
-    yahoo: 'GC=F',       minPrice: 1000, maxPrice: 10000 },
-  { id: 'WTI',    name: 'Petrolio WTI',      category: 'COMMODITY',
-    yahoo: 'CL=F',       minPrice: 20, maxPrice: 200 },
-  { id: 'VIX',    name: 'VIX (volatilita USA)', category: 'VOLATILITY',
-    yahoo: '%5EVIX',     minPrice: 8, maxPrice: 100 },
-  { id: 'US10Y',  name: 'US Treasury 10Y',   category: 'BOND',
-    yahoo: '%5ETNX',     minPrice: 0.5, maxPrice: 10 }
-];
+var ORB_TD_MAP = {
+  US500: 'SPX', US100: 'NDX', GER40: 'DAX',
+  UK100: 'UKX', JP225: 'N225'
+};
 
-// Soglie di drawdown configurabili via env
-var MACRO_WARN_PCT = parseFloat(process.env.MACRO_WARN_PCT) || 5.0;   // -5% dal max 3 mesi
-var MACRO_ALERT_PCT = parseFloat(process.env.MACRO_ALERT_PCT) || 10.0; // -10% dal max 6 mesi
-var MACRO_REFRESH_SEC = parseInt(process.env.MACRO_REFRESH_SEC) || 3600; // 1 ora
-var MACRO_COOLDOWN_HOURS = parseInt(process.env.MACRO_COOLDOWN_HOURS) || 24; // anti-spam
-var MACRO_BRIEF_ENABLED = process.env.MACRO_BRIEF_ENABLED !== 'false'; // default on
-var MACRO_BRIEF_DAY = parseInt(process.env.MACRO_BRIEF_DAY) || 1; // 1=lunedi
-var MACRO_BRIEF_HOUR = parseInt(process.env.MACRO_BRIEF_HOUR) || 9; // 9 UTC
+var ORB_YAHOO_MAP = {
+  US500: '%5EGSPC', US100: '%5ENDX', GER40: '%5EGDAXI',
+  UK100: '%5EFTSE', JP225: '%5EN225'
+};
 
-// ══════════════════════════════════════
-// STATO MACRO
-// ══════════════════════════════════════
-var macroState = {};
-var macroRunning = false;
-var macroTimer = null;
-var macroBriefTimer = null;
-var lastMacroLoopTime = 0;
-var lastBriefSent = 0; // timestamp ultimo briefing inviato
+var ORB_NAMES = {
+  US500: 'S&P 500', US100: 'Nasdaq 100', GER40: 'DAX 40',
+  UK100: 'FTSE 100', JP225: 'Nikkei 225'
+};
 
-function initMacro(instr) {
-  macroState[instr.id] = {
-    instrument: instr,
-    candlesD1: [],           // ultimi 180 giorni
-    currentPrice: 0,
-    max3m: 0,                // massimo ultimi 60 giorni di trading
-    max6m: 0,                // massimo ultimi 120 giorni di trading
-    drawdown3m: 0,           // % sotto max 3m
-    drawdown6m: 0,           // % sotto max 6m
-    lastAlertTime: 0,        // timestamp ultimo alert inviato
-    lastAlertLevel: null,    // 'warn' | 'alert' | null
-    lastUpdateTime: 0,
-    status: 'init'           // init | ok | warn | alert | no_data
+var ORB_PRICE_RANGES = {
+  US500: [3000, 10000], US100: [10000, 40000], GER40: [10000, 40000],
+  UK100: [5000, 15000], JP225: [20000, 80000]
+};
+
+// Sessioni cash - orari LOCALI dell'exchange, DST gestito automaticamente
+var ORB_SESSIONS = {
+  US500: { localTz: 'America/New_York', openHH: 9,  openMM: 30, durationMin: 30, tradingWindowMin: 240 },
+  US100: { localTz: 'America/New_York', openHH: 9,  openMM: 30, durationMin: 30, tradingWindowMin: 240 },
+  GER40: { localTz: 'Europe/Berlin',    openHH: 9,  openMM: 0,  durationMin: 30, tradingWindowMin: 240 },
+  UK100: { localTz: 'Europe/London',    openHH: 8,  openMM: 0,  durationMin: 30, tradingWindowMin: 240 },
+  JP225: { localTz: 'Asia/Tokyo',       openHH: 9,  openMM: 0,  durationMin: 30, tradingWindowMin: 240 }
+};
+
+var ORB_REFRESH_SEC = parseInt(process.env.ORB_REFRESH_SEC) || 300;
+
+var orbState = {};
+var orbRunning = false;
+var orbTimer = null;
+var lastOrbLoopTime = 0;
+
+function initORB(s) {
+  orbState[s] = {
+    candlesM15: [],
+    candlesH1: [],
+    sessionDate: null,
+    orHigh: null,
+    orLow: null,
+    orStartTs: null,
+    orEndTs: null,
+    windowEndTs: null,
+    orComplete: false,
+    activeTrade: null,
+    sessionDone: false,
+    stats: { total: 0, buys: 0, sells: 0, wins: 0, losses: 0, lastSignal: '--', lastFilter: '--' },
+    log: []
   };
 }
-MACRO_INSTRUMENTS.forEach(initMacro);
+ORB_SYMBOLS.forEach(initORB);
 
-// ══════════════════════════════════════
-// FETCH DATI MACRO — Yahoo Finance con validazione range
-// ══════════════════════════════════════
-// Dopo il bug della v3.3 (dove ticker Twelve Data sbagliati hanno causato
-// fetch di dati casuali presentati come indici), abbiamo semplificato:
-// una sola fonte dati (Yahoo Finance), ticker standard e ben documentati,
-// e validazione di sanita obbligatoria su ogni dato ricevuto.
-//
-// La validazione confronta il prezzo di chiusura ricevuto con il range
-// minPrice/maxPrice definito nella configurazione dello strumento. Se il
-// prezzo e fuori range, TUTTI i dati vengono scartati e lo strumento resta
-// in stato 'no_data' invece di essere aggiornato con dati corrotti.
+// ──────────────────────────────────────
+// UTILITY DATE/ORE CON DST
+// ──────────────────────────────────────
+function getSessionDateInTz(tz) {
+  var fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit'
+  });
+  return fmt.format(new Date());
+}
 
-async function fetchMacroData(instr) {
-  var st = macroState[instr.id];
+function getUtcTimestampForLocal(dateStr, hh, mm, tz) {
+  var parts = dateStr.split('-');
+  var y = +parts[0], mo = +parts[1] - 1, d = +parts[2];
+  var guess = new Date(Date.UTC(y, mo, d, hh, mm, 0));
+
+  var fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit'
+  });
+  var localParts = fmt.formatToParts(guess);
+  var lp = {};
+  for (var i = 0; i < localParts.length; i++) lp[localParts[i].type] = localParts[i].value;
+  var localHH = +lp.hour, localMM = +lp.minute;
+
+  var diffMin = (hh * 60 + mm) - (localHH * 60 + localMM);
+  if (diffMin > 12 * 60) diffMin -= 24 * 60;
+  if (diffMin < -12 * 60) diffMin += 24 * 60;
+
+  return guess.getTime() + diffMin * 60 * 1000;
+}
+
+function isWeekendInTz(tz) {
+  var fmt = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short' });
+  var wd = fmt.format(new Date());
+  return wd === 'Sat' || wd === 'Sun';
+}
+
+function isOrbValidPrice(sym, price) {
+  var r = ORB_PRICE_RANGES[sym];
+  return r ? price >= r[0] && price <= r[1] : true;
+}
+
+// ──────────────────────────────────────
+// FETCH CANDELE INDICI
+// ──────────────────────────────────────
+async function fetchOrbCandles(sym, interval, target) {
+  var st = orbState[sym];
   if (!st) return false;
 
+  if (TD_KEY) {
+    try {
+      var mapped = ORB_TD_MAP[sym] || sym;
+      var outputsize = interval === '15min' ? 200 : 100;
+      var url = 'https://api.twelvedata.com/time_series?symbol=' + encodeURIComponent(mapped) +
+                '&interval=' + interval + '&outputsize=' + outputsize + '&apikey=' + TD_KEY;
+      var res = await fetch(url);
+      var data = await res.json();
+      if (data.status !== 'error' && data.values && data.values.length > 10) {
+        var parsed = data.values.reverse().map(function(c) {
+          return {
+            time: new Date(c.datetime).getTime(),
+            open: +c.open, high: +c.high, low: +c.low, close: +c.close,
+            vol: +(c.volume || 0)
+          };
+        });
+        var lastClose = parsed[parsed.length-1].close;
+        if (isOrbValidPrice(sym, lastClose)) {
+          st[target] = parsed;
+          return true;
+        }
+        console.error('ORB ' + sym + ' TD: prezzo ' + lastClose + ' fuori range, fallback');
+      }
+    } catch(e) { console.error('ORB TD ' + sym + ': ' + e.message); }
+  }
+
   try {
-    var urlY = 'https://query2.finance.yahoo.com/v8/finance/chart/' + instr.yahoo +
-               '?interval=1d&range=6mo';
-    var resY = await fetch(urlY, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-
-    if (!resY.ok) {
-      console.error('Macro Yahoo ' + instr.id + ': HTTP ' + resY.status);
-      return false;
-    }
-
-    var dataY = await resY.json();
-    var chart = dataY && dataY.chart && dataY.chart.result && dataY.chart.result[0];
-    if (!chart || !chart.timestamp) {
-      console.error('Macro Yahoo ' + instr.id + ': no chart data');
-      return false;
-    }
-
+    var ticker = ORB_YAHOO_MAP[sym];
+    if (!ticker) return false;
+    var yahooInt = interval === '15min' ? '15m' : '1h';
+    var range = interval === '15min' ? '5d' : '30d';
+    var yurl = 'https://query2.finance.yahoo.com/v8/finance/chart/' +
+               ticker + '?interval=' + yahooInt + '&range=' + range;
+    var yres = await fetch(yurl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    var ydata = await yres.json();
+    var chart = ydata && ydata.chart && ydata.chart.result && ydata.chart.result[0];
+    if (!chart || !chart.timestamp) return false;
     var q = chart.indicators.quote[0];
     var parsed = [];
     for (var i = 0; i < chart.timestamp.length; i++) {
       if (q.open[i] && q.high[i] && q.low[i] && q.close[i]) {
         parsed.push({
-          open: +q.open[i].toFixed(4),
-          high: +q.high[i].toFixed(4),
-          low: +q.low[i].toFixed(4),
-          close: +q.close[i].toFixed(4),
+          time: chart.timestamp[i] * 1000,
+          open: +q.open[i], high: +q.high[i], low: +q.low[i], close: +q.close[i],
           vol: q.volume[i] || 0
         });
       }
     }
-
-    // Servono almeno 30 candele per calcoli significativi
-    if (parsed.length < 30) {
-      console.error('Macro ' + instr.id + ': too few candles (' + parsed.length + ')');
+    if (parsed.length < 10) return false;
+    var lastClose2 = parsed[parsed.length-1].close;
+    if (!isOrbValidPrice(sym, lastClose2)) {
+      console.error('ORB ' + sym + ' Yahoo: prezzo ' + lastClose2 + ' fuori range');
       return false;
     }
-
-    // ── VALIDAZIONE DI SANITA ──
-    // Verifico che il prezzo piu recente sia nel range plausibile. Questo
-    // protegge contro: ticker sbagliati che restituiscono asset casuali,
-    // errori decimali (es. Yahoo che ritorna prezzi in cents), dati corrotti.
-    var latestClose = parsed[parsed.length-1].close;
-    if (latestClose < instr.minPrice || latestClose > instr.maxPrice) {
-      console.error('Macro ' + instr.id + ': price ' + latestClose +
-                    ' OUT OF RANGE [' + instr.minPrice + ', ' + instr.maxPrice + '] — data rejected');
-      return false;
-    }
-
-    // Verifico anche il massimo storico della serie sia plausibile
-    var maxInSeries = 0;
-    for (var k = 0; k < parsed.length; k++) {
-      if (parsed[k].high > maxInSeries) maxInSeries = parsed[k].high;
-    }
-    if (maxInSeries < instr.minPrice || maxInSeries > instr.maxPrice * 2) {
-      console.error('Macro ' + instr.id + ': max ' + maxInSeries + ' implausible — data rejected');
-      return false;
-    }
-
-    // Dati validi: salva
-    st.candlesD1 = parsed;
-    console.log('Macro ' + instr.id + ': ' + parsed.length + ' candles, last=' + latestClose.toFixed(2));
+    st[target] = parsed;
     return true;
-
-  } catch(e) {
-    console.error('Macro Yahoo ' + instr.id + ': ' + e.message);
-    return false;
-  }
+  } catch(e) { return false; }
 }
 
-// ══════════════════════════════════════
-// CALCOLO DRAWDOWN E STATO
-// ══════════════════════════════════════
-// Per ogni strumento calcoliamo il massimo degli ultimi N giorni di trading
-// e confrontiamo con il prezzo attuale. Utilizziamo candlesD1[-N:] che nei
-// mercati azionari corrisponde a circa N/20 mesi di calendario (20 giorni
-// di trading per mese approssimativi).
+// ──────────────────────────────────────
+// LOGICA SESSIONE
+// ──────────────────────────────────────
+function checkAndResetOrbSession(sym) {
+  var st = orbState[sym];
+  var cfg = ORB_SESSIONS[sym];
+  if (!cfg) return;
 
-function updateMacroStats(instrId) {
-  var st = macroState[instrId];
-  if (!st || !st.candlesD1.length) {
-    if (st) st.status = 'no_data';
-    return;
-  }
+  var todayLocal = getSessionDateInTz(cfg.localTz);
+  if (st.sessionDate === todayLocal) return;
 
-  var candles = st.candlesD1;
-  var current = candles[candles.length-1].close;
-  st.currentPrice = current;
-  st.lastUpdateTime = Date.now();
+  var openTs = getUtcTimestampForLocal(todayLocal, cfg.openHH, cfg.openMM, cfg.localTz);
+  var endOrTs = openTs + cfg.durationMin * 60 * 1000;
+  var endWindowTs = endOrTs + cfg.tradingWindowMin * 60 * 1000;
 
-  // Massimo 3 mesi (ultimi 60 giorni di trading)
-  var slice3m = candles.slice(-60);
-  var max3m = 0;
-  for (var i = 0; i < slice3m.length; i++) {
-    if (slice3m[i].high > max3m) max3m = slice3m[i].high;
-  }
-  st.max3m = max3m;
-  st.drawdown3m = max3m > 0 ? ((current - max3m) / max3m) * 100 : 0;
-
-  // Massimo 6 mesi (ultimi 120 giorni di trading, o tutto se meno)
-  var slice6m = candles.slice(-120);
-  var max6m = 0;
-  for (var j = 0; j < slice6m.length; j++) {
-    if (slice6m[j].high > max6m) max6m = slice6m[j].high;
-  }
-  st.max6m = max6m;
-  st.drawdown6m = max6m > 0 ? ((current - max6m) / max6m) * 100 : 0;
-
-  // Classificazione stato
-  // Nota: il VIX si comporta al contrario. Qui applichiamo la logica ai prezzi
-  // normali (drawdown negativo = male). Per il VIX interpretiamo separatamente
-  // nel briefing (VIX alto = paura = potenziale opportunita di acquisto).
-  if (st.drawdown6m <= -MACRO_ALERT_PCT) {
-    st.status = 'alert';
-  } else if (st.drawdown3m <= -MACRO_WARN_PCT) {
-    st.status = 'warn';
-  } else {
-    st.status = 'ok';
-  }
+  st.sessionDate = todayLocal;
+  st.orStartTs = openTs;
+  st.orEndTs = endOrTs;
+  st.windowEndTs = endWindowTs;
+  st.orHigh = null;
+  st.orLow = null;
+  st.orComplete = false;
+  st.activeTrade = null;
+  st.sessionDone = false;
+  st.stats.lastFilter = 'Sessione resettata: OR ' + cfg.openHH + ':' +
+                       (cfg.openMM < 10 ? '0' : '') + cfg.openMM + ' (' + cfg.localTz + ')';
 }
 
-// ══════════════════════════════════════
-// INVIO ALERT DRAWDOWN
-// ══════════════════════════════════════
-// Logica anti-spam: se lo stesso strumento era gia in alert livello 'alert'
-// non rimandiamo un altro 'alert' prima di MACRO_COOLDOWN_HOURS. Mandiamo
-// pero un alert se passiamo da warn ad alert (escalation). Non mandiamo
-// alert se passiamo da alert a warn (de-escalation), solo log interno.
+function buildOpeningRange(sym) {
+  var st = orbState[sym];
+  if (!st || !st.candlesM15.length || !st.orStartTs) return false;
 
-async function checkMacroAlert(instrId) {
-  var st = macroState[instrId];
-  if (!st || st.status === 'init' || st.status === 'no_data' || st.status === 'ok') return;
+  var orCandles = st.candlesM15.filter(function(c) {
+    return c.time >= st.orStartTs && c.time < st.orEndTs;
+  });
 
-  var instr = st.instrument;
-  var now = Date.now();
-  var cooldownMs = MACRO_COOLDOWN_HOURS * 60 * 60 * 1000;
+  if (!orCandles.length) return false;
 
-  // Escalation warn->alert: invia sempre (importante)
-  var escalation = st.status === 'alert' && st.lastAlertLevel === 'warn';
-
-  // Nuovo alert o nuovo warn: verifica cooldown
-  var isRepeat = st.lastAlertLevel === st.status;
-  if (isRepeat && (now - st.lastAlertTime) < cooldownMs) return;
-
-  // Il VIX invertito: non e un drawdown, e un SPIKE. Skip dall'alert normale.
-  if (instr.id === 'VIX') return;
-
-  var nl = '\n';
-  var level = st.status === 'alert' ? 'ALERT' : 'WARNING';
-  var emoji = st.status === 'alert' ? '🔴' : '🟡';
-  var pct = st.status === 'alert' ? st.drawdown6m : st.drawdown3m;
-  var maxLabel = st.status === 'alert' ? '6 mesi' : '3 mesi';
-  var maxVal = st.status === 'alert' ? st.max6m : st.max3m;
-
-  var dec = st.currentPrice > 100 ? 2 : 4;
-  var tg = st.currentPrice > 100 ? 2 : 4;
-
-  var msg =
-    '<b>[MACRO ' + level + '] ' + emoji + ' ' + instr.name + '</b>' + nl +
-    'Drawdown: <b>' + pct.toFixed(2) + '%</b> dal max ' + maxLabel + nl +
-    'Prezzo attuale: <b>' + st.currentPrice.toFixed(dec) + '</b>' + nl +
-    'Max ' + maxLabel + ': ' + maxVal.toFixed(tg) + nl +
-    (escalation ? '<i>Escalation da warning ad alert</i>' + nl : '') +
-    '<i>' + (st.status === 'alert' ?
-      'Drawdown significativo. Valutare accumulo graduale.' :
-      'Primo segnale di debolezza. Monitorare evoluzione.') + '</i>';
-
-  var ok = await tgSend(msg);
-  if (ok) {
-    st.lastAlertTime = now;
-    st.lastAlertLevel = st.status;
-    console.log('MACRO ' + level + ': ' + instr.id + ' drawdown ' + pct.toFixed(2) + '%');
+  var hi = -Infinity, lo = Infinity;
+  for (var i = 0; i < orCandles.length; i++) {
+    if (orCandles[i].high > hi) hi = orCandles[i].high;
+    if (orCandles[i].low < lo) lo = orCandles[i].low;
   }
-}
 
-// ══════════════════════════════════════
-// LOOP MONITORAGGIO MACRO
-// ══════════════════════════════════════
+  st.orHigh = hi;
+  st.orLow = lo;
 
-async function runMacroLoop() {
-  lastMacroLoopTime = Date.now();
-  for (var i = 0; i < MACRO_INSTRUMENTS.length; i++) {
-    var instr = MACRO_INSTRUMENTS[i];
-    try {
-      var fetchOk = await fetchMacroData(instr);
-      if (fetchOk) {
-        updateMacroStats(instr.id);
-        await checkMacroAlert(instr.id);
-      }
-      // Delay per non saturare le API
-      await new Promise(function(r) { setTimeout(r, 1500); });
-    } catch(e) {
-      console.error('Macro Loop ' + instr.id + ': ' + e.message);
-    }
+  var lastCandle = st.candlesM15[st.candlesM15.length - 1];
+  if (lastCandle.time >= st.orEndTs - 15 * 60 * 1000) {
+    st.orComplete = true;
   }
-  console.log('Macro Loop completato @ ' + new Date().toUTCString().slice(17,25));
-}
-
-function startMacroLoop() {
-  if (macroTimer) clearInterval(macroTimer);
-  runMacroLoop(); // esecuzione immediata
-  macroTimer = setInterval(runMacroLoop, MACRO_REFRESH_SEC * 1000);
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// BRIEFING SETTIMANALE
-// ══════════════════════════════════════════════════════════════════════════════
-// Ogni lunedi alle 9 UTC invia un report completo dello stato dei mercati.
-// Raggruppato per categoria: US Equity, EU Equity, Safe Haven, Commodity,
-// Volatilita, Bond. Valutazione sintetica del regime generale.
-// Schedule: il timer si attiva ogni ora per verificare se e il momento giusto.
-
-function isTimeForBrief() {
-  if (!MACRO_BRIEF_ENABLED) return false;
-  var now = new Date();
-  var day = now.getUTCDay(); // 0=dom, 1=lun
-  var hour = now.getUTCHours();
-  var minute = now.getUTCMinutes();
-  // Matchiamo solo nella finestra 9:00-9:59 del giorno target per essere sicuri
-  // che anche se il server riavvia non perdiamo il briefing
-  if (day !== MACRO_BRIEF_DAY) return false;
-  if (hour !== MACRO_BRIEF_HOUR) return false;
-  // Anti-duplicazione: se ne abbiamo mandato uno nelle ultime 23 ore, skip
-  if (Date.now() - lastBriefSent < 23 * 60 * 60 * 1000) return false;
   return true;
 }
 
-function classifyRegime() {
-  // Valutazione euristica del regime attuale basata su VIX, drawdown US, oro.
-  // VIX < 15 e US equity ok = euphoric/risk-on
-  // VIX 15-25 e nessun alert = normal
-  // VIX > 25 o drawdown alert su US = risk-off / fear
-  var vix = macroState['VIX'];
-  var spx = macroState['SPX'];
-  var gold = macroState['XAUUSD'];
+// ──────────────────────────────────────
+// CHECK SEGNALE BREAKOUT
+// ──────────────────────────────────────
+async function checkOrbSignal(sym) {
+  var st = orbState[sym];
+  var cfg = ORB_SESSIONS[sym];
+  if (!st || !cfg || !orbRunning) return;
+  if (st.sessionDone) return;
+  if (st.activeTrade) return;
 
-  var vixPrice = vix && vix.currentPrice ? vix.currentPrice : null;
-  var spxStatus = spx ? spx.status : 'no_data';
-  var goldStatus = gold ? gold.status : 'no_data';
+  if (isWeekendInTz(cfg.localTz)) {
+    st.stats.lastFilter = 'Weekend';
+    return;
+  }
 
-  var regime = 'Neutro';
-  var reasoning = '';
+  if (!st.candlesM15.length) {
+    st.stats.lastFilter = 'No dati M15';
+    return;
+  }
 
-  if (vixPrice !== null) {
-    if (vixPrice > 25 || spxStatus === 'alert') {
-      regime = 'Risk-Off (paura)';
-      reasoning = 'VIX elevato e/o crollo significativo su azioni USA.';
-    } else if (vixPrice < 15 && spxStatus === 'ok') {
-      regime = 'Risk-On (euforia)';
-      reasoning = 'VIX basso e azioni USA in condizioni normali/rialziste.';
-    } else if (vixPrice >= 15 && vixPrice <= 25 && spxStatus !== 'alert') {
-      regime = 'Normale';
-      reasoning = 'VIX in range tipico, nessun drawdown critico.';
+  var now = Date.now();
+
+  if (now < st.orEndTs) {
+    var minToOr = Math.round((st.orEndTs - now) / 60000);
+    st.stats.lastFilter = 'OR in costruzione (-' + minToOr + 'min)';
+    return;
+  }
+
+  if (now > st.windowEndTs) {
+    st.stats.lastFilter = 'Finestra operativa chiusa';
+    st.sessionDone = true;
+    return;
+  }
+
+  if (!st.orComplete) {
+    if (!buildOpeningRange(sym)) {
+      st.stats.lastFilter = 'OR incompleto';
+      return;
     }
   }
 
-  return { regime: regime, reasoning: reasoning };
-}
+  if (st.orHigh === null || st.orLow === null) return;
 
-async function sendWeeklyBrief() {
-  var now = new Date();
-  var dateStr = now.toUTCString().slice(0, 16);
+  var lastClose = st.candlesM15[st.candlesM15.length - 1].close;
+  var orWidth = st.orHigh - st.orLow;
+  var orPct = orWidth / lastClose;
+
+  if (orPct < 0.003) {
+    st.stats.lastFilter = 'OR troppo stretto (' + (orPct * 100).toFixed(2) + '%)';
+    return;
+  }
+  if (orPct > 0.015) {
+    st.stats.lastFilter = 'OR troppo ampio (' + (orPct * 100).toFixed(2) + '%)';
+    st.sessionDone = true;
+    return;
+  }
+
+  if (st.candlesH1 && st.candlesH1.length >= 30) {
+    var adxH1 = calcADX(st.candlesH1, 14);
+    if (adxH1 < 15) {
+      st.stats.lastFilter = 'ADX H1 troppo basso (' + adxH1.toFixed(1) + ')';
+      return;
+    }
+  }
+
+  var len = st.candlesM15.length;
+  if (len < 2) return;
+  var lastClosed = st.candlesM15[len - 2];
+
+  if (lastClosed.time < st.orEndTs) {
+    st.stats.lastFilter = 'Attesa prima candela post-OR';
+    return;
+  }
+
+  var dir = null;
+  if (lastClosed.close > st.orHigh) dir = 'BUY';
+  else if (lastClosed.close < st.orLow) dir = 'SELL';
+
+  if (!dir) {
+    st.stats.lastFilter = 'No breakout (close ' + lastClosed.close.toFixed(2) +
+                          ' tra OR ' + st.orLow.toFixed(2) + '-' + st.orHigh.toFixed(2) + ')';
+    return;
+  }
+
+  var entry = lastClosed.close;
+  var sl = dir === 'BUY' ? st.orLow : st.orHigh;
+  var slDist = Math.abs(entry - sl);
+  var dec = entry > 1000 ? 2 : entry > 10 ? 3 : 4;
+  var name = ORB_NAMES[sym] || sym;
   var nl = '\n';
+  var time = new Date().toUTCString().slice(0, 25);
 
-  // Classificazione regime
-  var regimeInfo = classifyRegime();
-
-  // Raggruppa strumenti per categoria
-  var categories = {
-    'US_EQUITY': { title: '🇺🇸 Azioni USA', items: [] },
-    'EU_EQUITY': { title: '🇪🇺 Azioni Europa', items: [] },
-    'SAFE_HAVEN': { title: '🏛️ Beni Rifugio', items: [] },
-    'COMMODITY': { title: '🛢️ Commodities', items: [] },
-    'VOLATILITY': { title: '📊 Volatilita', items: [] },
-    'BOND': { title: '🏦 Obbligazioni', items: [] }
-  };
-
-  for (var i = 0; i < MACRO_INSTRUMENTS.length; i++) {
-    var instr = MACRO_INSTRUMENTS[i];
-    var st = macroState[instr.id];
-    if (!st || !st.currentPrice) continue;
-
-    var dec = st.currentPrice > 100 ? 2 : 4;
-    var icon = st.status === 'alert' ? '🔴' :
-               st.status === 'warn' ? '🟡' : '🟢';
-
-    // Interpretazione VIX speciale
-    var interpretation = '';
-    if (instr.id === 'VIX') {
-      if (st.currentPrice > 30) interpretation = ' (paura elevata — possibile opportunita)';
-      else if (st.currentPrice > 20) interpretation = ' (paura moderata)';
-      else if (st.currentPrice < 15) interpretation = ' (compiacenza)';
-      else interpretation = ' (normale)';
-      icon = st.currentPrice > 25 ? '🔴' : st.currentPrice > 20 ? '🟡' : '🟢';
-    }
-
-    var ddText = '';
-    if (instr.id !== 'VIX') {
-      ddText = ' | DD: <b>' + st.drawdown6m.toFixed(1) + '%</b>';
-    }
-
-    var line = icon + ' <b>' + instr.name + '</b>: ' + st.currentPrice.toFixed(dec) + ddText + interpretation;
-    if (categories[instr.category]) {
-      categories[instr.category].items.push(line);
-    }
-  }
-
-  // Costruisci messaggio
-  var msg = '<b>[MACRO] Briefing Settimanale</b>' + nl + '<i>' + dateStr + ' UTC</i>' + nl + nl +
-            '<b>Regime attuale: ' + regimeInfo.regime + '</b>' + nl;
-  if (regimeInfo.reasoning) {
-    msg += '<i>' + regimeInfo.reasoning + '</i>' + nl;
-  }
-  msg += nl;
-
-  Object.keys(categories).forEach(function(cat) {
-    var c = categories[cat];
-    if (c.items.length) {
-      msg += '<b>' + c.title + '</b>' + nl;
-      msg += c.items.join(nl) + nl + nl;
-    }
-  });
-
-  // Sintesi opportunita: strumenti in alert per possibili acquisti
-  var opportunities = MACRO_INSTRUMENTS
-    .map(function(instr) { return macroState[instr.id]; })
-    .filter(function(st) { return st && st.instrument.id !== 'VIX' &&
-                                  (st.status === 'alert' || st.status === 'warn'); })
-    .sort(function(a, b) { return a.drawdown6m - b.drawdown6m; });
-
-  if (opportunities.length > 0) {
-    msg += '<b>💡 Opportunita da monitorare</b>' + nl;
-    opportunities.forEach(function(st) {
-      msg += '• ' + st.instrument.name + ' a <b>' + st.drawdown6m.toFixed(1) + '%</b> dai massimi 6m' + nl;
-    });
-    msg += nl + '<i>Valutare ingressi scaglionati, non tutto in una volta.</i>';
-  } else {
-    msg += '<i>Nessun drawdown significativo in corso. Fase di mercato tranquilla.</i>';
-  }
+  var msg =
+    '<b>[ORB-EA] ' + dir + ' ' + name + '</b> (' + sym + ')' + nl +
+    '<b>Entry:</b> ' + entry.toFixed(dec) + nl +
+    '<b>SL (OR opposto):</b> ' + sl.toFixed(dec) + nl +
+    '<b>Distanza SL:</b> ' + slDist.toFixed(dec) + ' (' + (slDist / entry * 100).toFixed(2) + '%)' + nl +
+    '<b>OR Width:</b> ' + orWidth.toFixed(dec) + ' (' + (orPct * 100).toFixed(2) + '%)' + nl +
+    '<b>Uscita:</b> Trailing su EMA20 M15' + nl +
+    '<i>Sessione: ' + cfg.localTz + ' | ' + time + ' UTC</i>';
 
   var ok = await tgSend(msg);
   if (ok) {
-    lastBriefSent = Date.now();
-    console.log('MACRO briefing settimanale inviato');
-  }
-}
-
-// Scheduler briefing: verifica ogni ora
-function startBriefScheduler() {
-  if (macroBriefTimer) clearInterval(macroBriefTimer);
-  macroBriefTimer = setInterval(async function() {
-    if (isTimeForBrief()) {
-      await sendWeeklyBrief();
-    }
-  }, 60 * 60 * 1000); // ogni ora
-}
-
-// Watchdog Macro: riavvia loop se bloccato oltre 3 ore
-setInterval(async function() {
-  if (!macroRunning) return;
-  var elapsed = Date.now() - lastMacroLoopTime;
-  if (lastMacroLoopTime > 0 && elapsed > 3 * 60 * 60 * 1000) {
-    console.log('Macro Watchdog: loop bloccato da ' + Math.round(elapsed/60000) + 'min, riavvio...');
-    if (macroTimer) clearInterval(macroTimer);
-    startMacroLoop();
-    await tgSend('<i>Macro Monitor riavviato dal watchdog</i>');
-  }
-}, 15 * 60 * 1000);
-
-// ══════════════════════════════════════
-// API ENDPOINTS MACRO
-// ══════════════════════════════════════
-
-app.get('/api/macro-status', function(req, res) {
-  var state = {};
-  MACRO_INSTRUMENTS.forEach(function(instr) {
-    var st = macroState[instr.id];
-    if (!st) return;
-    state[instr.id] = {
-      name: instr.name,
-      category: instr.category,
-      currentPrice: st.currentPrice,
-      max3m: st.max3m,
-      max6m: st.max6m,
-      drawdown3m: st.drawdown3m,
-      drawdown6m: st.drawdown6m,
-      status: st.status,
-      candleCount: st.candlesD1.length,
-      lastUpdateTime: st.lastUpdateTime,
-      lastAlertLevel: st.lastAlertLevel,
-      lastAlertTime: st.lastAlertTime
+    st.activeTrade = {
+      dir: dir,
+      entry: entry,
+      sl: sl,
+      openTime: now,
+      currentEMA20: null,
+      maxFavorable: entry,
+      minFavorable: entry
     };
+    st.stats.total++;
+    if (dir === 'BUY') st.stats.buys++; else st.stats.sells++;
+    st.stats.lastSignal = dir;
+    st.stats.lastFilter = 'TRADE APERTO: ' + dir + ' @ ' + entry.toFixed(dec);
+    st.log.unshift({ event: 'OPEN', dir: dir, price: entry.toFixed(dec), time: time });
+    if (st.log.length > 20) st.log.pop();
+    globalStats.total++;
+    if (dir === 'BUY') globalStats.buys++; else globalStats.sells++;
+    globalLog.unshift({ dir: dir, price: entry.toFixed(dec), time: time, sym: sym, source: 'ORB' });
+    if (globalLog.length > 50) globalLog.pop();
+    console.log('ORB SIGNAL: ' + sym + ' ' + dir + ' @ ' + entry.toFixed(dec));
+  }
+}
+
+// ──────────────────────────────────────
+// TRAILING EMA20 M15
+// ──────────────────────────────────────
+async function checkOrbTrailing(sym) {
+  var st = orbState[sym];
+  if (!st || !st.activeTrade || !st.candlesM15.length) return;
+
+  var trade = st.activeTrade;
+  var len = st.candlesM15.length;
+  if (len < 21) return;
+
+  var lastClosed = st.candlesM15[len - 2];
+  var ema20 = calcEMA(st.candlesM15.slice(0, len - 1), 20);
+  trade.currentEMA20 = ema20;
+
+  if (lastClosed.high > trade.maxFavorable) trade.maxFavorable = lastClosed.high;
+  if (lastClosed.low < trade.minFavorable) trade.minFavorable = lastClosed.low;
+
+  var dec = trade.entry > 1000 ? 2 : trade.entry > 10 ? 3 : 4;
+  var name = ORB_NAMES[sym] || sym;
+  var nl = '\n';
+  var now = Date.now();
+
+  var slHit = false;
+  if (trade.dir === 'BUY' && lastClosed.low <= trade.sl) slHit = true;
+  if (trade.dir === 'SELL' && lastClosed.high >= trade.sl) slHit = true;
+
+  var trailHit = false;
+  if (trade.dir === 'BUY' && lastClosed.close < ema20) trailHit = true;
+  if (trade.dir === 'SELL' && lastClosed.close > ema20) trailHit = true;
+
+  var windowExpired = now > st.windowEndTs;
+
+  if (!slHit && !trailHit && !windowExpired) return;
+
+  var exitPrice = lastClosed.close;
+  var exitReason = slHit ? 'STOP LOSS' : trailHit ? 'TRAILING EMA20' : 'FINE SESSIONE';
+  var pnl = trade.dir === 'BUY' ? (exitPrice - trade.entry) : (trade.entry - exitPrice);
+  var pnlPct = (pnl / trade.entry) * 100;
+  var rMultiple = pnl / Math.abs(trade.entry - trade.sl);
+
+  if (pnl > 0) st.stats.wins++; else st.stats.losses++;
+
+  var msg =
+    '<b>[ORB-EA] CHIUSURA ' + trade.dir + '</b> ' + name + nl +
+    '<b>Entry:</b> ' + trade.entry.toFixed(dec) + nl +
+    '<b>Exit:</b> ' + exitPrice.toFixed(dec) + nl +
+    '<b>Motivo:</b> ' + exitReason + nl +
+    '<b>P/L:</b> ' + (pnl >= 0 ? '+' : '') + pnl.toFixed(dec) +
+    ' (' + (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%)' + nl +
+    '<b>R-multiple:</b> ' + (rMultiple >= 0 ? '+' : '') + rMultiple.toFixed(2) + 'R' + nl +
+    '<i>' + new Date().toUTCString().slice(0, 25) + '</i>';
+
+  await tgSend(msg);
+  console.log('ORB CLOSE: ' + sym + ' ' + trade.dir + ' ' + exitReason +
+              ' P/L=' + pnl.toFixed(dec) + ' R=' + rMultiple.toFixed(2));
+
+  st.log.unshift({
+    event: 'CLOSE', dir: trade.dir,
+    entry: trade.entry.toFixed(dec), exit: exitPrice.toFixed(dec),
+    reason: exitReason, pnl: pnl.toFixed(dec), r: rMultiple.toFixed(2),
+    time: new Date().toUTCString().slice(0, 25)
   });
+  if (st.log.length > 20) st.log.pop();
+
+  st.activeTrade = null;
+  st.sessionDone = true;
+  st.stats.lastFilter = 'Trade chiuso: ' + exitReason;
+}
+
+// ──────────────────────────────────────
+// LOOP ORB
+// ──────────────────────────────────────
+async function runOrbLoop() {
+  lastOrbLoopTime = Date.now();
+  for (var i = 0; i < ORB_SYMBOLS.length; i++) {
+    var sym = ORB_SYMBOLS[i];
+    var cfg = ORB_SESSIONS[sym];
+    if (!cfg) continue;
+
+    try {
+      checkAndResetOrbSession(sym);
+      var st = orbState[sym];
+
+      if (isWeekendInTz(cfg.localTz)) {
+        st.stats.lastFilter = 'Weekend';
+        continue;
+      }
+
+      if (st.sessionDone && !st.activeTrade) {
+        st.stats.lastFilter = 'Sessione conclusa';
+        continue;
+      }
+
+      var now = Date.now();
+      var preOrSafetyMs = 5 * 60 * 1000;
+
+      if (now < st.orStartTs - preOrSafetyMs) {
+        var minToOpen = Math.round((st.orStartTs - now) / 60000);
+        st.stats.lastFilter = 'Sessione apre tra ' + minToOpen + 'min';
+        continue;
+      }
+
+      if (now > st.windowEndTs + 15 * 60 * 1000 && !st.activeTrade) {
+        st.sessionDone = true;
+        st.stats.lastFilter = 'Finestra operativa chiusa';
+        continue;
+      }
+
+      await fetchOrbCandles(sym, '15min', 'candlesM15');
+      await new Promise(function(r) { setTimeout(r, 800); });
+
+      if (!st.candlesH1.length || st.candlesH1.length < 30) {
+        await fetchOrbCandles(sym, '1h', 'candlesH1');
+        await new Promise(function(r) { setTimeout(r, 800); });
+      }
+
+      if (st.activeTrade) {
+        await checkOrbTrailing(sym);
+      } else {
+        await checkOrbSignal(sym);
+      }
+    } catch(e) {
+      console.error('ORB Loop ' + sym + ': ' + e.message);
+    }
+  }
+  console.log('ORB Loop completato @ ' + new Date().toUTCString().slice(17, 25));
+}
+
+function startOrbLoop() {
+  if (orbTimer) clearInterval(orbTimer);
+  runOrbLoop();
+  orbTimer = setInterval(runOrbLoop, ORB_REFRESH_SEC * 1000);
+}
+
+setInterval(async function() {
+  if (!orbRunning) return;
+  var elapsed = Date.now() - lastOrbLoopTime;
+  if (lastOrbLoopTime > 0 && elapsed > 30 * 60 * 1000) {
+    console.log('ORB Watchdog: loop bloccato, riavvio...');
+    if (orbTimer) clearInterval(orbTimer);
+    startOrbLoop();
+    await tgSend('<i>ORB Bot riavviato dal watchdog</i>');
+  }
+}, 10 * 60 * 1000);
+
+// ──────────────────────────────────────
+// API ENDPOINTS ORB BOT
+// ──────────────────────────────────────
+app.get('/api/orb-status', function(req, res) {
+  var orbPs = {};
+  for (var i = 0; i < ORB_SYMBOLS.length; i++) {
+    var s = ORB_SYMBOLS[i];
+    var st = orbState[s];
+    if (!st) continue;
+    var cfg = ORB_SESSIONS[s];
+    orbPs[s] = {
+      name: ORB_NAMES[s],
+      sessionDate: st.sessionDate,
+      sessionTz: cfg ? cfg.localTz : null,
+      orHigh: st.orHigh,
+      orLow: st.orLow,
+      orWidth: (st.orHigh !== null && st.orLow !== null) ? +(st.orHigh - st.orLow).toFixed(4) : null,
+      orComplete: st.orComplete,
+      orStartTs: st.orStartTs,
+      orEndTs: st.orEndTs,
+      windowEndTs: st.windowEndTs,
+      activeTrade: st.activeTrade,
+      sessionDone: st.sessionDone,
+      candleCount: st.candlesM15.length,
+      stats: st.stats,
+      log: st.log.slice(0, 10)
+    };
+  }
   res.json({
-    macroRunning: macroRunning,
-    instruments: MACRO_INSTRUMENTS.map(function(i) { return i.id; }),
-    warnPct: MACRO_WARN_PCT,
-    alertPct: MACRO_ALERT_PCT,
-    refreshSec: MACRO_REFRESH_SEC,
-    briefEnabled: MACRO_BRIEF_ENABLED,
-    lastLoopTime: lastMacroLoopTime,
-    lastBriefSent: lastBriefSent,
-    state: state,
-    regime: classifyRegime()
+    orbRunning: orbRunning,
+    symbols: ORB_SYMBOLS,
+    state: orbPs,
+    lastLoopTime: lastOrbLoopTime,
+    orbLog: globalLog.filter(function(l){ return l.source === 'ORB'; }).slice(0, 20)
   });
 });
 
-app.post('/api/macro-start', async function(req, res) {
-  macroRunning = true;
-  startMacroLoop();
-  startBriefScheduler();
-  await tgSend('<b>Macro Monitor avviato</b>\n' +
-               'Strumenti: ' + MACRO_INSTRUMENTS.length + '\n' +
-               'Soglie: warn ' + MACRO_WARN_PCT + '% / alert ' + MACRO_ALERT_PCT + '%\n' +
-               'Briefing settimanale: ' + (MACRO_BRIEF_ENABLED ? 'attivo lunedi 9 UTC' : 'disattivo'));
-  res.json({ ok: true, message: 'Macro Monitor avviato' });
+app.post('/api/orb-start', async function(req, res) {
+  orbRunning = true;
+  try {
+    for (var i = 0; i < ORB_SYMBOLS.length; i++) {
+      var s = ORB_SYMBOLS[i];
+      checkAndResetOrbSession(s);
+      try {
+        await fetchOrbCandles(s, '15min', 'candlesM15');
+        await new Promise(function(r) { setTimeout(r, 1500); });
+        await fetchOrbCandles(s, '1h', 'candlesH1');
+        await new Promise(function(r) { setTimeout(r, 1500); });
+      } catch(e) {
+        console.error('ORB init ' + s + ': ' + e.message);
+      }
+    }
+    startOrbLoop();
+    await tgSend('<b>ORB Bot avviato</b>\nIndici: ' + ORB_SYMBOLS.join(', ') +
+                 '\nOR 30min | Trailing EMA20 M15');
+    res.json({ ok: true, message: 'ORB Bot avviato su ' + ORB_SYMBOLS.join(', ') });
+  } catch(e) {
+    res.json({ ok: false, message: e.message });
+  }
 });
 
-app.post('/api/macro-stop', async function(req, res) {
-  macroRunning = false;
-  if (macroTimer) clearInterval(macroTimer);
-  if (macroBriefTimer) clearInterval(macroBriefTimer);
-  await tgSend('Macro Monitor fermato');
+app.post('/api/orb-stop', async function(req, res) {
+  orbRunning = false;
+  if (orbTimer) clearInterval(orbTimer);
+  await tgSend('ORB Bot fermato');
   res.json({ ok: true });
 });
 
-// Endpoint per forzare l'invio del briefing manualmente (per test)
-app.post('/api/macro-brief-now', async function(req, res) {
-  await sendWeeklyBrief();
-  res.json({ ok: true, message: 'Briefing inviato manualmente' });
-});
-
 // ══════════════════════════════════════════════════════════════════════════════
-// ██████████████████████████████████████████████████████████████████████████████
-// FINE MODULO MACRO MONITOR
-// ██████████████████████████████████████████████████████████████████████████████
+// AVVIO SERVER (auto-start tutti e 3 i bot)
 // ══════════════════════════════════════════════════════════════════════════════
-
-// ══════════════════════════════════════
-// AVVIO SERVER
-// ══════════════════════════════════════
 app.listen(PORT, function() {
-  console.log('ST-EA v3.3 Server on port ' + PORT);
+  console.log('ST-EA v3.4 Server on port ' + PORT);
   console.log('TG: ' + (TG_TOKEN ? 'OK' : '--') + ' | TD: ' + (TD_KEY ? 'OK' : '--'));
   console.log('Trend Bot Symbols: ' + DEFAULT_SYMBOLS.join(', '));
   console.log('PA Bot Symbols: ' + PA_SYMBOLS.join(', '));
-  console.log('Macro Monitor Instruments: ' + MACRO_INSTRUMENTS.length);
+  console.log('ORB Bot Indices: ' + ORB_SYMBOLS.join(', '));
 
-  // Auto-start trend bot
   console.log('Auto-starting Trend EA on: ' + DEFAULT_SYMBOLS.join(', '));
   activeSymbols = DEFAULT_SYMBOLS.slice();
   activeSymbols.forEach(function(s) { if (!symbolState[s]) initSymbol(s); });
   isRunning = true;
 
-  // Auto-start PA bot
   console.log('Auto-starting PA Bot on: ' + PA_SYMBOLS.join(', '));
   paRunning = true;
 
-  // Auto-start Macro Monitor
-  console.log('Auto-starting Macro Monitor');
-  macroRunning = true;
+  console.log('Auto-starting ORB Bot');
+  orbRunning = true;
 
   setTimeout(async function() {
-    // 1. Trend bot init
+    // 1. Trend bot
     for (var i = 0; i < activeSymbols.length; i++) {
       try { await fetchCandles(activeSymbols[i]); }
       catch(e) { console.error(activeSymbols[i], e.message); }
@@ -1828,7 +1698,7 @@ app.listen(PORT, function() {
     lastLoopTime = Date.now();
     console.log('Trend EA auto-started');
 
-    // 2. PA bot init
+    // 2. PA bot
     for (var j = 0; j < PA_SYMBOLS.length; j++) {
       try { await fetchPAD1(PA_SYMBOLS[j]); }
       catch(e) { console.error('PA init ' + PA_SYMBOLS[j] + ': ' + e.message); }
@@ -1838,15 +1708,26 @@ app.listen(PORT, function() {
     startPALoop();
     console.log('PA Bot auto-started');
 
-    // 3. Macro Monitor init
-    startMacroLoop();
-    startBriefScheduler();
-    console.log('Macro Monitor auto-started');
+    // 3. ORB bot
+    for (var m = 0; m < ORB_SYMBOLS.length; m++) {
+      var s = ORB_SYMBOLS[m];
+      checkAndResetOrbSession(s);
+      try {
+        await fetchOrbCandles(s, '15min', 'candlesM15');
+        await new Promise(function(r) { setTimeout(r, 2000); });
+        await fetchOrbCandles(s, '1h', 'candlesH1');
+      } catch(e) {
+        console.error('ORB init ' + s + ': ' + e.message);
+      }
+      await new Promise(function(r) { setTimeout(r, 2000); });
+    }
+    startOrbLoop();
+    console.log('ORB Bot auto-started');
 
-    await tgSend('<b>ST-EA v3.3 Online — Triple Bot</b>' +
+    await tgSend('<b>ST-EA v3.4 Online -- Triple Bot</b>' +
                  '\n<b>Trend M15:</b> ' + activeSymbols.join(', ') +
                  '\n<b>PA D1:</b> ' + PA_SYMBOLS.join(', ') +
-                 '\n<b>Macro:</b> ' + MACRO_INSTRUMENTS.length + ' strumenti monitorati' +
-                 '\nBriefing settimanale: lunedi ' + MACRO_BRIEF_HOUR + ':00 UTC');
+                 '\n<b>ORB:</b> ' + ORB_SYMBOLS.join(', ') +
+                 '\nMacro Monitor sostituito da ORB Bot');
   }, 5000);
 });
