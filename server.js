@@ -1727,7 +1727,7 @@ app.listen(PORT, function() {
     await tgSend('<b>ST-EA v3.4 Online -- Triple Bot</b>' +
                  '\n<b>Trend M15:</b> ' + activeSymbols.join(', ') +
                  '\n<b>PA D1:</b> ' + PA_SYMBOLS.join(', ') +
-                 '\n<b>ORB:</b> ' + ORB_SYMBOLS.join(', ') +
-                 '\nMacro Monitor sostituito da ORB Bot');
+                 '\n<b>ORB:</b> ' + ORB_SYMBOLS.join(', ');
+               
   }, 5000);
 });
