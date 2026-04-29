@@ -29,30 +29,48 @@ const CRYPTO = ['BTCUSD','ETHUSD','SOLUSD','XRPUSD','BNBUSD','ADAUSD'];
 const METALS = ['XAUUSD','XAGUSD','WTIUSD','BRNUSD','USOIL','UKOIL'];
 const FOREX  = ['EURUSD','GBPUSD','USDJPY','GBPJPY','AUDUSD','USDCAD','USDCHF','NZDUSD'];
 
+// Override globale ADX min via env var (utile per testing/calibrazione veloce
+// senza rebuild). Se settato, sovrascrive tutte le soglie per-simbolo sotto.
+const ADX_MIN_OVERRIDE = process.env.ADX_MIN_OVERRIDE ? parseInt(process.env.ADX_MIN_OVERRIDE) : null;
+
+// Soglie ADX min per categoria asset (M15 timeframe):
+//   18 = soglia tipica per "trend in formazione" su forex maggiori
+//   20 = serve un trend piu' marcato per metalli/oil/JPY pairs (volatilita' superiore)
+//   22 = crypto richiede soglia ancora piu' alta per via del rumore intrinseco
+// Riferimento: Wilder consigliava ADX > 25 per "trend forte", > 20 "trend presente",
+// < 20 "no trend / range". Usare 18 come minimo e' un compromesso ragionevole tra
+// reattivita' e qualita' del segnale.
 const SYMBOL_CONFIG = {
-  XAUUSD: { slMult: 1.8, rr: 2.0, adxMin: 10, allowLong: true, allowShort: false },
-  XAGUSD: { slMult: 1.8, rr: 2.0, adxMin: 10, allowLong: true, allowShort: false },
-  WTIUSD: { slMult: 1.8, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true  },
-  BRNUSD: { slMult: 1.8, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true  },
-  USOIL:  { slMult: 1.8, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true  },
-  UKOIL:  { slMult: 1.8, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true  },
-  EURUSD: { slMult: 1.5, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true  },
-  GBPUSD: { slMult: 1.5, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true  },
-  USDJPY: { slMult: 1.5, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true  },
-  GBPJPY: { slMult: 1.5, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true  },
-  AUDUSD: { slMult: 1.5, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true  },
-  USDCAD: { slMult: 1.5, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true  },
-  USDCHF: { slMult: 1.5, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true  },
-  NZDUSD: { slMult: 1.5, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true  },
-  BTCUSD: { slMult: 2.0, rr: 2.0, adxMin: 15, allowLong: true, allowShort: true  },
-  ETHUSD: { slMult: 2.0, rr: 2.0, adxMin: 15, allowLong: true, allowShort: true  },
-  SOLUSD: { slMult: 2.0, rr: 2.0, adxMin: 15, allowLong: true, allowShort: true  },
-  XRPUSD: { slMult: 2.0, rr: 2.0, adxMin: 15, allowLong: true, allowShort: true  },
-  BNBUSD: { slMult: 2.0, rr: 2.0, adxMin: 15, allowLong: true, allowShort: true  }
+  // Metalli e oil — volatili, adxMin alto
+  XAUUSD: { slMult: 1.8, rr: 2.0, adxMin: 20, allowLong: true, allowShort: false },
+  XAGUSD: { slMult: 1.8, rr: 2.0, adxMin: 20, allowLong: true, allowShort: false },
+  WTIUSD: { slMult: 1.8, rr: 2.0, adxMin: 20, allowLong: true, allowShort: true  },
+  BRNUSD: { slMult: 1.8, rr: 2.0, adxMin: 20, allowLong: true, allowShort: true  },
+  USOIL:  { slMult: 1.8, rr: 2.0, adxMin: 20, allowLong: true, allowShort: true  },
+  UKOIL:  { slMult: 1.8, rr: 2.0, adxMin: 20, allowLong: true, allowShort: true  },
+  // Forex maggiori — adxMin standard
+  EURUSD: { slMult: 1.5, rr: 2.0, adxMin: 18, allowLong: true, allowShort: true  },
+  GBPUSD: { slMult: 1.5, rr: 2.0, adxMin: 18, allowLong: true, allowShort: true  },
+  USDJPY: { slMult: 1.5, rr: 2.0, adxMin: 20, allowLong: true, allowShort: true  },
+  GBPJPY: { slMult: 1.5, rr: 2.0, adxMin: 20, allowLong: true, allowShort: true  },
+  AUDUSD: { slMult: 1.5, rr: 2.0, adxMin: 18, allowLong: true, allowShort: true  },
+  USDCAD: { slMult: 1.5, rr: 2.0, adxMin: 18, allowLong: true, allowShort: true  },
+  USDCHF: { slMult: 1.5, rr: 2.0, adxMin: 18, allowLong: true, allowShort: true  },
+  NZDUSD: { slMult: 1.5, rr: 2.0, adxMin: 18, allowLong: true, allowShort: true  },
+  // Crypto — adxMin piu' alto per via del rumore
+  BTCUSD: { slMult: 2.0, rr: 2.0, adxMin: 22, allowLong: true, allowShort: true  },
+  ETHUSD: { slMult: 2.0, rr: 2.0, adxMin: 22, allowLong: true, allowShort: true  },
+  SOLUSD: { slMult: 2.0, rr: 2.0, adxMin: 22, allowLong: true, allowShort: true  },
+  XRPUSD: { slMult: 2.0, rr: 2.0, adxMin: 22, allowLong: true, allowShort: true  },
+  BNBUSD: { slMult: 2.0, rr: 2.0, adxMin: 22, allowLong: true, allowShort: true  }
 };
 
 function getConfig(sym) {
-  return SYMBOL_CONFIG[sym] || { slMult: 1.5, rr: 2.0, adxMin: 10, allowLong: true, allowShort: true };
+  var base = SYMBOL_CONFIG[sym] || { slMult: 1.5, rr: 2.0, adxMin: 18, allowLong: true, allowShort: true };
+  if (ADX_MIN_OVERRIDE !== null) {
+    return Object.assign({}, base, { adxMin: ADX_MIN_OVERRIDE });
+  }
+  return base;
 }
 
 const YAHOO_MAP = {
@@ -166,32 +184,68 @@ function calcST(c, period, mult) {
 }
 
 function calcADX(c, period) {
+  // ADX di Wilder: smoothing esponenziale del DX, non media mobile.
+  // Restituisce l'ADX dell'ULTIMO bar disponibile in c.
+  // Se vuoi l'ADX del bar chiuso, passa c.slice(0, -1).
   period = period || 14;
-  if (c.length < period * 2) return 0;
+  if (c.length < period * 2 + 1) return 0;
+
+  // Step 1: calcola TR, +DM, -DM per ogni bar
   var trArr = [], plusDM = [], minusDM = [];
   for (var i = 1; i < c.length; i++) {
-    var tr = Math.max(c[i].high - c[i].low, Math.abs(c[i].high - c[i-1].close), Math.abs(c[i].low - c[i-1].close));
+    var tr = Math.max(
+      c[i].high - c[i].low,
+      Math.abs(c[i].high - c[i-1].close),
+      Math.abs(c[i].low - c[i-1].close)
+    );
     var upMove = c[i].high - c[i-1].high;
     var downMove = c[i-1].low - c[i].low;
     trArr.push(tr);
     plusDM.push(upMove > downMove && upMove > 0 ? upMove : 0);
     minusDM.push(downMove > upMove && downMove > 0 ? downMove : 0);
   }
-  var smoothTR = trArr.slice(0, period).reduce(function(a,b){return a+b;}, 0);
-  var smoothPlus = plusDM.slice(0, period).reduce(function(a,b){return a+b;}, 0);
-  var smoothMinus = minusDM.slice(0, period).reduce(function(a,b){return a+b;}, 0);
+
+  // Step 2: Wilder smoothing su TR, +DM, -DM (seed = somma primi N)
+  var smTR = 0, smPlus = 0, smMinus = 0;
+  for (var k = 0; k < period; k++) {
+    smTR += trArr[k];
+    smPlus += plusDM[k];
+    smMinus += minusDM[k];
+  }
+
+  // Step 3: per ogni bar successivo, calcola DX = |+DI - -DI| / (+DI + -DI) * 100
   var dxArr = [];
+  // Primo DX al bar period-esimo
+  var plusDI = smTR > 0 ? (smPlus / smTR) * 100 : 0;
+  var minusDI = smTR > 0 ? (smMinus / smTR) * 100 : 0;
+  var diSum = plusDI + minusDI;
+  dxArr.push(diSum > 0 ? Math.abs(plusDI - minusDI) / diSum * 100 : 0);
+
+  // Bar successivi con Wilder smoothing
   for (var j = period; j < trArr.length; j++) {
-    smoothTR = smoothTR - smoothTR/period + trArr[j];
-    smoothPlus = smoothPlus - smoothPlus/period + plusDM[j];
-    smoothMinus = smoothMinus - smoothMinus/period + minusDM[j];
-    var plusDI = smoothTR > 0 ? (smoothPlus / smoothTR) * 100 : 0;
-    var minusDI = smoothTR > 0 ? (smoothMinus / smoothTR) * 100 : 0;
-    var diSum = plusDI + minusDI;
+    smTR = smTR - smTR / period + trArr[j];
+    smPlus = smPlus - smPlus / period + plusDM[j];
+    smMinus = smMinus - smMinus / period + minusDM[j];
+    plusDI = smTR > 0 ? (smPlus / smTR) * 100 : 0;
+    minusDI = smTR > 0 ? (smMinus / smTR) * 100 : 0;
+    diSum = plusDI + minusDI;
     dxArr.push(diSum > 0 ? Math.abs(plusDI - minusDI) / diSum * 100 : 0);
   }
-  if (!dxArr.length) return 0;
-  return dxArr.slice(-period).reduce(function(a,b){return a+b;}, 0) / Math.min(period, dxArr.length);
+
+  if (dxArr.length < period) return 0;
+
+  // Step 4: ADX = Wilder smoothing del DX (NON media mobile semplice!)
+  // Seed = media dei primi `period` valori di DX
+  var adx = 0;
+  for (var s = 0; s < period; s++) adx += dxArr[s];
+  adx = adx / period;
+
+  // Smoothing esponenziale per i bar successivi
+  for (var t = period; t < dxArr.length; t++) {
+    adx = (adx * (period - 1) + dxArr[t]) / period;
+  }
+
+  return adx;
 }
 
 function calcEMA(c, p) {
@@ -201,6 +255,36 @@ function calcEMA(c, p) {
   ema = ema/p;
   for (var j = p; j < c.length; j++) ema = c[j].close*k + ema*(1-k);
   return ema;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Helper: ritorna le candele garantitamente CHIUSE (esclude l'ultimo bar
+// se è ancora in formazione). Determina la chiusura confrontando il timestamp
+// dell'ultimo bar con (now - intervallo). Se l'intervallo non è specificato,
+// lo deduce dalla differenza tra penultimo e antepenultimo timestamp.
+// Questo previene segnali basati su ADX/SuperTrend di un bar in formazione
+// che può oscillare drasticamente fino al close.
+// ──────────────────────────────────────────────────────────────────────────
+function confirmedCandles(c, intervalMs) {
+  if (!c || c.length < 3) return c || [];
+
+  // Auto-detect intervallo se non passato (differenza tipica tra due bar chiusi)
+  if (!intervalMs) {
+    intervalMs = c[c.length - 2].time - c[c.length - 3].time;
+  }
+
+  var lastBarTime = c[c.length - 1].time;
+  var now = Date.now();
+
+  // Bar è confermato se è passato (intervallo + buffer) dal suo open time
+  // Buffer di 5s per gestire delay di delivery dei dati dal provider
+  var buffer = 5000;
+  if (now < lastBarTime + intervalMs + buffer) {
+    // L'ultimo bar è ancora in formazione: rimuovilo
+    return c.slice(0, -1);
+  }
+
+  return c;
 }
 
 function calcRSI(c, p) {
@@ -363,6 +447,15 @@ async function tgSend(text) {
 }
 // ══════════════════════════════════════════════════════════════════════════════
 // GENERAZIONE SEGNALE TREND BOT
+//
+// Fix applicati per ridurre falsi segnali in mercati ranging:
+//   - Indicatori (SuperTrend, ADX, ATR) calcolati SOLO su bar M15 chiusi
+//     tramite confirmedCandles(). L'ultimo bar in formazione viene escluso.
+//   - Calcolo ADX corretto con Wilder smoothing esponenziale (era SMA, sbagliato).
+//   - Detection flip STRICT: richiede flip 3/3 in QUESTO bar (no recentFlip).
+//     Inoltre lo stato precedente deve essere maggioritariamente opposto
+//     (bvPrev <= 1 per BUY, svPrev <= 1 per SELL) per evitare flip "deboli".
+//   - ADX min alzato a 18-22 per categoria asset (era 10-15, troppo basso).
 // ══════════════════════════════════════════════════════════════════════════════
 async function checkSignal(sym, cooldownMin) {
   try {
@@ -377,49 +470,57 @@ async function checkSignal(sym, cooldownMin) {
     var mStatus = getMarketStatus(sym);
     if (mStatus) { st.stats.lastFilter = '[CHIUSO] ' + mStatus; return; }
 
-    var st1 = calcST(st.candles, 7, 2.0);
-    var st2 = calcST(st.candles, 14, 3.0);
-    var st3 = calcST(st.candles, 21, 4.5);
+    // FIX: usa SOLO bar chiusi per SuperTrend, ADX e flip detection.
+    // Sull'ultimo bar in formazione il valore può oscillare drasticamente
+    // fino al close, generando flip "fantasma" che spariscono dopo.
+    var confirmedC = confirmedCandles(st.candles, 15 * 60 * 1000);
+    if (confirmedC.length < 30) {
+      st.stats.lastFilter = 'Dati insufficienti (need 30+ bar chiusi)';
+      return;
+    }
+
+    var st1 = calcST(confirmedC, 7, 2.0);
+    var st2 = calcST(confirmedC, 14, 3.0);
+    var st3 = calcST(confirmedC, 21, 4.5);
     if (!st1.length || !st2.length || !st3.length) {
       st.stats.lastFilter = 'Dati insufficienti';
       return;
     }
 
+    // Stato corrente (ultimo bar CHIUSO)
     var b1 = st1[st1.length-1].dir === 1;
     var b2 = st2[st2.length-1].dir === 1;
     var b3 = st3[st3.length-1].dir === 1;
     var bv = (b1?1:0) + (b2?1:0) + (b3?1:0);
     var sv = 3 - bv;
 
+    // Stato bar precedente (per detection flip)
     var b1p = st1.length >= 2 ? st1[st1.length-2].dir === 1 : b1;
     var b2p = st2.length >= 2 ? st2[st2.length-2].dir === 1 : b2;
     var b3p = st3.length >= 2 ? st3[st3.length-2].dir === 1 : b3;
     var bvPrev = (b1p?1:0) + (b2p?1:0) + (b3p?1:0);
     var svPrev = 3 - bvPrev;
 
-    var b1p2 = st1.length >= 3 ? st1[st1.length-3].dir === 1 : b1p;
-    var b2p2 = st2.length >= 3 ? st2[st2.length-3].dir === 1 : b2p;
-    var b3p2 = st3.length >= 3 ? st3[st3.length-3].dir === 1 : b3p;
-    var bvPrev2 = (b1p2?1:0) + (b2p2?1:0) + (b3p2?1:0);
-    var svPrev2 = 3 - bvPrev2;
+    // FIX 4: flip STRICT — accetto SOLO se questo bar ha portato il flip 3/3.
+    // Tolto il "recentFlip" che accettava anche flip 2 bar fa (troppo permissivo,
+    // generava ingressi in ritardo o su situazioni gia' cambiate).
+    // Inoltre richiedo che la maggioranza fosse OPPOSTA al bar precedente (bvPrev <= 1
+    // per BUY, svPrev <= 1 per SELL) — cosi' il flip e' davvero un cambio di regime.
+    var flippedBuy  = bv === 3 && bvPrev <= 1;   // tutti BUY ora, almeno 2 SELL prima
+    var flippedSell = sv === 3 && svPrev <= 1;   // tutti SELL ora, almeno 2 BUY prima
 
-    var flippedBuy  = bv === 3 && svPrev >= 2;
-    var flippedSell = sv === 3 && bvPrev >= 2;
-
-    var recentFlipBuy  = flippedBuy  || (bv === 3 && svPrev2 >= 2);
-    var recentFlipSell = flippedSell || (sv === 3 && bvPrev2 >= 2);
-
-    if (!recentFlipBuy && !recentFlipSell) {
-      st.stats.lastFilter = 'No flip (ST: ' + bv + 'B/' + sv + 'S)';
+    if (!flippedBuy && !flippedSell) {
+      st.stats.lastFilter = 'No flip 3/3 strict (ST: ' + bv + 'B/' + sv +
+                            'S, prev: ' + bvPrev + 'B/' + svPrev + 'S)';
       return;
     }
 
     var dir = null;
-    if (recentFlipBuy && cfg.allowLong)   dir = 'BUY';
-    if (recentFlipSell && cfg.allowShort) dir = 'SELL';
+    if (flippedBuy && cfg.allowLong)   dir = 'BUY';
+    if (flippedSell && cfg.allowShort) dir = 'SELL';
 
     if (!dir) {
-      st.stats.lastFilter = recentFlipBuy ? 'LONG disabilitato' : 'SHORT disabilitato';
+      st.stats.lastFilter = flippedBuy ? 'LONG disabilitato' : 'SHORT disabilitato';
       return;
     }
 
@@ -428,15 +529,18 @@ async function checkSignal(sym, cooldownMin) {
       return;
     }
 
-    var adx = calcADX(st.candles, 14);
+    // FIX: ADX gia' calcolato su confirmedC (riusa array di SuperTrend)
+    var adx = calcADX(confirmedC, 14);
     if (adx < cfg.adxMin) {
       st.stats.lastFilter = 'ADX ' + adx.toFixed(1) + ' < ' + cfg.adxMin + ' (mercato piatto)';
       return;
     }
 
-    var price = st.candles[st.candles.length-1].close;
+    // FIX: price = close del bar che ha flippato (confermato), non l'ultimo tick.
+    // Cosi' il segnale e' coerente con dove il SuperTrend ha effettivamente flippato.
+    var price = confirmedC[confirmedC.length-1].close;
     var dec = price > 1000 ? 2 : price > 10 ? 3 : 4;
-    var atrArr = calcATR(st.candles, 14);
+    var atrArr = calcATR(confirmedC, 14);
     var atr = atrArr[atrArr.length-1] || 0;
     var slDist = Math.max(atr * cfg.slMult, price * 0.005);
     var sl = dir === 'BUY' ? price - slDist : price + slDist;
@@ -2060,8 +2164,11 @@ function checkStocksSignal(sym) {
 // HELPER: ADX series (per stocks needs to return array, non solo last value)
 // ──────────────────────────────────────────────────────────────────────────────
 function calcADXSeries(c, p) {
+  // ADX di Wilder per ogni bar (usato da Stocks bot per ottenere serie completa).
+  // Stesso algoritmo di calcADX ma ritorna l'array di ADX invece dell'ultimo valore.
   p = p || 14;
-  if (c.length < p * 2) return [];
+  if (c.length < p * 2 + 1) return [];
+
   var tr = [], pdm = [], mdm = [];
   for (var i = 1; i < c.length; i++) {
     var h = c[i].high, lo = c[i].low, ph = c[i-1].high, pl = c[i-1].low, pc = c[i-1].close;
@@ -2070,26 +2177,44 @@ function calcADXSeries(c, p) {
     pdm.push(up > dn && up > 0 ? up : 0);
     mdm.push(dn > up && dn > 0 ? dn : 0);
   }
-  var st = tr.slice(0, p).reduce(function(a, b) { return a + b; }, 0);
-  var sp = pdm.slice(0, p).reduce(function(a, b) { return a + b; }, 0);
-  var sm = mdm.slice(0, p).reduce(function(a, b) { return a + b; }, 0);
+
+  // Wilder smoothing seed
+  var st = 0, sp = 0, sm = 0;
+  for (var k = 0; k < p; k++) {
+    st += tr[k]; sp += pdm[k]; sm += mdm[k];
+  }
+
+  // DX series
   var dx = [];
+  var pi = st > 0 ? sp / st * 100 : 0;
+  var mi = st > 0 ? sm / st * 100 : 0;
+  var sm2 = pi + mi;
+  dx.push(sm2 > 0 ? Math.abs(pi - mi) / sm2 * 100 : 0);
+
   for (var j = p; j < tr.length; j++) {
     st = st - st / p + tr[j];
     sp = sp - sp / p + pdm[j];
     sm = sm - sm / p + mdm[j];
-    var pi = st > 0 ? sp / st * 100 : 0;
-    var mi = st > 0 ? sm / st * 100 : 0;
-    var sm2 = pi + mi;
+    pi = st > 0 ? sp / st * 100 : 0;
+    mi = st > 0 ? sm / st * 100 : 0;
+    sm2 = pi + mi;
     dx.push(sm2 > 0 ? Math.abs(pi - mi) / sm2 * 100 : 0);
   }
-  // ADX = sma di DX su periodo p
+
+  if (dx.length < p) return [];
+
+  // ADX = Wilder smoothing del DX (NON SMA!)
   var adxOut = [];
-  for (var k = p - 1; k < dx.length; k++) {
-    var sum = 0;
-    for (var z = k - p + 1; z <= k; z++) sum += dx[z];
-    adxOut.push(sum / p);
+  var seed = 0;
+  for (var s = 0; s < p; s++) seed += dx[s];
+  var adx = seed / p;
+  adxOut.push(adx);
+
+  for (var t = p; t < dx.length; t++) {
+    adx = (adx * (p - 1) + dx[t]) / p;
+    adxOut.push(adx);
   }
+
   return adxOut;
 }
 
