@@ -6,13 +6,14 @@ app.use(express.json());
 app.use(express.static('public'));
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ST-EA Server -- Triple Bot Edition
+// ST-EA Server -- Quad Bot Edition
 //
-// Tre bot operativi indipendenti:
+// Quattro bot operativi indipendenti:
 //   1. Trend Bot M15  -- triplo SuperTrend con flip 3/3 stretto + ADX min
 //   2. PA Bot D1      -- pattern candlestick + trend D1/H4 + S/R
 //   3. ORB Bot        -- Opening Range Breakout su 5 indici globali
 //                       (US500, US100, GER40, UK100, JP225)
+//   4. Stocks Bot W1  -- Pullback in trend forte su azioni USA + ETF settoriali
 // ══════════════════════════════════════════════════════════════════════════════
 
 const PORT        = process.env.PORT       || 3000;
@@ -200,6 +201,30 @@ function calcEMA(c, p) {
   ema = ema/p;
   for (var j = p; j < c.length; j++) ema = c[j].close*k + ema*(1-k);
   return ema;
+}
+
+function calcRSI(c, p) {
+  p = p || 14;
+  if (c.length < p + 1) return 50;
+  var gains = 0, losses = 0;
+  // Initial average gain/loss su primi p periodi
+  for (var i = 1; i <= p; i++) {
+    var diff = c[i].close - c[i-1].close;
+    if (diff > 0) gains += diff;
+    else losses += Math.abs(diff);
+  }
+  var avgGain = gains / p, avgLoss = losses / p;
+  // Wilder's smoothing per il resto
+  for (var j = p + 1; j < c.length; j++) {
+    var d = c[j].close - c[j-1].close;
+    var g = d > 0 ? d : 0;
+    var l = d < 0 ? Math.abs(d) : 0;
+    avgGain = (avgGain * (p - 1) + g) / p;
+    avgLoss = (avgLoss * (p - 1) + l) / p;
+  }
+  if (avgLoss === 0) return 100;
+  var rs = avgGain / avgLoss;
+  return 100 - (100 / (1 + rs));
 }
 
 function calcLotSize(sym, balance, riskPct, slDist) {
@@ -582,7 +607,7 @@ app.get('/api/candles', function(req, res) {
 
 app.get('/api/version', function(req, res) {
   res.json({
-    version: 'ST-EA Triple Bot: Trend + PA + ORB',
+    version: 'ST-EA Quad Bot: Trend + PA + ORB + Stocks',
     trendBot: {
       enabled: true,
       running: isRunning,
@@ -607,11 +632,23 @@ app.get('/api/version', function(req, res) {
       orMinutes: 30,
       tradingWindowMinutes: 240
     },
+    stocksBot: {
+      enabled: true,
+      running: stocksRunning,
+      symbols: STOCKS_SYMBOLS,
+      timeframe: 'W1 weekly',
+      logic: 'Pullback in strong trend (px>EMA50>EMA200, RSI 40-55, reversal candle)',
+      scanTime: '22:00 UTC daily',
+      entrySignalsOnly: 'Friday',
+      cooldownWeeks: 4,
+      holdingWeeks: '1-4'
+    },
     dataSources: {
       forex: 'TwelveData (primary) + Yahoo (fallback)',
       metals: 'TwelveData (primary) + Yahoo (fallback)',
       crypto: 'OKX',
-      indices_orb: 'TwelveData (primary) + Yahoo (fallback)'
+      indices_orb: 'TwelveData (primary) + Yahoo (fallback)',
+      stocks: 'Yahoo Finance'
     },
     uptimeSec: Math.floor(process.uptime())
   });
@@ -1662,7 +1699,551 @@ app.post('/api/orb-stop', async function(req, res) {
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
-// AVVIO SERVER (auto-start tutti e 3 i bot)
+// ██████████████████████████████████████████████████████████████████████████████
+// STOCKS BOT -- Pullback in Strong Trend (W1 timeframe, holding 1-4 weeks)
+// ██████████████████████████████████████████████████████████████████████████████
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// Bot operativo che monitora un universo di azioni USA + ETF settoriali sul
+// timeframe weekly. Cerca pullback in trend forti di lungo periodo per entrare
+// nella direzione del trend dominante.
+//
+// Strategia (timeframe W1):
+//   ENTRY (BUY only - long-only su azioni):
+//     1. Trend forte:  prezzo > EMA50 W1 AND EMA50 > EMA200 W1
+//     2. Pullback:     RSI(14) W1 tra 40 e 55 (correzione sana)
+//     3. Reversal:     candela W1 verde dopo almeno 1 candela rossa
+//     4. Forza relat:  prezzo > prezzo 13 settimane fa
+//     5. ADX(14) W1 >= 18 (no chop)
+//     6. Volume W1 > media 10 settimane (conferma istituzionale)
+//
+//   EXIT:
+//     - Chiusura W1 sotto EMA50 W1 (stop trailing largo)
+//     - RSI W1 > 75 (overbought euforico, prendi profitto)
+//     - Stop loss virtuale colpito (low W1 < SL)
+//     - Take profit virtuale raggiunto (high W1 > TP)
+//
+// SL/TP:
+//   SL = low della candela trigger - 0.5 * ATR(14) W1
+//   TP = entry + (entry - SL) * 3   (R:R 1:3)
+//
+// Frequenza:
+//   Scan giornaliera alle 22:00 UTC (dopo close NYSE), solo lun-ven.
+//   Segnali generati solo il VENERDI' (W1 chiusa).
+//   Cooldown 4 settimane per ticker, max 1 segnale/settimana globale.
+//
+// Notifiche:
+//   - BUY signal con SL/TP/lot suggerito
+//   - EXIT signal con motivo, P/L virtuale, holding settimane
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Universo di lavoro: 12 ticker (4 stocks + 5 ETF settoriali + 3 broad ETF)
+var STOCKS_SYMBOLS = (process.env.STOCKS_SYMBOLS ||
+  'AAPL,MSFT,NVDA,GOOGL,XLK,XLE,XLF,XLV,XLI,SPY,QQQ,IWM').split(',').map(function(s) { return s.trim(); });
+
+// Yahoo ticker mapping (per gli ETF il simbolo coincide, per stocks pure)
+var STOCKS_YAHOO_MAP = {
+  AAPL: 'AAPL', MSFT: 'MSFT', NVDA: 'NVDA', GOOGL: 'GOOGL',
+  XLK: 'XLK', XLE: 'XLE', XLF: 'XLF', XLV: 'XLV', XLI: 'XLI',
+  SPY: 'SPY', QQQ: 'QQQ', IWM: 'IWM'
+};
+
+// Pretty names
+var STOCKS_NAMES = {
+  AAPL: 'Apple', MSFT: 'Microsoft', NVDA: 'NVIDIA', GOOGL: 'Alphabet',
+  XLK: 'Tech Select Sector', XLE: 'Energy Select Sector', XLF: 'Financial Select Sector',
+  XLV: 'Healthcare Select Sector', XLI: 'Industrial Select Sector',
+  SPY: 'S&P 500 ETF', QQQ: 'Nasdaq 100 ETF', IWM: 'Russell 2000 ETF'
+};
+
+// Stato globale
+var stocksRunning = false;
+var stocksWatchdog = null;
+var stocksLoopHandle = null;
+var lastStocksLoopTime = 0;
+var stocksLog = [];                 // ultimi 50 segnali
+var stocksLastGlobalSignalDate = 0; // timestamp ultimo segnale globale (anti-spam)
+var stocksState = {};               // per-symbol: candles, position, stats, cooldown
+
+function initStocksSymbol(sym) {
+  stocksState[sym] = {
+    name: STOCKS_NAMES[sym] || sym,
+    candlesW1: [],          // ultimi ~150 candele weekly
+    lastFetch: 0,
+    inPosition: false,
+    entryPrice: null,
+    entrySL: null,
+    entryTP: null,
+    entryDate: null,        // timestamp candela ingresso
+    entryATR: null,
+    cooldownUntil: 0,       // timestamp fino a quando non si puo' rientrare
+    stats: {
+      total: 0, wins: 0, losses: 0,
+      lastSignal: '--',
+      lastFilter: '--',
+      lastPnL: 0
+    },
+    log: []
+  };
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// FETCH WEEKLY CANDLES from Yahoo Finance
+// ──────────────────────────────────────────────────────────────────────────────
+async function fetchStocksW1(sym) {
+  var st = stocksState[sym];
+  if (!st) { initStocksSymbol(sym); st = stocksState[sym]; }
+
+  var ticker = STOCKS_YAHOO_MAP[sym] || sym;
+  // 3 anni di weekly = 156 candele, sufficienti per EMA200 W1
+  var url = 'https://query2.finance.yahoo.com/v8/finance/chart/' +
+            ticker + '?interval=1wk&range=3y';
+
+  try {
+    var r = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ST-EA/1.0)' }
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    var data = await r.json();
+
+    var chart = data && data.chart && data.chart.result && data.chart.result[0];
+    if (!chart || !chart.timestamp) throw new Error('Yahoo data malformed');
+
+    var ts = chart.timestamp;
+    var q = chart.indicators.quote[0];
+    var out = [];
+    for (var i = 0; i < ts.length; i++) {
+      if (q.open[i] != null && q.high[i] != null && q.low[i] != null && q.close[i] != null) {
+        out.push({
+          time: ts[i] * 1000,
+          open: +q.open[i], high: +q.high[i],
+          low: +q.low[i], close: +q.close[i],
+          vol: +(q.volume[i] || 0)
+        });
+      }
+    }
+
+    if (out.length < 200) {
+      console.warn('STOCKS ' + sym + ': only ' + out.length + ' weeks (need 200+)');
+    }
+
+    st.candlesW1 = out;
+    st.lastFetch = Date.now();
+    return out;
+  } catch(e) {
+    console.error('STOCKS ' + sym + ' fetch error: ' + e.message);
+    throw e;
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SIGNAL CHECK per simbolo
+// ──────────────────────────────────────────────────────────────────────────────
+function checkStocksSignal(sym) {
+  var st = stocksState[sym];
+  if (!st || !st.candlesW1 || st.candlesW1.length < 200) {
+    if (st) st.stats.lastFilter = 'dati insufficienti (need 200 weeks)';
+    return null;
+  }
+
+  var c = st.candlesW1;
+  var n = c.length;
+  var last = c[n - 1];
+
+  // ─── Calcolo indicatori W1 ───
+  var ema50 = calcEMA(c, 50);
+  var ema200 = calcEMA(c, 200);
+  var rsi = calcRSI(c, 14);
+  var atr = calcATR(c, 14);
+  var atrLast = atr[atr.length - 1];
+  var adxArr = calcADXSeries(c, 14);
+  var adx = adxArr[adxArr.length - 1] || 0;
+
+  // Volume avg 10 settimane
+  var volSum = 0, volCount = 0;
+  for (var v = Math.max(0, n - 11); v < n - 1; v++) {
+    if (c[v].vol > 0) { volSum += c[v].vol; volCount++; }
+  }
+  var volAvg = volCount > 0 ? volSum / volCount : 0;
+
+  // ─── EXIT logic se in posizione ───
+  if (st.inPosition) {
+    var exitReason = null;
+
+    // 1. Chiusura W1 sotto EMA50 W1
+    if (last.close < ema50) exitReason = 'CHIUSURA SOTTO EMA50 W1';
+    // 2. RSI > 75 overbought
+    else if (rsi > 75) exitReason = 'OVERBOUGHT (RSI ' + rsi.toFixed(1) + ')';
+    // 3. SL virtuale colpito
+    else if (last.low <= st.entrySL) exitReason = 'STOP LOSS';
+    // 4. TP virtuale raggiunto
+    else if (last.high >= st.entryTP) exitReason = 'TAKE PROFIT';
+
+    if (exitReason) {
+      var exitPx = exitReason === 'STOP LOSS' ? st.entrySL :
+                   exitReason === 'TAKE PROFIT' ? st.entryTP : last.close;
+      var pnl = exitPx - st.entryPrice;
+      var pnlPct = (pnl / st.entryPrice) * 100;
+      var rMult = pnl / Math.abs(st.entryPrice - st.entrySL);
+      var weeksHeld = Math.round((last.time - st.entryDate) / (7 * 24 * 3600 * 1000));
+
+      st.stats.total++;
+      if (pnl > 0) st.stats.wins++; else st.stats.losses++;
+      st.stats.lastPnL = pnlPct;
+      st.stats.lastSignal = 'EXIT ' + exitReason;
+      st.stats.lastFilter = 'EXIT inviato';
+
+      // Cooldown 4 settimane dopo exit
+      st.cooldownUntil = last.time + (4 * 7 * 24 * 3600 * 1000);
+
+      var exitMsg = '<b>[STOCKS-EA] CHIUSURA</b> <b>' + sym + '</b> (' + st.name + ')\n' +
+                    'Entry: ' + st.entryPrice.toFixed(2) + '\n' +
+                    'Exit:  ' + exitPx.toFixed(2) + '\n' +
+                    'Motivo: <b>' + exitReason + '</b>\n' +
+                    'P/L: ' + (pnl >= 0 ? '+' : '') + pnl.toFixed(2) +
+                    ' (' + (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%)\n' +
+                    'R-multiple: ' + (rMult >= 0 ? '+' : '') + rMult.toFixed(2) + 'R\n' +
+                    'Holding: ' + weeksHeld + ' settimane';
+
+      var record = {
+        sym: sym, dir: 'EXIT', price: exitPx.toFixed(2),
+        time: new Date(last.time).toUTCString(),
+        source: 'STOCKS', pnlPct: pnlPct, rMult: rMult, reason: exitReason
+      };
+      stocksLog.unshift(record);
+      if (stocksLog.length > 50) stocksLog.length = 50;
+      st.log.unshift(record);
+      if (st.log.length > 20) st.log.length = 20;
+      globalLog.unshift(record);
+      if (globalLog.length > 100) globalLog.length = 100;
+
+      // Reset position
+      st.inPosition = false;
+      st.entryPrice = null;
+      st.entrySL = null;
+      st.entryTP = null;
+      st.entryDate = null;
+      st.entryATR = null;
+
+      tgSend(exitMsg);
+      return record;
+    }
+
+    st.stats.lastFilter = 'in posizione (entry ' + st.entryPrice.toFixed(2) + ')';
+    return null;
+  }
+
+  // ─── ENTRY logic se NON in posizione ───
+
+  // Cooldown check
+  if (last.time < st.cooldownUntil) {
+    var weeksLeft = Math.ceil((st.cooldownUntil - last.time) / (7 * 24 * 3600 * 1000));
+    st.stats.lastFilter = 'cooldown (' + weeksLeft + ' settimane)';
+    return null;
+  }
+
+  // Filtro 1: Trend forte
+  var trendOk = last.close > ema50 && ema50 > ema200;
+  if (!trendOk) {
+    st.stats.lastFilter = 'no trend (px<EMA50 o EMA50<EMA200)';
+    return null;
+  }
+
+  // Filtro 2: Pullback (RSI 40-55)
+  var pullbackOk = rsi >= 40 && rsi <= 55;
+  if (!pullbackOk) {
+    st.stats.lastFilter = 'no pullback (RSI ' + rsi.toFixed(1) + ', need 40-55)';
+    return null;
+  }
+
+  // Filtro 3: Reversal (verde dopo rosso)
+  var lastGreen = last.close > last.open;
+  var prevRed = c[n - 2].close < c[n - 2].open;
+  var reversalOk = lastGreen && prevRed;
+  if (!reversalOk) {
+    st.stats.lastFilter = 'no reversal (need verde dopo rosso)';
+    return null;
+  }
+
+  // Filtro 4: Forza relativa (>3 mesi)
+  var px13wAgo = c[n - 14] ? c[n - 14].close : null;
+  if (!px13wAgo) {
+    st.stats.lastFilter = 'no 13w history';
+    return null;
+  }
+  var rsForceOk = last.close > px13wAgo;
+  if (!rsForceOk) {
+    var perf13w = ((last.close - px13wAgo) / px13wAgo * 100).toFixed(1);
+    st.stats.lastFilter = 'forza neg 13w (' + perf13w + '%)';
+    return null;
+  }
+
+  // Filtro 5: ADX
+  if (adx < 18) {
+    st.stats.lastFilter = 'ADX basso (' + adx.toFixed(1) + ', need 18+)';
+    return null;
+  }
+
+  // Filtro 6: Volume sopra media
+  if (volAvg > 0 && last.vol > 0 && last.vol < volAvg) {
+    st.stats.lastFilter = 'volume sotto media (' +
+      Math.round(last.vol / volAvg * 100) + '% di avg)';
+    return null;
+  }
+
+  // Filtro globale: max 1 segnale/settimana
+  var weekMs = 7 * 24 * 3600 * 1000;
+  if (Date.now() - stocksLastGlobalSignalDate < weekMs) {
+    st.stats.lastFilter = 'global cooldown (1/sett)';
+    return null;
+  }
+
+  // ─── TUTTI I FILTRI OK -> GENERA SIGNAL ───
+  var entry = last.close;
+  var sl = last.low - 0.5 * atrLast;
+  var tp = entry + (entry - sl) * 3;
+  var slDist = entry - sl;
+  var slPct = (slDist / entry) * 100;
+  var rrTarget = ((tp - entry) / slDist).toFixed(1);
+  var perf13w = ((last.close - px13wAgo) / px13wAgo * 100).toFixed(1);
+
+  // Lot suggeriti per 100/500/1000 EUR (stock units, non lot forex)
+  var risk100 = 100 * 0.03, risk500 = 500 * 0.03, risk1000 = 1000 * 0.03;
+  var units100 = Math.floor(risk100 / slDist);
+  var units500 = Math.floor(risk500 / slDist);
+  var units1000 = Math.floor(risk1000 / slDist);
+
+  st.inPosition = true;
+  st.entryPrice = entry;
+  st.entrySL = sl;
+  st.entryTP = tp;
+  st.entryDate = last.time;
+  st.entryATR = atrLast;
+  st.stats.lastSignal = 'BUY';
+  st.stats.lastFilter = 'BUY inviato';
+  stocksLastGlobalSignalDate = Date.now();
+
+  var msg = '<b>[STOCKS-EA] BUY</b> <b>' + sym + '</b> (' + st.name + ')\n' +
+            'Entry: <b>' + entry.toFixed(2) + '</b>\n' +
+            'SL: ' + sl.toFixed(2) + ' | TP: ' + tp.toFixed(2) + '\n' +
+            'Distanza SL: ' + slDist.toFixed(2) + ' (' + slPct.toFixed(2) + '%)\n' +
+            'R:R target: 1:' + rrTarget + '\n' +
+            'RSI: ' + rsi.toFixed(1) + ' | ADX: ' + adx.toFixed(1) +
+            ' | 13w perf: +' + perf13w + '%\n' +
+            'Trend: px>EMA50>EMA200 OK\n' +
+            'Units suggeriti (3% risk):\n' +
+            '  100EUR: ' + units100 + ' units\n' +
+            '  500EUR: ' + units500 + ' units\n' +
+            '  1000EUR: ' + units1000 + ' units\n' +
+            'Holding atteso: 1-4 settimane';
+
+  var record = {
+    sym: sym, dir: 'BUY', price: entry.toFixed(2),
+    time: new Date(last.time).toUTCString(),
+    source: 'STOCKS', sl: sl, tp: tp,
+    rsi: rsi, adx: adx, rs13w: parseFloat(perf13w)
+  };
+  stocksLog.unshift(record);
+  if (stocksLog.length > 50) stocksLog.length = 50;
+  st.log.unshift(record);
+  if (st.log.length > 20) st.log.length = 20;
+  globalLog.unshift(record);
+  if (globalLog.length > 100) globalLog.length = 100;
+  globalStats.total++;
+  globalStats.buys++;
+
+  tgSend(msg);
+  return record;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// HELPER: ADX series (per stocks needs to return array, non solo last value)
+// ──────────────────────────────────────────────────────────────────────────────
+function calcADXSeries(c, p) {
+  p = p || 14;
+  if (c.length < p * 2) return [];
+  var tr = [], pdm = [], mdm = [];
+  for (var i = 1; i < c.length; i++) {
+    var h = c[i].high, lo = c[i].low, ph = c[i-1].high, pl = c[i-1].low, pc = c[i-1].close;
+    tr.push(Math.max(h - lo, Math.abs(h - pc), Math.abs(lo - pc)));
+    var up = h - ph, dn = pl - lo;
+    pdm.push(up > dn && up > 0 ? up : 0);
+    mdm.push(dn > up && dn > 0 ? dn : 0);
+  }
+  var st = tr.slice(0, p).reduce(function(a, b) { return a + b; }, 0);
+  var sp = pdm.slice(0, p).reduce(function(a, b) { return a + b; }, 0);
+  var sm = mdm.slice(0, p).reduce(function(a, b) { return a + b; }, 0);
+  var dx = [];
+  for (var j = p; j < tr.length; j++) {
+    st = st - st / p + tr[j];
+    sp = sp - sp / p + pdm[j];
+    sm = sm - sm / p + mdm[j];
+    var pi = st > 0 ? sp / st * 100 : 0;
+    var mi = st > 0 ? sm / st * 100 : 0;
+    var sm2 = pi + mi;
+    dx.push(sm2 > 0 ? Math.abs(pi - mi) / sm2 * 100 : 0);
+  }
+  // ADX = sma di DX su periodo p
+  var adxOut = [];
+  for (var k = p - 1; k < dx.length; k++) {
+    var sum = 0;
+    for (var z = k - p + 1; z <= k; z++) sum += dx[z];
+    adxOut.push(sum / p);
+  }
+  return adxOut;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// LOOP STOCKS
+// ──────────────────────────────────────────────────────────────────────────────
+function isStocksScanTime() {
+  // Scan giornaliera alle 22:00 UTC, lun-ven
+  var now = new Date();
+  var dow = now.getUTCDay(); // 0=dom, 1=lun, ..., 5=ven, 6=sab
+  if (dow === 0 || dow === 6) return false;
+  var h = now.getUTCHours();
+  // Finestra 22:00-22:59 UTC (1 ora di tolleranza, basta che il loop giri ogni ora)
+  return h === 22;
+}
+
+function isFridayUTC() {
+  return new Date().getUTCDay() === 5;
+}
+
+async function stocksLoopOnce() {
+  if (!stocksRunning) return;
+  lastStocksLoopTime = Date.now();
+
+  // Scan-time check: solo durante la finestra alle 22:00 UTC
+  if (!isStocksScanTime()) {
+    return;
+  }
+
+  // I segnali ENTRY sono validi solo il venerdì (W1 chiusa)
+  // Gli EXIT invece sono valutati ogni giorno (per intercettare uscite veloci)
+  var entryAllowed = isFridayUTC();
+
+  console.log('[STOCKS] Scanning ' + STOCKS_SYMBOLS.length +
+              ' tickers (entry=' + entryAllowed + ')');
+
+  for (var i = 0; i < STOCKS_SYMBOLS.length; i++) {
+    var sym = STOCKS_SYMBOLS[i];
+    if (!stocksState[sym]) initStocksSymbol(sym);
+
+    try {
+      // Refetch solo se passate >12 ore
+      var hoursSince = (Date.now() - stocksState[sym].lastFetch) / 3600000;
+      if (hoursSince > 12) {
+        await fetchStocksW1(sym);
+      }
+    } catch(e) {
+      console.error('STOCKS scan ' + sym + ': ' + e.message);
+      continue;
+    }
+
+    // Check EXIT sempre, ENTRY solo venerdì
+    if (stocksState[sym].inPosition) {
+      checkStocksSignal(sym);
+    } else if (entryAllowed) {
+      checkStocksSignal(sym);
+    }
+
+    // Rate limit Yahoo: 2s tra simboli
+    await new Promise(function(r) { setTimeout(r, 2000); });
+  }
+
+  console.log('[STOCKS] Scan completed');
+}
+
+function startStocksLoop() {
+  stopStocksLoop();
+  stocksRunning = true;
+  // Loop ogni ora (controlla se è scan-time, in caso scansiona)
+  stocksLoopHandle = setInterval(stocksLoopOnce, 60 * 60 * 1000);
+
+  // Watchdog 30min per restart se loop bloccato (>2h senza tick)
+  if (stocksWatchdog) clearInterval(stocksWatchdog);
+  stocksWatchdog = setInterval(function() {
+    if (!stocksRunning) return;
+    if (lastStocksLoopTime && Date.now() - lastStocksLoopTime > 2 * 3600 * 1000) {
+      console.warn('[STOCKS] Watchdog: loop seems stuck, restarting');
+      stocksLoopOnce().catch(function(e) { console.error(e); });
+    }
+  }, 30 * 60 * 1000);
+}
+
+function stopStocksLoop() {
+  if (stocksLoopHandle) { clearInterval(stocksLoopHandle); stocksLoopHandle = null; }
+  if (stocksWatchdog) { clearInterval(stocksWatchdog); stocksWatchdog = null; }
+  stocksRunning = false;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// API ENDPOINTS
+// ──────────────────────────────────────────────────────────────────────────────
+app.get('/api/stocks-status', function(req, res) {
+  var stateExport = {};
+  STOCKS_SYMBOLS.forEach(function(s) {
+    var st = stocksState[s];
+    if (!st) return;
+    stateExport[s] = {
+      name: st.name,
+      candleCount: st.candlesW1.length,
+      inPosition: st.inPosition,
+      entryPrice: st.entryPrice,
+      entrySL: st.entrySL,
+      entryTP: st.entryTP,
+      entryDate: st.entryDate,
+      cooldownUntil: st.cooldownUntil,
+      lastPrice: st.candlesW1.length ? st.candlesW1[st.candlesW1.length - 1].close : null,
+      stats: st.stats
+    };
+  });
+
+  res.json({
+    stocksRunning: stocksRunning,
+    stocksSymbols: STOCKS_SYMBOLS,
+    state: stateExport,
+    stocksLog: stocksLog,
+    lastLoopTime: lastStocksLoopTime,
+    lastGlobalSignalDate: stocksLastGlobalSignalDate,
+    nextScanInfo: {
+      scansAt: '22:00 UTC daily',
+      entrySignalsOnly: 'Friday',
+      currentDay: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date().getUTCDay()],
+      isScanTime: isStocksScanTime(),
+      isFriday: isFridayUTC()
+    }
+  });
+});
+
+app.post('/api/stocks-start', async function(req, res) {
+  if (stocksRunning) { res.json({ ok: false, message: 'STOCKS bot already running' }); return; }
+
+  STOCKS_SYMBOLS.forEach(function(s) { if (!stocksState[s]) initStocksSymbol(s); });
+
+  // Init data fetch (sequential)
+  for (var i = 0; i < STOCKS_SYMBOLS.length; i++) {
+    try { await fetchStocksW1(STOCKS_SYMBOLS[i]); }
+    catch(e) { console.error('STOCKS init ' + STOCKS_SYMBOLS[i] + ': ' + e.message); }
+    await new Promise(function(r) { setTimeout(r, 1500); });
+  }
+
+  startStocksLoop();
+  await tgSend('<b>STOCKS Bot avviato</b>\n' +
+               'Tickers: ' + STOCKS_SYMBOLS.join(', ') + '\n' +
+               'Scan giornaliero 22:00 UTC, segnali ven only');
+  res.json({ ok: true });
+});
+
+app.post('/api/stocks-stop', async function(req, res) {
+  stopStocksLoop();
+  await tgSend('STOCKS Bot fermato');
+  res.json({ ok: true });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AVVIO SERVER (auto-start tutti i bot)
 // ══════════════════════════════════════════════════════════════════════════════
 app.listen(PORT, function() {
   console.log('ST-EA Server on port ' + PORT);
@@ -1670,6 +2251,7 @@ app.listen(PORT, function() {
   console.log('Trend Bot Symbols: ' + DEFAULT_SYMBOLS.join(', '));
   console.log('PA Bot Symbols: ' + PA_SYMBOLS.join(', '));
   console.log('ORB Bot Indices: ' + ORB_SYMBOLS.join(', '));
+  console.log('STOCKS Bot Tickers: ' + STOCKS_SYMBOLS.join(', '));
 
   console.log('Auto-starting Trend EA on: ' + DEFAULT_SYMBOLS.join(', '));
   activeSymbols = DEFAULT_SYMBOLS.slice();
@@ -1681,6 +2263,10 @@ app.listen(PORT, function() {
 
   console.log('Auto-starting ORB Bot');
   orbRunning = true;
+
+  console.log('Auto-starting STOCKS Bot');
+  STOCKS_SYMBOLS.forEach(function(s) { if (!stocksState[s]) initStocksSymbol(s); });
+  stocksRunning = true;
 
   setTimeout(async function() {
     // 1. Trend bot
@@ -1719,9 +2305,22 @@ app.listen(PORT, function() {
     startOrbLoop();
     console.log('ORB Bot auto-started');
 
-    await tgSend('<b>ST-EA Online -- Triple Bot</b>' +
+    // 4. STOCKS bot — fetch weekly per tutti i ticker
+    for (var k = 0; k < STOCKS_SYMBOLS.length; k++) {
+      try {
+        await fetchStocksW1(STOCKS_SYMBOLS[k]);
+      } catch(e) {
+        console.error('STOCKS init ' + STOCKS_SYMBOLS[k] + ': ' + e.message);
+      }
+      await new Promise(function(r) { setTimeout(r, 2000); });
+    }
+    startStocksLoop();
+    console.log('STOCKS Bot auto-started');
+
+    await tgSend('<b>ST-EA Online</b>' +
                  '\n<b>Trend M15:</b> ' + activeSymbols.join(', ') +
                  '\n<b>PA D1:</b> ' + PA_SYMBOLS.join(', ') +
-                 '\n<b>ORB:</b> ' + ORB_SYMBOLS.join(', '));
+                 '\n<b>ORB:</b> ' + ORB_SYMBOLS.join(', ') +
+                 '\n<b>STOCKS W1:</b> ' + STOCKS_SYMBOLS.join(', '));
   }, 5000);
 });
