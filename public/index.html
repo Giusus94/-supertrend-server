@@ -2813,24 +2813,6 @@ function calcATR(c, p) {
   for (var j = 1; j < t.length; j++) a.push((a[j-1]*(p-1) + t[j])/p);
   return a;
 }
-function calcST(c, p, m) {
-  var atrs = calcATR(c, p);
-  var res = [], dir = 1, pu = 0, pl = 0;
-  for (var i = 1; i < c.length; i++) {
-    var atr = atrs[i-1] || atrs[0], hl2 = (c[i].high + c[i].low)/2;
-    var u = hl2 + m*atr, l = hl2 - m*atr;
-    if (i > 1) {
-      u = (u < pu || c[i-1].close > pu) ? u : pu;
-      l = (l > pl || c[i-1].close < pl) ? l : pl;
-    }
-    var cl = c[i].close;
-    if (dir === 1 && cl < l) dir = -1;
-    else if (dir === -1 && cl > u) dir = 1;
-    res.push({ dir:dir, line:dir === 1 ? l : u });
-    pu = u; pl = l;
-  }
-  return res;
-}
 function calcRSI(c, p) {
   p = p || 14;
   if (c.length < p+1) return 50;
@@ -2841,35 +2823,6 @@ function calcRSI(c, p) {
   }
   if (l === 0) return 100;
   return 100 - (100/(1 + (g/p)/(l/p)));
-}
-function calcADX(c, p) {
-  p = p || 14;
-  if (c.length < p*2) return 0;
-  var tr = [], pdm = [], mdm = [];
-  for (var i = 1; i < c.length; i++) {
-    var h = c[i].high, lo = c[i].low, ph = c[i-1].high, pl = c[i-1].low, pc = c[i-1].close;
-    tr.push(Math.max(h-lo, Math.abs(h-pc), Math.abs(lo-pc)));
-    var up = h - ph, dn = pl - lo;
-    pdm.push(up > dn && up > 0 ? up : 0);
-    mdm.push(dn > up && dn > 0 ? dn : 0);
-  }
-  var st = tr.slice(0,p).reduce(function(a,b){return a+b;}, 0);
-  var sp = pdm.slice(0,p).reduce(function(a,b){return a+b;}, 0);
-  var sm = mdm.slice(0,p).reduce(function(a,b){return a+b;}, 0);
-  var dx = [];
-  for (var j = p; j < tr.length; j++) {
-    st = st - st/p + tr[j]; sp = sp - sp/p + pdm[j]; sm = sm - sm/p + mdm[j];
-    var pi = st > 0 ? sp/st*100 : 0, mi = st > 0 ? sm/st*100 : 0, sm2 = pi + mi;
-    dx.push(sm2 > 0 ? Math.abs(pi-mi)/sm2*100 : 0);
-  }
-  if (!dx.length) return 0;
-  return dx.slice(-p).reduce(function(a,b){return a+b;}, 0) / Math.min(p, dx.length);
-}
-function calcAvgVol(c, p) {
-  p = p || 20;
-  var s = c.slice(-p), sum = 0;
-  for (var i = 0; i < s.length; i++) sum += (s[i].vol || 0);
-  return sum/s.length;
 }
 function calcEMA(c, p) {
   if (c.length < p) return c[c.length-1].close;
