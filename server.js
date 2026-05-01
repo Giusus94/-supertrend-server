@@ -9,7 +9,7 @@ app.use(express.static('public'));
 // ST-EA Server -- Quad Bot Edition
 //
 // Quattro bot operativi indipendenti:
-//   1. Trend Bot M15  -- triplo SuperTrend con flip 3/3 stretto + ADX min
+//   1. Trend Bot M15  -- Multi-Timeframe Confluence (D1+H4+H1+M15)
 //   2. PA Bot D1      -- pattern candlestick + trend D1/H4 + S/R
 //   3. ORB Bot        -- Opening Range Breakout su 5 indici globali
 //                       (US500, US100, GER40, UK100, JP225)
@@ -29,48 +29,43 @@ const CRYPTO = ['BTCUSD','ETHUSD','SOLUSD','XRPUSD','BNBUSD','ADAUSD'];
 const METALS = ['XAUUSD','XAGUSD','WTIUSD','BRNUSD','USOIL','UKOIL'];
 const FOREX  = ['EURUSD','GBPUSD','USDJPY','GBPJPY','AUDUSD','USDCAD','USDCHF','NZDUSD'];
 
-// Override globale ADX min via env var (utile per testing/calibrazione veloce
-// senza rebuild). Se settato, sovrascrive tutte le soglie per-simbolo sotto.
-const ADX_MIN_OVERRIDE = process.env.ADX_MIN_OVERRIDE ? parseInt(process.env.ADX_MIN_OVERRIDE) : null;
-
-// Soglie ADX min per categoria asset (M15 timeframe):
-//   18 = soglia tipica per "trend in formazione" su forex maggiori
-//   20 = serve un trend piu' marcato per metalli/oil/JPY pairs (volatilita' superiore)
-//   22 = crypto richiede soglia ancora piu' alta per via del rumore intrinseco
-// Riferimento: Wilder consigliava ADX > 25 per "trend forte", > 20 "trend presente",
-// < 20 "no trend / range". Usare 18 come minimo e' un compromesso ragionevole tra
-// reattivita' e qualita' del segnale.
+// ══════════════════════════════════════════════════════════════════════════════
+// SYMBOL CONFIG — MTF Confluence
+//
+// Per la nuova logica Multi-Timeframe Confluence:
+//   - SL e' STRUTTURALE (swing low/high M15) — non serve piu' slMult
+//   - ADX e' su H1 con soglia fissa 22 — non serve piu' adxMin per simbolo
+//   - rr: target R:R per il TP (default 2.5)
+//   - allowLong/allowShort: come prima, per restrizioni direzionali
+// ══════════════════════════════════════════════════════════════════════════════
 const SYMBOL_CONFIG = {
-  // Metalli e oil — volatili, adxMin alto
-  XAUUSD: { slMult: 1.8, rr: 2.0, adxMin: 20, allowLong: true, allowShort: false },
-  XAGUSD: { slMult: 1.8, rr: 2.0, adxMin: 20, allowLong: true, allowShort: false },
-  WTIUSD: { slMult: 1.8, rr: 2.0, adxMin: 20, allowLong: true, allowShort: true  },
-  BRNUSD: { slMult: 1.8, rr: 2.0, adxMin: 20, allowLong: true, allowShort: true  },
-  USOIL:  { slMult: 1.8, rr: 2.0, adxMin: 20, allowLong: true, allowShort: true  },
-  UKOIL:  { slMult: 1.8, rr: 2.0, adxMin: 20, allowLong: true, allowShort: true  },
-  // Forex maggiori — adxMin standard
-  EURUSD: { slMult: 1.5, rr: 2.0, adxMin: 18, allowLong: true, allowShort: true  },
-  GBPUSD: { slMult: 1.5, rr: 2.0, adxMin: 18, allowLong: true, allowShort: true  },
-  USDJPY: { slMult: 1.5, rr: 2.0, adxMin: 20, allowLong: true, allowShort: true  },
-  GBPJPY: { slMult: 1.5, rr: 2.0, adxMin: 20, allowLong: true, allowShort: true  },
-  AUDUSD: { slMult: 1.5, rr: 2.0, adxMin: 18, allowLong: true, allowShort: true  },
-  USDCAD: { slMult: 1.5, rr: 2.0, adxMin: 18, allowLong: true, allowShort: true  },
-  USDCHF: { slMult: 1.5, rr: 2.0, adxMin: 18, allowLong: true, allowShort: true  },
-  NZDUSD: { slMult: 1.5, rr: 2.0, adxMin: 18, allowLong: true, allowShort: true  },
-  // Crypto — adxMin piu' alto per via del rumore
-  BTCUSD: { slMult: 2.0, rr: 2.0, adxMin: 22, allowLong: true, allowShort: true  },
-  ETHUSD: { slMult: 2.0, rr: 2.0, adxMin: 22, allowLong: true, allowShort: true  },
-  SOLUSD: { slMult: 2.0, rr: 2.0, adxMin: 22, allowLong: true, allowShort: true  },
-  XRPUSD: { slMult: 2.0, rr: 2.0, adxMin: 22, allowLong: true, allowShort: true  },
-  BNBUSD: { slMult: 2.0, rr: 2.0, adxMin: 22, allowLong: true, allowShort: true  }
+  // Metalli — long-only (oro/argento storicamente trend-forti al rialzo)
+  XAUUSD: { rr: 2.5, allowLong: true, allowShort: false },
+  XAGUSD: { rr: 2.5, allowLong: true, allowShort: false },
+  // Oil — entrambe le direzioni
+  WTIUSD: { rr: 2.5, allowLong: true, allowShort: true },
+  BRNUSD: { rr: 2.5, allowLong: true, allowShort: true },
+  USOIL:  { rr: 2.5, allowLong: true, allowShort: true },
+  UKOIL:  { rr: 2.5, allowLong: true, allowShort: true },
+  // Forex maggiori
+  EURUSD: { rr: 2.5, allowLong: true, allowShort: true },
+  GBPUSD: { rr: 2.5, allowLong: true, allowShort: true },
+  USDJPY: { rr: 2.5, allowLong: true, allowShort: true },
+  GBPJPY: { rr: 2.5, allowLong: true, allowShort: true },
+  AUDUSD: { rr: 2.5, allowLong: true, allowShort: true },
+  USDCAD: { rr: 2.5, allowLong: true, allowShort: true },
+  USDCHF: { rr: 2.5, allowLong: true, allowShort: true },
+  NZDUSD: { rr: 2.5, allowLong: true, allowShort: true },
+  // Crypto — entrambe direzioni, ma in genere piu' rumorose
+  BTCUSD: { rr: 2.5, allowLong: true, allowShort: true },
+  ETHUSD: { rr: 2.5, allowLong: true, allowShort: true },
+  SOLUSD: { rr: 2.5, allowLong: true, allowShort: true },
+  XRPUSD: { rr: 2.5, allowLong: true, allowShort: true },
+  BNBUSD: { rr: 2.5, allowLong: true, allowShort: true }
 };
 
 function getConfig(sym) {
-  var base = SYMBOL_CONFIG[sym] || { slMult: 1.5, rr: 2.0, adxMin: 18, allowLong: true, allowShort: true };
-  if (ADX_MIN_OVERRIDE !== null) {
-    return Object.assign({}, base, { adxMin: ADX_MIN_OVERRIDE });
-  }
-  return base;
+  return SYMBOL_CONFIG[sym] || { rr: 2.5, allowLong: true, allowShort: true };
 }
 
 const YAHOO_MAP = {
@@ -126,7 +121,7 @@ function isValidPrice(sym, price) {
 // ══════════════════════════════════════
 var ENV_SYMBOLS  = process.env.DEFAULT_SYMBOLS ? process.env.DEFAULT_SYMBOLS.split(',').map(function(s){return s.trim();}) : null;
 var ENV_REFRESH  = parseInt(process.env.REFRESH_SEC) || 300;
-var ENV_COOLDOWN = parseInt(process.env.COOLDOWN_MIN) || 15;
+var ENV_COOLDOWN = parseInt(process.env.COOLDOWN_MIN) || 60;  // MTF: 60 min default (era 15 con SuperTrend)
 
 const DEFAULT_SYMBOLS = ENV_SYMBOLS || ['XAUUSD','EURUSD','BTCUSD'];
 
@@ -140,9 +135,14 @@ var symbolState   = {};
 
 function initSymbol(s) {
   symbolState[s] = {
-    candles: [],
+    candles: [],          // M15 (entry timeframe)
+    candlesH1: [],        // H1 (trend operativo)
+    candlesH4: [],        // H4 (struttura)
+    candlesD1: [],        // D1 (contesto macro)
     lastDir: null,
     lastSignalTime: 0,
+    dailyTradeCount: 0,
+    dailyTradeDate: null,
     stats: { total: 0, buys: 0, sells: 0, lastSignal: '--', lastFilter: '--' },
     log: []
   };
@@ -417,18 +417,46 @@ async function fetchTD(sym, interval, outputsize, target, st) {
 async function fetchCandles(sym) {
   var st = symbolState[sym];
   if (!st) return;
-  if (CRYPTO.indexOf(sym) !== -1) {
+
+  var isCrypto = CRYPTO.indexOf(sym) !== -1;
+
+  // ─── M15 (entry timeframe) ───
+  if (isCrypto) {
     await fetchOKX(sym, '15m', 200, 'candles', st);
   } else {
-    var ok = await fetchTD(sym, '15min', 200, 'candles', st);
-    if (!ok) {
-      console.log(sym + ' TD failed, fallback to Yahoo');
-      await fetchYahoo(sym, '15m', '5d', 'candles', st);
-    }
+    var ok15 = await fetchTD(sym, '15min', 200, 'candles', st);
+    if (!ok15) await fetchYahoo(sym, '15m', '5d', 'candles', st);
   }
+
+  // ─── H1 (trend operativo: ADX, EMA20/50 alignment) ───
+  if (isCrypto) {
+    await fetchOKX(sym, '1H', 100, 'candlesH1', st);
+  } else {
+    var ok1h = await fetchTD(sym, '1h', 100, 'candlesH1', st);
+    if (!ok1h) await fetchYahoo(sym, '1h', '1mo', 'candlesH1', st);
+  }
+
+  // ─── H4 (struttura: EMA20, swing detection) ───
+  if (isCrypto) {
+    await fetchOKX(sym, '4H', 80, 'candlesH4', st);
+  } else {
+    var ok4h = await fetchTD(sym, '4h', 80, 'candlesH4', st);
+    if (!ok4h) await fetchYahoo(sym, '4h', '3mo', 'candlesH4', st);
+  }
+
+  // ─── D1 (contesto macro: EMA50/200 trend, RSI estremi) ───
+  if (isCrypto) {
+    await fetchOKX(sym, '1D', 250, 'candlesD1', st);
+  } else {
+    var ok1d = await fetchTD(sym, '1day', 250, 'candlesD1', st);
+    if (!ok1d) await fetchYahoo(sym, '1d', '1y', 'candlesD1', st);
+  }
+
   var last = st.candles.length ? st.candles[st.candles.length-1].close : 0;
-  var src = CRYPTO.indexOf(sym) !== -1 ? 'OKX' : 'TD';
-  console.log(sym + ' @ ' + last + ' (M15: ' + st.candles.length + ' candles, src=' + src + ')');
+  var src = isCrypto ? 'OKX' : 'TD';
+  console.log(sym + ' @ ' + last + ' (M15:' + st.candles.length +
+              ' H1:' + st.candlesH1.length + ' H4:' + st.candlesH4.length +
+              ' D1:' + st.candlesD1.length + ' src=' + src + ')');
 }
 
 // ══════════════════════════════════════
@@ -446,116 +474,286 @@ async function tgSend(text) {
   } catch(e) { return false; }
 }
 // ══════════════════════════════════════════════════════════════════════════════
-// GENERAZIONE SEGNALE TREND BOT
+// GENERAZIONE SEGNALE TREND BOT — Multi-Timeframe Confluence (MTF)
 //
-// Fix applicati per ridurre falsi segnali in mercati ranging:
-//   - Indicatori (SuperTrend, ADX, ATR) calcolati SOLO su bar M15 chiusi
-//     tramite confirmedCandles(). L'ultimo bar in formazione viene escluso.
-//   - Calcolo ADX corretto con Wilder smoothing esponenziale (era SMA, sbagliato).
-//   - Detection flip STRICT: richiede flip 3/3 in QUESTO bar (no recentFlip).
-//     Inoltre lo stato precedente deve essere maggioritariamente opposto
-//     (bvPrev <= 1 per BUY, svPrev <= 1 per SELL) per evitare flip "deboli".
-//   - ADX min alzato a 18-22 per categoria asset (era 10-15, troppo basso).
+// Sostituisce il vecchio SuperTrend triplo M15 con un sistema multi-timeframe
+// che richiede confluenza di evidenze prima di generare un segnale:
+//
+//   Layer 1 — D1 (contesto macro):     EMA50>EMA200 + RSI non estremo
+//   Layer 2 — H4 (struttura):          Prezzo allineato a EMA20 H4
+//   Layer 3 — H1 (trend operativo):    ADX>22 + EMA20>EMA50 alignment
+//   Layer 4 — M15 (entry trigger):     pullback EMA20 + candela reversal + RSI exit
+//
+// Ogni layer agisce come filtro: se uno solo non passa, niente segnale.
+// SL strutturale (swing low/high reali) + TP a livelli S/R + trailing su EMA50 H1.
 // ══════════════════════════════════════════════════════════════════════════════
+
+// Helper: trova swing low (BUY) o swing high (SELL) nelle ultime N candele
+function findSwing(candles, lookback, isLow) {
+  if (!candles || candles.length < lookback) return null;
+  var slice = candles.slice(-lookback);
+  var extreme = isLow ? Infinity : -Infinity;
+  for (var i = 0; i < slice.length; i++) {
+    var v = isLow ? slice[i].low : slice[i].high;
+    if (isLow ? v < extreme : v > extreme) extreme = v;
+  }
+  return extreme;
+}
+
+// Helper: rileva candela di reversal sull'ultimo bar M15 confermato
+//   Pattern: bullish/bearish engulfing, pin bar, marubozu direzionale
+//   Ritorna: 'BUY' | 'SELL' | null
+function detectReversal(c) {
+  if (!c || c.length < 3) return null;
+  var last = c[c.length - 1];
+  var prev = c[c.length - 2];
+  var range = last.high - last.low;
+  if (range <= 0) return null;
+  var body = Math.abs(last.close - last.open);
+  var prevBody = Math.abs(prev.close - prev.open);
+  var prevRange = prev.high - prev.low;
+  var upperWick = last.high - Math.max(last.open, last.close);
+  var lowerWick = Math.min(last.open, last.close) - last.low;
+
+  // Bullish engulfing: prev rosso, last verde, body last copre body prev
+  var bullEngulf = prev.close < prev.open && last.close > last.open &&
+                   last.open <= prev.close && last.close >= prev.open &&
+                   body > prevBody;
+  // Bearish engulfing
+  var bearEngulf = prev.close > prev.open && last.close < last.open &&
+                   last.open >= prev.close && last.close <= prev.open &&
+                   body > prevBody;
+
+  // Pin bar bullish: ombra sotto > 2x body, ombra sotto > 2x ombra sopra,
+  //                  body nella metà superiore della candela
+  var pinBull = lowerWick > body * 2 && lowerWick > upperWick * 2 &&
+                Math.min(last.open, last.close) > last.low + range * 0.5;
+  // Pin bar bearish
+  var pinBear = upperWick > body * 2 && upperWick > lowerWick * 2 &&
+                Math.max(last.open, last.close) < last.high - range * 0.5;
+
+  // Marubozu forte: body > 70% range, direzione marcata
+  var maruBull = last.close > last.open && body > range * 0.7;
+  var maruBear = last.close < last.open && body > range * 0.7;
+
+  if (bullEngulf || pinBull || maruBull) return 'BUY';
+  if (bearEngulf || pinBear || maruBear) return 'SELL';
+  return null;
+}
+
+// Helper: pullback verso EMA20 negli ultimi N bar?
+//   "ha toccato" = il low/high del bar è stato entro 0.3*ATR dall'EMA20
+function hadRecentPullback(c, ema20, atr, lookback, isBuy) {
+  if (!c || c.length < lookback) return false;
+  var threshold = atr * 0.3;
+  var start = c.length - lookback;
+  for (var i = start; i < c.length; i++) {
+    if (isBuy && c[i].low <= ema20 + threshold) return true;
+    if (!isBuy && c[i].high >= ema20 - threshold) return true;
+  }
+  return false;
+}
+
 async function checkSignal(sym, cooldownMin) {
   try {
     var st = symbolState[sym];
     if (!st || !st.candles.length || !isRunning) return;
 
     var cfg = getConfig(sym);
-    cooldownMin = cooldownMin || 15;
+    cooldownMin = cooldownMin || 60;
 
+    // ─── Cooldown per simbolo ───
     if (Date.now() - st.lastSignalTime < cooldownMin * 60 * 1000) return;
 
+    // ─── Mercato chiuso (forex weekend, ecc) ───
     var mStatus = getMarketStatus(sym);
     if (mStatus) { st.stats.lastFilter = '[CHIUSO] ' + mStatus; return; }
 
-    // FIX: usa SOLO bar chiusi per SuperTrend, ADX e flip detection.
-    // Sull'ultimo bar in formazione il valore può oscillare drasticamente
-    // fino al close, generando flip "fantasma" che spariscono dopo.
-    var confirmedC = confirmedCandles(st.candles, 15 * 60 * 1000);
-    if (confirmedC.length < 30) {
-      st.stats.lastFilter = 'Dati insufficienti (need 30+ bar chiusi)';
+    // ─── Reset contatore daily se cambio giorno ───
+    var today = new Date().toISOString().slice(0, 10);
+    if (st.dailyTradeDate !== today) {
+      st.dailyTradeDate = today;
+      st.dailyTradeCount = 0;
+    }
+    if (st.dailyTradeCount >= 2) {
+      st.stats.lastFilter = 'Max 2 trade/giorno raggiunto';
       return;
     }
 
-    var st1 = calcST(confirmedC, 7, 2.0);
-    var st2 = calcST(confirmedC, 14, 3.0);
-    var st3 = calcST(confirmedC, 21, 4.5);
-    if (!st1.length || !st2.length || !st3.length) {
-      st.stats.lastFilter = 'Dati insufficienti';
+    // ─── Verifica dati disponibili per tutti i timeframe ───
+    if (st.candles.length < 50 || st.candlesH1.length < 60 ||
+        st.candlesH4.length < 30 || st.candlesD1.length < 200) {
+      st.stats.lastFilter = 'Dati MTF insufficienti (M15:' + st.candles.length +
+                            ' H1:' + st.candlesH1.length +
+                            ' H4:' + st.candlesH4.length +
+                            ' D1:' + st.candlesD1.length + ')';
       return;
     }
 
-    // Stato corrente (ultimo bar CHIUSO)
-    var b1 = st1[st1.length-1].dir === 1;
-    var b2 = st2[st2.length-1].dir === 1;
-    var b3 = st3[st3.length-1].dir === 1;
-    var bv = (b1?1:0) + (b2?1:0) + (b3?1:0);
-    var sv = 3 - bv;
+    // ─── Bar chiusi per ogni TF (esclude bar in formazione) ───
+    var c15 = confirmedCandles(st.candles, 15 * 60 * 1000);
+    var cH1 = confirmedCandles(st.candlesH1, 60 * 60 * 1000);
+    var cH4 = confirmedCandles(st.candlesH4, 4 * 60 * 60 * 1000);
+    var cD1 = confirmedCandles(st.candlesD1, 24 * 60 * 60 * 1000);
 
-    // Stato bar precedente (per detection flip)
-    var b1p = st1.length >= 2 ? st1[st1.length-2].dir === 1 : b1;
-    var b2p = st2.length >= 2 ? st2[st2.length-2].dir === 1 : b2;
-    var b3p = st3.length >= 2 ? st3[st3.length-2].dir === 1 : b3;
-    var bvPrev = (b1p?1:0) + (b2p?1:0) + (b3p?1:0);
-    var svPrev = 3 - bvPrev;
-
-    // FIX 4: flip STRICT — accetto SOLO se questo bar ha portato il flip 3/3.
-    // Tolto il "recentFlip" che accettava anche flip 2 bar fa (troppo permissivo,
-    // generava ingressi in ritardo o su situazioni gia' cambiate).
-    // Inoltre richiedo che la maggioranza fosse OPPOSTA al bar precedente (bvPrev <= 1
-    // per BUY, svPrev <= 1 per SELL) — cosi' il flip e' davvero un cambio di regime.
-    var flippedBuy  = bv === 3 && bvPrev <= 1;   // tutti BUY ora, almeno 2 SELL prima
-    var flippedSell = sv === 3 && svPrev <= 1;   // tutti SELL ora, almeno 2 BUY prima
-
-    if (!flippedBuy && !flippedSell) {
-      st.stats.lastFilter = 'No flip 3/3 strict (ST: ' + bv + 'B/' + sv +
-                            'S, prev: ' + bvPrev + 'B/' + svPrev + 'S)';
+    if (c15.length < 30 || cH1.length < 50 || cH4.length < 25 || cD1.length < 200) {
+      st.stats.lastFilter = 'Bar chiusi insufficienti dopo confermati';
       return;
     }
 
-    var dir = null;
-    if (flippedBuy && cfg.allowLong)   dir = 'BUY';
-    if (flippedSell && cfg.allowShort) dir = 'SELL';
+    var lastM15 = c15[c15.length - 1];
+    var lastH1 = cH1[cH1.length - 1];
+    var lastH4 = cH4[cH4.length - 1];
+    var lastD1 = cD1[cD1.length - 1];
 
-    if (!dir) {
-      st.stats.lastFilter = flippedBuy ? 'LONG disabilitato' : 'SHORT disabilitato';
+    // ═════════════════════════════════════════════════════════════
+    // LAYER 1 — D1 (contesto macro)
+    // ═════════════════════════════════════════════════════════════
+    var emaD1_50 = calcEMA(cD1, 50);
+    var emaD1_200 = calcEMA(cD1, 200);
+    var rsiD1 = calcRSI(cD1, 14);
+
+    var d1Bull = emaD1_50 > emaD1_200 && lastD1.close > emaD1_50;
+    var d1Bear = emaD1_50 < emaD1_200 && lastD1.close < emaD1_50;
+    var rsiD1Ok = rsiD1 >= 30 && rsiD1 <= 70;
+
+    if (!d1Bull && !d1Bear) {
+      st.stats.lastFilter = 'D1: trend non definito (EMA50/200 non allineate)';
+      return;
+    }
+    if (!rsiD1Ok) {
+      st.stats.lastFilter = 'D1: RSI estremo (' + rsiD1.toFixed(1) + ', need 30-70)';
       return;
     }
 
+    var biasD1 = d1Bull ? 'BUY' : 'SELL';
+
+    // ═════════════════════════════════════════════════════════════
+    // LAYER 2 — H4 (struttura)
+    // ═════════════════════════════════════════════════════════════
+    var emaH4_20 = calcEMA(cH4, 20);
+    var h4Aligned = (biasD1 === 'BUY' && lastH4.close > emaH4_20) ||
+                    (biasD1 === 'SELL' && lastH4.close < emaH4_20);
+
+    if (!h4Aligned) {
+      st.stats.lastFilter = 'H4 non allineato a bias D1 ' + biasD1;
+      return;
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // LAYER 3 — H1 (trend operativo)
+    // ═════════════════════════════════════════════════════════════
+    var adxH1 = calcADX(cH1, 14);
+    if (adxH1 < 22) {
+      st.stats.lastFilter = 'H1 ADX ' + adxH1.toFixed(1) + ' < 22 (no trend forte)';
+      return;
+    }
+
+    var emaH1_20 = calcEMA(cH1, 20);
+    var emaH1_50 = calcEMA(cH1, 50);
+    var h1Aligned = (biasD1 === 'BUY' && emaH1_20 > emaH1_50) ||
+                    (biasD1 === 'SELL' && emaH1_20 < emaH1_50);
+
+    if (!h1Aligned) {
+      st.stats.lastFilter = 'H1 EMA20/50 non allineate al bias';
+      return;
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // LAYER 4 — M15 (entry trigger)
+    // ═════════════════════════════════════════════════════════════
+    var emaM15_20 = calcEMA(c15, 20);
+    var rsiM15 = calcRSI(c15, 14);
+    var atrArr = calcATR(c15, 14);
+    var atr = atrArr[atrArr.length - 1] || 0;
+
+    // 4a. Pullback verso EMA20 nelle ultime 5 candele
+    var hadPullback = hadRecentPullback(c15, emaM15_20, atr, 5, biasD1 === 'BUY');
+    if (!hadPullback) {
+      st.stats.lastFilter = 'M15 no pullback recente verso EMA20';
+      return;
+    }
+
+    // 4b. Candela reversal sull'ultimo bar
+    var reversal = detectReversal(c15);
+    if (reversal !== biasD1) {
+      st.stats.lastFilter = 'M15 no reversal candle (got: ' +
+                            (reversal || 'none') + ', need: ' + biasD1 + ')';
+      return;
+    }
+
+    // 4c. RSI esce dalla zona pullback nella direzione corretta
+    //     BUY: RSI tra 40-50 e in salita → segno che il pullback finisce
+    //     SELL: RSI tra 50-60 e in discesa
+    var rsiM15Prev = calcRSI(c15.slice(0, -1), 14);
+    var rsiOk = false;
+    if (biasD1 === 'BUY') {
+      rsiOk = rsiM15Prev <= 50 && rsiM15 > rsiM15Prev && rsiM15 >= 40;
+    } else {
+      rsiOk = rsiM15Prev >= 50 && rsiM15 < rsiM15Prev && rsiM15 <= 60;
+    }
+    if (!rsiOk) {
+      st.stats.lastFilter = 'M15 RSI not exiting pullback zone (now: ' +
+                            rsiM15.toFixed(1) + ', prev: ' + rsiM15Prev.toFixed(1) + ')';
+      return;
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // TUTTI I FILTRI OK — costruisci segnale
+    // ═════════════════════════════════════════════════════════════
+    var dir = biasD1;
+    if (dir === 'BUY' && !cfg.allowLong) {
+      st.stats.lastFilter = 'LONG disabilitato per ' + sym;
+      return;
+    }
+    if (dir === 'SELL' && !cfg.allowShort) {
+      st.stats.lastFilter = 'SHORT disabilitato per ' + sym;
+      return;
+    }
     if (dir === st.lastDir) {
       st.stats.lastFilter = 'Cooldown: ' + dir + ' gia inviato';
       return;
     }
 
-    // FIX: ADX gia' calcolato su confirmedC (riusa array di SuperTrend)
-    var adx = calcADX(confirmedC, 14);
-    if (adx < cfg.adxMin) {
-      st.stats.lastFilter = 'ADX ' + adx.toFixed(1) + ' < ' + cfg.adxMin + ' (mercato piatto)';
-      return;
+    var price = lastM15.close;
+    var dec = price > 1000 ? 2 : price > 10 ? 3 : 4;
+
+    // ─── SL strutturale: swing low/high ultimi 10 bar M15 ± buffer ATR ───
+    var swing = findSwing(c15, 10, dir === 'BUY');
+    var buffer = atr * 0.3;
+    var sl = dir === 'BUY' ? swing - buffer : swing + buffer;
+
+    // Sanity: SL distance non più di 1.5% per evitare SL troppo larghi
+    var slDist = Math.abs(price - sl);
+    var maxSL = price * 0.015;
+    if (slDist > maxSL) {
+      sl = dir === 'BUY' ? price - maxSL : price + maxSL;
+      slDist = maxSL;
     }
 
-    // FIX: price = close del bar che ha flippato (confermato), non l'ultimo tick.
-    // Cosi' il segnale e' coerente con dove il SuperTrend ha effettivamente flippato.
-    var price = confirmedC[confirmedC.length-1].close;
-    var dec = price > 1000 ? 2 : price > 10 ? 3 : 4;
-    var atrArr = calcATR(confirmedC, 14);
-    var atr = atrArr[atrArr.length-1] || 0;
-    var slDist = Math.max(atr * cfg.slMult, price * 0.005);
-    var sl = dir === 'BUY' ? price - slDist : price + slDist;
-    var tp = dir === 'BUY' ? price + slDist * cfg.rr : price - slDist * cfg.rr;
+    // ─── TP: 1:2.5 di default; se vicino a livello R/S H1, usa quello ───
+    var rr = cfg.rr || 2.5;
+    var tp = dir === 'BUY' ? price + slDist * rr : price - slDist * rr;
+
+    // Cerca livello S/R H1 nelle ultime 50 candele come TP1 plausibile
+    var srLevel = findSwing(cH1.slice(-50), 50, dir === 'SELL');
+    var tp1 = null;
+    if (dir === 'BUY' && srLevel > price && srLevel < tp) tp1 = srLevel;
+    if (dir === 'SELL' && srLevel < price && srLevel > tp) tp1 = srLevel;
 
     var name = SYMBOL_NAMES[sym] || sym;
     var nl = '\n';
     var time = new Date().toUTCString().slice(0, 25);
 
     var msg =
-      '<b>[ST-EA Minimal] ' + dir + ' ' + name + '</b>' + nl +
+      '<b>[MTF-EA] ' + dir + ' ' + name + '</b>' + nl +
       '<b>Prezzo:</b> ' + price.toFixed(dec) + nl +
       '<b>SL:</b> ' + sl.toFixed(dec) + ' | <b>TP:</b> ' + tp.toFixed(dec) + nl +
-      '<b>R:R:</b> 1:' + cfg.rr.toFixed(1) + nl +
-      '<b>ADX:</b> ' + adx.toFixed(1) + ' | <b>ST:</b> ' + bv + 'B/' + sv + 'S' + nl +
+      (tp1 ? '<b>TP1 (R/S H1):</b> ' + tp1.toFixed(dec) + ' (50% pos)' + nl : '') +
+      '<b>R:R:</b> 1:' + rr.toFixed(1) + nl +
+      '<b>D1:</b> ' + (d1Bull ? 'BULL' : 'BEAR') + ' RSI ' + rsiD1.toFixed(0) + nl +
+      '<b>H1 ADX:</b> ' + adxH1.toFixed(1) + ' | <b>M15 RSI:</b> ' + rsiM15.toFixed(1) + nl +
+      '<b>Trail:</b> chiusura M15 sotto EMA50 H1 = exit' + nl +
       '<b>Lot (500EUR, 3%):</b> ' + calcLotSize(sym, 500, 3, slDist) + nl +
       '<i>' + time + ' UTC</i>';
 
@@ -567,13 +765,18 @@ async function checkSignal(sym, cooldownMin) {
       st.stats.lastFilter = 'INVIATO: ' + dir + ' @ ' + price.toFixed(dec);
       st.lastSignalTime = Date.now();
       st.lastDir = dir;
-      st.log.unshift({ dir: dir, price: price.toFixed(dec), time: time, sym: sym, sl: sl.toFixed(dec), tp: tp.toFixed(dec) });
+      st.dailyTradeCount++;
+      st.log.unshift({
+        dir: dir, price: price.toFixed(dec), time: time, sym: sym,
+        sl: sl.toFixed(dec), tp: tp.toFixed(dec)
+      });
       if (st.log.length > 20) st.log.pop();
       globalStats.total++;
       if (dir === 'BUY') globalStats.buys++; else globalStats.sells++;
-      globalLog.unshift({ dir: dir, price: price.toFixed(dec), time: time, sym: sym });
+      globalLog.unshift({ dir: dir, price: price.toFixed(dec), time: time, sym: sym, source: 'MTF' });
       if (globalLog.length > 50) globalLog.pop();
-      console.log('SIGNAL: ' + sym + ' ' + dir + ' @ ' + price.toFixed(dec) + ' (ADX: ' + adx.toFixed(1) + ')');
+      console.log('SIGNAL: ' + sym + ' ' + dir + ' @ ' + price.toFixed(dec) +
+                  ' (D1:' + (d1Bull ? 'BULL' : 'BEAR') + ' H1ADX:' + adxH1.toFixed(1) + ')');
     }
   } catch(e) {
     console.error('checkSignal ' + sym + ': ' + e.message);
@@ -633,6 +836,8 @@ setInterval(async function() {
 // ══════════════════════════════════════
 app.get('/api/status', function(req, res) {
   var ps = {};
+  var symbolStates = {};
+
   for (var i = 0; i < activeSymbols.length; i++) {
     var s = activeSymbols[i];
     var st = symbolState[s];
@@ -643,7 +848,94 @@ app.get('/api/status', function(req, res) {
       candleCount: st.candles.length,
       log: st.log.slice(0, 5)
     };
+
+    // Calcolo stato MTF layers per dashboard analysis page.
+    // Stessa logica del checkSignal ma in modalita' "snapshot" (non genera segnali,
+    // dice solo qual'e' lo stato corrente di ogni layer).
+    var layers = null;
+    try {
+      if (st.candles.length >= 50 && st.candlesH1 && st.candlesH1.length >= 60 &&
+          st.candlesH4 && st.candlesH4.length >= 30 &&
+          st.candlesD1 && st.candlesD1.length >= 200) {
+        var c15 = confirmedCandles(st.candles, 15 * 60 * 1000);
+        var cH1 = confirmedCandles(st.candlesH1, 60 * 60 * 1000);
+        var cH4 = confirmedCandles(st.candlesH4, 4 * 60 * 60 * 1000);
+        var cD1 = confirmedCandles(st.candlesD1, 24 * 60 * 60 * 1000);
+
+        if (c15.length >= 30 && cH1.length >= 50 && cH4.length >= 25 && cD1.length >= 200) {
+          // Layer 1 — D1
+          var emaD1_50 = calcEMA(cD1, 50);
+          var emaD1_200 = calcEMA(cD1, 200);
+          var rsiD1 = calcRSI(cD1, 14);
+          var lastD1 = cD1[cD1.length - 1];
+          var d1Bull = emaD1_50 > emaD1_200 && lastD1.close > emaD1_50;
+          var d1Bear = emaD1_50 < emaD1_200 && lastD1.close < emaD1_50;
+          var rsiD1Ok = rsiD1 >= 30 && rsiD1 <= 70;
+          var d1Pass = (d1Bull || d1Bear) && rsiD1Ok;
+          var bias = d1Bull ? 'BUY' : d1Bear ? 'SELL' : 'NONE';
+
+          // Layer 2 — H4
+          var emaH4_20 = calcEMA(cH4, 20);
+          var lastH4 = cH4[cH4.length - 1];
+          var h4Aligned = (bias === 'BUY' && lastH4.close > emaH4_20) ||
+                          (bias === 'SELL' && lastH4.close < emaH4_20);
+
+          // Layer 3 — H1
+          var adxH1 = calcADX(cH1, 14);
+          var emaH1_20 = calcEMA(cH1, 20);
+          var emaH1_50 = calcEMA(cH1, 50);
+          var h1AdxOk = adxH1 >= 22;
+          var h1EmaAligned = (bias === 'BUY' && emaH1_20 > emaH1_50) ||
+                             (bias === 'SELL' && emaH1_20 < emaH1_50);
+          var h1Pass = h1AdxOk && h1EmaAligned;
+
+          // Layer 4 — M15 trigger components
+          var emaM15_20 = calcEMA(c15, 20);
+          var rsiM15 = calcRSI(c15, 14);
+          var atrArr = calcATR(c15, 14);
+          var atr = atrArr[atrArr.length - 1] || 0;
+
+          var hadPullback = hadRecentPullback(c15, emaM15_20, atr, 5, bias === 'BUY');
+          var reversal = detectReversal(c15);
+          var reversalBuy = reversal === 'BUY';
+          var reversalSell = reversal === 'SELL';
+          var rsiM15Prev = calcRSI(c15.slice(0, -1), 14);
+          var rsiOk = false;
+          if (bias === 'BUY') {
+            rsiOk = rsiM15Prev <= 50 && rsiM15 > rsiM15Prev && rsiM15 >= 40;
+          } else if (bias === 'SELL') {
+            rsiOk = rsiM15Prev >= 50 && rsiM15 < rsiM15Prev && rsiM15 <= 60;
+          }
+
+          var m15Trigger = hadPullback &&
+                          ((bias === 'BUY' && reversalBuy && rsiOk) ||
+                           (bias === 'SELL' && reversalSell && rsiOk));
+
+          layers = {
+            bias: bias,
+            d1Pass: d1Pass,
+            d1Bull: d1Bull,
+            d1Bear: d1Bear,
+            d1Rsi: rsiD1,
+            h4Aligned: h4Aligned,
+            h1Pass: h1Pass,
+            h1Adx: adxH1,
+            h1EmaAligned: h1EmaAligned,
+            m15Pullback: hadPullback,
+            m15ReversalBuy: reversalBuy,
+            m15ReversalSell: reversalSell,
+            m15RsiOk: rsiOk,
+            m15Trigger: m15Trigger
+          };
+        }
+      }
+    } catch(e) {
+      console.error('MTF status calc ' + s + ': ' + e.message);
+    }
+
+    symbolStates[s] = { layers: layers };
   }
+
   res.json({
     isRunning: isRunning,
     activeSymbols: activeSymbols,
@@ -651,7 +943,8 @@ app.get('/api/status', function(req, res) {
     globalLog: globalLog.slice(0, 20),
     tgConnected: !!(TG_TOKEN && TG_CHAT_ID),
     dataConnected: !!TD_KEY,
-    perSymbol: ps
+    perSymbol: ps,
+    symbolStates: symbolStates
   });
 });
 
@@ -669,8 +962,8 @@ app.post('/api/start', async function(req, res) {
       await fetchCandles(activeSymbols[j]);
       await new Promise(function(r) { setTimeout(r, 1000); });
     }
-    startLoop(ref || 300, cool || 15);
-    await tgSend('<b>ST-EA Minimal online</b>\nSimboli: ' + activeSymbols.join(', ') + '\nLogica: triplo ST + flip 3/3 + ADX min');
+    startLoop(ref || 300, cool || 60);
+    await tgSend('<b>MTF-EA online</b>\nSimboli: ' + activeSymbols.join(', ') + '\nLogica: Multi-Timeframe Confluence (D1+H4+H1+M15)');
     res.json({ ok: true, message: 'EA avviato su ' + activeSymbols.join(', ') });
   } catch(e) {
     res.json({ ok: false, message: e.message });
@@ -690,7 +983,7 @@ app.get('/api/test', async function(req, res) {
 });
 
 app.post('/api/test', async function(req, res) {
-  var ok = await tgSend('ST-EA Minimal - Test OK!\nSimboli: ' + activeSymbols.join(', '));
+  var ok = await tgSend('MTF-EA Test OK!\nSimboli: ' + activeSymbols.join(', '));
   res.json({ ok: ok });
 });
 
@@ -717,7 +1010,7 @@ app.get('/api/version', function(req, res) {
       running: isRunning,
       symbols: activeSymbols,
       timeframe: 'M15',
-      logic: 'triple SuperTrend + flip 3/3 strict + ADX min filter'
+      logic: 'Multi-Timeframe Confluence: D1 trend + H4 structure + H1 ADX/EMA align + M15 pullback reversal'
     },
     paBot: {
       enabled: true,
@@ -2366,6 +2659,833 @@ app.post('/api/stocks-stop', async function(req, res) {
   await tgSend('STOCKS Bot fermato');
   res.json({ ok: true });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██████████████████████████████████████████████████████████████████████████████
+// BACKTEST ENGINE — simulazione storica MTF + ORB + PA su 6 mesi
+// ██████████████████████████████████████████████████████████████████████████████
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// Riproduce la stessa logica dei 3 bot live ma su dati storici, per verificare
+// se le strategie hanno edge statistico positivo PRIMA di operare con denaro.
+//
+// Workflow:
+//   1. Client chiama POST /api/backtest -> avvia esecuzione asincrona
+//   2. Client polla GET /api/backtest-status per progress (0-100%)
+//   3. A fine simulazione, GET /api/backtest-results restituisce JSON completo
+//
+// Dati: scarica fino a 5000 candele/timeframe via TwelveData (~6 mesi)
+// Output: 2 modi (clean = senza spread, costs = con spread Capital.com)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Stato globale del backtest
+var bt = {
+  running: false,
+  progress: 0,
+  status: 'idle',
+  message: '',
+  startedAt: null,
+  finishedAt: null,
+  results: null,
+  error: null
+};
+
+// Spread realistici Capital.com (in unita' del simbolo)
+var BT_SPREADS = {
+  XAUUSD: 0.30, XAGUSD: 0.03,
+  EURUSD: 0.00015, GBPUSD: 0.00018, USDJPY: 0.018,
+  GBPJPY: 0.025, AUDUSD: 0.00018, USDCAD: 0.00020,
+  USDCHF: 0.00020, NZDUSD: 0.00020,
+  BTCUSD: 30.0, ETHUSD: 5.0, SOLUSD: 0.10,
+  XRPUSD: 0.001, BNBUSD: 0.50,
+  WTIUSD: 0.04, BRNUSD: 0.04, USOIL: 0.04, UKOIL: 0.04,
+  SPX: 1.0, NDX: 2.0, DAX: 1.5, UKX: 1.5, N225: 8.0
+};
+
+// ─── Helper: fetch storico esteso da TwelveData (5000 candele) ────────────────
+async function btFetchHistory(symbol, interval) {
+  if (!TD_KEY) return null;
+  // Usa la stessa mappatura del fetchTD live (TD_MAP per forex/metalli, ORB_TD_MAP per indici)
+  var tdSym = (typeof ORB_TD_MAP !== 'undefined' && ORB_TD_MAP[symbol]) ||
+              (typeof TD_MAP !== 'undefined' && TD_MAP[symbol]) ||
+              symbol;
+  var url = 'https://api.twelvedata.com/time_series?symbol=' +
+            encodeURIComponent(tdSym) +
+            '&interval=' + interval +
+            '&outputsize=5000&order=ASC&apikey=' + TD_KEY;
+  try {
+    var r = await fetch(url, { headers: { 'User-Agent': 'ST-EA-Backtest/1.0' }});
+    if (!r.ok) return null;
+    var data = await r.json();
+    if (data.status === 'error' || !data.values) return null;
+    return data.values.map(function(v) {
+      return {
+        time: new Date(v.datetime + 'Z').getTime(),
+        open: parseFloat(v.open),
+        high: parseFloat(v.high),
+        low: parseFloat(v.low),
+        close: parseFloat(v.close),
+        vol: parseFloat(v.volume) || 0
+      };
+    }).filter(function(c) {
+      return !isNaN(c.open) && !isNaN(c.high) && !isNaN(c.low) && !isNaN(c.close);
+    });
+  } catch(e) {
+    console.error('BT fetch ' + symbol + ' ' + interval + ': ' + e.message);
+    return null;
+  }
+}
+
+// Variant Yahoo per crypto e fallback
+async function btFetchYahooHistory(symbol, interval) {
+  // Yahoo symbol mapping (riusa pattern fetchYahoo esistente)
+  var yhMap = {
+    XAUUSD: 'XAUUSD=X', XAGUSD: 'XAGUSD=X',
+    EURUSD: 'EURUSD=X', GBPUSD: 'GBPUSD=X', USDJPY: 'USDJPY=X',
+    GBPJPY: 'GBPJPY=X', AUDUSD: 'AUDUSD=X', USDCAD: 'USDCAD=X',
+    USDCHF: 'USDCHF=X', NZDUSD: 'NZDUSD=X',
+    BTCUSD: 'BTC-USD', ETHUSD: 'ETH-USD', SOLUSD: 'SOL-USD',
+    XRPUSD: 'XRP-USD', BNBUSD: 'BNB-USD',
+    SPX: '^GSPC', NDX: '^NDX', DAX: '^GDAXI', UKX: '^FTSE', N225: '^N225',
+    US500: '^GSPC', US100: '^NDX', GER40: '^GDAXI', UK100: '^FTSE', JP225: '^N225'
+  };
+  var yhSym = yhMap[symbol] || symbol;
+  var yhInterval = {'15min':'15m','1h':'1h','4h':'1h','1day':'1d','1week':'1wk'}[interval] || '1d';
+  var yhRange = {'15min':'60d','1h':'730d','4h':'730d','1day':'2y','1week':'5y'}[interval] || '6mo';
+  var url = 'https://query2.finance.yahoo.com/v8/finance/chart/' + yhSym +
+            '?interval=' + yhInterval + '&range=' + yhRange;
+  try {
+    var r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }});
+    if (!r.ok) return null;
+    var data = await r.json();
+    var chart = data && data.chart && data.chart.result && data.chart.result[0];
+    if (!chart || !chart.timestamp) return null;
+    var ts = chart.timestamp;
+    var q = chart.indicators.quote[0];
+    var out = [];
+    for (var i = 0; i < ts.length; i++) {
+      if (q.open[i] != null && q.high[i] != null && q.low[i] != null && q.close[i] != null) {
+        out.push({
+          time: ts[i] * 1000,
+          open: +q.open[i], high: +q.high[i], low: +q.low[i], close: +q.close[i],
+          vol: +(q.volume[i] || 0)
+        });
+      }
+    }
+    if (interval === '4h') out = btAggregateH1ToH4(out);
+    return out;
+  } catch(e) {
+    return null;
+  }
+}
+
+// Aggrega 4 candele H1 in una H4
+function btAggregateH1ToH4(h1) {
+  if (!h1.length) return [];
+  var out = [];
+  var bucket = null;
+  for (var i = 0; i < h1.length; i++) {
+    var c = h1[i];
+    var d = new Date(c.time);
+    // H4 boundaries: 00, 04, 08, 12, 16, 20 UTC
+    var h4Start = Math.floor(d.getUTCHours() / 4) * 4;
+    var bucketTime = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), h4Start);
+    if (!bucket || bucket.time !== bucketTime) {
+      if (bucket) out.push(bucket);
+      bucket = { time: bucketTime, open: c.open, high: c.high, low: c.low, close: c.close, vol: c.vol };
+    } else {
+      bucket.high = Math.max(bucket.high, c.high);
+      bucket.low = Math.min(bucket.low, c.low);
+      bucket.close = c.close;
+      bucket.vol += c.vol;
+    }
+  }
+  if (bucket) out.push(bucket);
+  return out;
+}
+
+// ─── Helper: simulazione di un singolo trade ──────────────────────────────────
+// Ritorna { exitIdx, exitPrice, exitReason, barsHeld }
+function btSimulateTradeOutcome(candles, entryIdx, dir, sl, tp, maxBars, trailFn) {
+  var n = candles.length;
+  var endIdx = Math.min(entryIdx + maxBars, n - 1);
+  for (var i = entryIdx + 1; i <= endIdx; i++) {
+    var h = candles[i].high, l = candles[i].low, c = candles[i].close;
+    if (dir === 'BUY') {
+      if (l <= sl) return { exitIdx: i, exitPrice: sl, reason: 'SL', barsHeld: i - entryIdx };
+      if (h >= tp) return { exitIdx: i, exitPrice: tp, reason: 'TP', barsHeld: i - entryIdx };
+      if (trailFn) {
+        var tr = trailFn(i);
+        if (tr !== null && !isNaN(tr) && c < tr) {
+          return { exitIdx: i, exitPrice: c, reason: 'TRAIL', barsHeld: i - entryIdx };
+        }
+      }
+    } else {
+      if (h >= sl) return { exitIdx: i, exitPrice: sl, reason: 'SL', barsHeld: i - entryIdx };
+      if (l <= tp) return { exitIdx: i, exitPrice: tp, reason: 'TP', barsHeld: i - entryIdx };
+      if (trailFn) {
+        var tr2 = trailFn(i);
+        if (tr2 !== null && !isNaN(tr2) && c > tr2) {
+          return { exitIdx: i, exitPrice: c, reason: 'TRAIL', barsHeld: i - entryIdx };
+        }
+      }
+    }
+  }
+  return { exitIdx: endIdx, exitPrice: candles[endIdx].close, reason: 'TIMEOUT', barsHeld: endIdx - entryIdx };
+}
+
+// ─── Helper: ricerca indice HTF per timestamp M15 (ricerca binaria) ───────────
+function btFindHtfIdx(htfCandles, tsMs) {
+  // Ritorna l'indice dell'ultimo bar HTF chiuso al tempo tsMs (escludendo quello in formazione)
+  if (!htfCandles || !htfCandles.length) return -1;
+  var lo = 0, hi = htfCandles.length - 1, ans = -1;
+  while (lo <= hi) {
+    var mid = (lo + hi) >> 1;
+    if (htfCandles[mid].time < tsMs) {
+      ans = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  // -1 per stare conservativi (bar precedente, quello attuale potrebbe essere ancora aperto)
+  return ans - 1;
+}
+
+// ─── Backtest Bot 1: MTF Trend M15 ────────────────────────────────────────────
+function btSimulateMTF(symbol, candles15, candlesH1, candlesH4, candlesD1, spread) {
+  if (!candles15 || candles15.length < 100 ||
+      !candlesH1 || candlesH1.length < 60 ||
+      !candlesH4 || candlesH4.length < 30 ||
+      !candlesD1 || candlesD1.length < 200) {
+    return [];
+  }
+
+  // Pre-calcolo serie complete una volta sola
+  var d1Closes = candlesD1.map(function(c) { return c.close; });
+  var d1E50Arr = []; var d1E200Arr = []; var d1RsiArr = [];
+  for (var i = 0; i < candlesD1.length; i++) {
+    d1E50Arr.push(calcEMA(candlesD1.slice(0, i + 1), 50));
+    d1E200Arr.push(calcEMA(candlesD1.slice(0, i + 1), 200));
+    d1RsiArr.push(calcRSI(candlesD1.slice(0, i + 1), 14));
+  }
+
+  var h4E20Arr = [];
+  for (var j = 0; j < candlesH4.length; j++) {
+    h4E20Arr.push(calcEMA(candlesH4.slice(0, j + 1), 20));
+  }
+
+  var h1E20Arr = []; var h1E50Arr = []; var h1AdxArr = [];
+  for (var k = 0; k < candlesH1.length; k++) {
+    h1E20Arr.push(calcEMA(candlesH1.slice(0, k + 1), 20));
+    h1E50Arr.push(calcEMA(candlesH1.slice(0, k + 1), 50));
+    h1AdxArr.push(calcADX(candlesH1.slice(0, k + 1), 14));
+  }
+
+  var trades = [];
+  var lastSignalTime = 0;
+  var dailyCount = {};
+  var lastDir = null;
+  var cooldownMin = 60;
+
+  for (var i = 50; i < candles15.length; i++) {
+    var ts = candles15[i].time;
+
+    if (ts - lastSignalTime < cooldownMin * 60 * 1000) continue;
+    var dateKey = new Date(ts).toISOString().slice(0, 10);
+    if ((dailyCount[dateKey] || 0) >= 2) continue;
+
+    // Lookup HTF al tempo ts
+    var d1Idx = btFindHtfIdx(candlesD1, ts);
+    var h4Idx = btFindHtfIdx(candlesH4, ts);
+    var h1Idx = btFindHtfIdx(candlesH1, ts);
+    if (d1Idx < 200 || h4Idx < 25 || h1Idx < 50) continue;
+
+    // Layer 1 - D1
+    var d1C = candlesD1[d1Idx].close;
+    var d1E50 = d1E50Arr[d1Idx];
+    var d1E200 = d1E200Arr[d1Idx];
+    var d1Rsi = d1RsiArr[d1Idx];
+    var d1Bull = d1E50 > d1E200 && d1C > d1E50;
+    var d1Bear = d1E50 < d1E200 && d1C < d1E50;
+    if (!d1Bull && !d1Bear) continue;
+    if (d1Rsi < 30 || d1Rsi > 70) continue;
+    var bias = d1Bull ? 'BUY' : 'SELL';
+
+    // Layer 2 - H4
+    var h4C = candlesH4[h4Idx].close;
+    var h4E20 = h4E20Arr[h4Idx];
+    if ((bias === 'BUY' && h4C <= h4E20) || (bias === 'SELL' && h4C >= h4E20)) continue;
+
+    // Layer 3 - H1
+    var h1Adx = h1AdxArr[h1Idx];
+    if (h1Adx < 22) continue;
+    var h1E20 = h1E20Arr[h1Idx];
+    var h1E50 = h1E50Arr[h1Idx];
+    if ((bias === 'BUY' && h1E20 <= h1E50) || (bias === 'SELL' && h1E20 >= h1E50)) continue;
+
+    // Layer 4 - M15
+    var slice15 = candles15.slice(0, i + 1);
+    var atrArr = calcATR(slice15, 14);
+    var atr = atrArr[atrArr.length - 1];
+    var ema20M15 = calcEMA(slice15, 20);
+    var rsiM15 = calcRSI(slice15, 14);
+    var rsiM15Prev = calcRSI(slice15.slice(0, -1), 14);
+
+    if (!hadRecentPullback(slice15, ema20M15, atr, 5, bias === 'BUY')) continue;
+    if (detectReversal(slice15) !== bias) continue;
+
+    var rsiOk = bias === 'BUY' ?
+      (rsiM15Prev <= 50 && rsiM15 > rsiM15Prev && rsiM15 >= 40) :
+      (rsiM15Prev >= 50 && rsiM15 < rsiM15Prev && rsiM15 <= 60);
+    if (!rsiOk) continue;
+    if (bias === lastDir) continue;
+
+    // ENTRY
+    var entryPrice = candles15[i].close + (bias === 'BUY' ? spread / 2 : -spread / 2);
+    var swing = findSwing(slice15, 10, bias === 'BUY');
+    var buf = atr * 0.3;
+    var sl = bias === 'BUY' ? swing - buf : swing + buf;
+    var slDist = Math.abs(entryPrice - sl);
+    var maxSl = entryPrice * 0.015;
+    if (slDist > maxSl) {
+      sl = bias === 'BUY' ? entryPrice - maxSl : entryPrice + maxSl;
+      slDist = maxSl;
+    }
+    var rr = 2.5;
+    var tp = bias === 'BUY' ? entryPrice + slDist * rr : entryPrice - slDist * rr;
+
+    // Trail su EMA50 H1
+    var trail = function(idxM15) {
+      var t = candles15[idxM15].time;
+      var hi = btFindHtfIdx(candlesH1, t);
+      return (hi >= 0 && hi < h1E50Arr.length) ? h1E50Arr[hi] : null;
+    };
+
+    var outcome = btSimulateTradeOutcome(candles15, i, bias, sl, tp, 384, trail);
+    var exitPrice = outcome.exitPrice + (bias === 'BUY' ? -spread / 2 : spread / 2);
+    var pnl = bias === 'BUY' ? (exitPrice - entryPrice) : (entryPrice - exitPrice);
+    var rMult = slDist > 0 ? pnl / slDist : 0;
+    var pnlPct = (pnl / entryPrice) * 100;
+
+    trades.push({
+      symbol: symbol, bot: 'MTF', dir: bias,
+      entryTime: ts, entryPrice: entryPrice,
+      sl: sl, tp: tp,
+      exitTime: candles15[outcome.exitIdx].time,
+      exitPrice: exitPrice, exitReason: outcome.reason,
+      barsHeld: outcome.barsHeld, pnlPct: pnlPct, rMult: rMult
+    });
+
+    lastSignalTime = ts;
+    lastDir = bias;
+    dailyCount[dateKey] = (dailyCount[dateKey] || 0) + 1;
+  }
+
+  return trades;
+}
+
+// ─── Backtest Bot 2: ORB Indici ───────────────────────────────────────────────
+var BT_ORB_SESSIONS = {
+  SPX:  { tz: 'America/New_York', openH: 9, openM: 30 },
+  NDX:  { tz: 'America/New_York', openH: 9, openM: 30 },
+  DAX:  { tz: 'Europe/Berlin',    openH: 9, openM: 0  },
+  UKX:  { tz: 'Europe/London',    openH: 8, openM: 0  },
+  N225: { tz: 'Asia/Tokyo',       openH: 9, openM: 0  }
+};
+
+function btGetLocalHour(tsMs, tz) {
+  var d = new Date(tsMs);
+  var fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hour: '2-digit', minute: '2-digit',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour12: false
+  });
+  var parts = fmt.formatToParts(d);
+  var p = {};
+  parts.forEach(function(x) { p[x.type] = x.value; });
+  return {
+    h: parseInt(p.hour) % 24,
+    m: parseInt(p.minute),
+    date: p.year + '-' + p.month + '-' + p.day
+  };
+}
+
+function btSimulateORB(symbol, candles15, candlesH1, spread) {
+  if (!candles15 || candles15.length < 100 || !candlesH1 || candlesH1.length < 50) return [];
+  var sess = BT_ORB_SESSIONS[symbol];
+  if (!sess) return [];
+
+  var h1AdxArr = [];
+  for (var k = 0; k < candlesH1.length; k++) {
+    h1AdxArr.push(calcADX(candlesH1.slice(0, k + 1), 14));
+  }
+
+  var ema20Arr = [];
+  for (var j = 0; j < candles15.length; j++) {
+    ema20Arr.push(calcEMA(candles15.slice(0, j + 1), 20));
+  }
+
+  // Raggruppa per giornata locale
+  var dayMap = {};
+  for (var i = 0; i < candles15.length; i++) {
+    var loc = btGetLocalHour(candles15[i].time, sess.tz);
+    if (!dayMap[loc.date]) dayMap[loc.date] = [];
+    dayMap[loc.date].push({ idx: i, h: loc.h, m: loc.m });
+  }
+
+  var trades = [];
+  var dates = Object.keys(dayMap).sort();
+
+  for (var d = 0; d < dates.length; d++) {
+    var dayBars = dayMap[dates[d]];
+
+    // Identifica bar OR (primi 30 min sessione)
+    var orBars = [];
+    for (var b = 0; b < dayBars.length; b++) {
+      var bb = dayBars[b];
+      if (bb.h === sess.openH && bb.m >= sess.openM && bb.m < sess.openM + 30) {
+        orBars.push(bb.idx);
+      }
+    }
+    if (orBars.length < 2) continue;
+
+    var orHigh = -Infinity, orLow = Infinity;
+    for (var oi = 0; oi < orBars.length; oi++) {
+      orHigh = Math.max(orHigh, candles15[orBars[oi]].high);
+      orLow = Math.min(orLow, candles15[orBars[oi]].low);
+    }
+    var orWidth = orHigh - orLow;
+    var orPct = orHigh > 0 ? (orWidth / orHigh * 100) : 0;
+    if (orPct < 0.3 || orPct > 1.5) continue;
+
+    // Trading window: 4 ore dopo OR end
+    var lastOrIdx = orBars[orBars.length - 1];
+    var winEndIdx = Math.min(lastOrIdx + 16, candles15.length - 1);
+
+    var traded = false;
+    for (var idx = lastOrIdx + 1; idx <= winEndIdx && !traded; idx++) {
+      var c = candles15[idx];
+      var h1Idx = btFindHtfIdx(candlesH1, c.time);
+      if (h1Idx < 0 || h1AdxArr[h1Idx] < 15) continue;
+
+      var dir = null, entry = null, sl = null;
+      if (c.close > orHigh) {
+        dir = 'BUY'; entry = c.close + spread / 2; sl = orLow;
+      } else if (c.close < orLow) {
+        dir = 'SELL'; entry = c.close - spread / 2; sl = orHigh;
+      }
+      if (!dir) continue;
+
+      var slDist = Math.abs(entry - sl);
+      if (slDist < entry * 0.001 || slDist > entry * 0.02) continue;
+
+      var tp = dir === 'BUY' ? entry + slDist * 5 : entry - slDist * 5;
+
+      var trail = function(iM15) {
+        if (iM15 - idx < 1) return null;
+        return iM15 < ema20Arr.length ? ema20Arr[iM15] : null;
+      };
+
+      var outcome = btSimulateTradeOutcome(candles15, idx, dir, sl, tp,
+                                            winEndIdx - idx, trail);
+      var exitPrice = outcome.exitPrice + (dir === 'BUY' ? -spread / 2 : spread / 2);
+      var pnl = dir === 'BUY' ? (exitPrice - entry) : (entry - exitPrice);
+      var rMult = slDist > 0 ? pnl / slDist : 0;
+      var pnlPct = (pnl / entry) * 100;
+
+      trades.push({
+        symbol: symbol, bot: 'ORB', dir: dir,
+        entryTime: c.time, entryPrice: entry, sl: sl, tp: tp,
+        exitTime: candles15[outcome.exitIdx].time, exitPrice: exitPrice,
+        exitReason: outcome.reason, barsHeld: outcome.barsHeld,
+        pnlPct: pnlPct, rMult: rMult
+      });
+
+      traded = true;
+    }
+  }
+
+  return trades;
+}
+
+// ─── Backtest Bot 3: PA D1 ────────────────────────────────────────────────────
+function btDetectPADayPattern(c, idx) {
+  if (idx < 2) return { dir: null, name: null, score: 0 };
+  var c0 = c[idx], c1 = c[idx-1], c2 = c[idx-2];
+  var body0 = Math.abs(c0.close - c0.open);
+  var body1 = Math.abs(c1.close - c1.open);
+  var body2 = Math.abs(c2.close - c2.open);
+  var range0 = c0.high - c0.low;
+  var range2 = c2.high - c2.low;
+  var bull0 = c0.close > c0.open, bear0 = c0.close < c0.open;
+  var bull1 = c1.close > c1.open, bear1 = c1.close < c1.open;
+  var bull2 = c2.close > c2.open, bear2 = c2.close < c2.open;
+  var upWick = c0.high - Math.max(c0.open, c0.close);
+  var loWick = Math.min(c0.open, c0.close) - c0.low;
+
+  if (bear2 && body2 > range2 * 0.5 && body1 < body2 * 0.5 && bull0 &&
+      c0.close > (c2.open + c2.close) / 2)
+    return { dir: 'BUY', name: 'Morning Star', score: 4 };
+  if (bull2 && body2 > range2 * 0.5 && body1 < body2 * 0.5 && bear0 &&
+      c0.close < (c2.open + c2.close) / 2)
+    return { dir: 'SELL', name: 'Evening Star', score: 4 };
+  if (bear1 && bull0 && c0.open <= c1.close && c0.close >= c1.open && body0 > body1)
+    return { dir: 'BUY', name: 'Bullish Engulfing', score: 3 };
+  if (bull1 && bear0 && c0.open >= c1.close && c0.close <= c1.open && body0 > body1)
+    return { dir: 'SELL', name: 'Bearish Engulfing', score: 3 };
+  if (loWick > body0 * 2 && loWick > upWick * 2 &&
+      Math.min(c0.open, c0.close) > c0.low + range0 * 0.66)
+    return { dir: 'BUY', name: 'Pin Bar Bull', score: 3 };
+  if (upWick > body0 * 2 && upWick > loWick * 2 &&
+      Math.max(c0.open, c0.close) < c0.low + range0 * 0.33)
+    return { dir: 'SELL', name: 'Pin Bar Bear', score: 3 };
+  return { dir: null, name: null, score: 0 };
+}
+
+function btSimulatePA(symbol, candlesD1, candlesH4, spread) {
+  if (!candlesD1 || candlesD1.length < 60 || !candlesH4 || candlesH4.length < 30) return [];
+
+  var d1E50Arr = [], h4E50Arr = [];
+  for (var i = 0; i < candlesD1.length; i++) d1E50Arr.push(calcEMA(candlesD1.slice(0, i + 1), 50));
+  for (var j = 0; j < candlesH4.length; j++) h4E50Arr.push(calcEMA(candlesH4.slice(0, j + 1), 50));
+
+  var trades = [];
+  var lastSigIdx = -100;
+
+  for (var k = 50; k < candlesD1.length - 1; k++) {
+    if (k - lastSigIdx < 5) continue;
+    var pat = btDetectPADayPattern(candlesD1, k);
+    if (!pat.dir) continue;
+
+    var d1Bull = candlesD1[k].close > d1E50Arr[k];
+    var h4Idx = btFindHtfIdx(candlesH4, candlesD1[k].time);
+    if (h4Idx < 50) continue;
+    var h4Bull = candlesH4[h4Idx].close > h4E50Arr[h4Idx];
+
+    var trendBull = d1Bull && h4Bull;
+    var trendBear = !d1Bull && !h4Bull;
+    var finalScore = pat.dir === 'BUY' ?
+      pat.score + (trendBull ? 1 : (trendBear ? -1 : 0)) :
+      pat.score + (trendBear ? 1 : (trendBull ? -1 : 0));
+    if (finalScore < 3) continue;
+
+    var entry = candlesD1[k+1].open + (pat.dir === 'BUY' ? spread / 2 : -spread / 2);
+    var sl = pat.dir === 'BUY' ?
+      Math.min(candlesD1[k].low, candlesD1[k-1].low) :
+      Math.max(candlesD1[k].high, candlesD1[k-1].high);
+    var slDist = Math.abs(entry - sl);
+    if (slDist <= 0) continue;
+    var tp = pat.dir === 'BUY' ? entry + slDist * 2.5 : entry - slDist * 2.5;
+
+    var endIdx = Math.min(k + 1 + 30, candlesD1.length - 1);
+    var exitInfo = null;
+    for (var x = k + 1; x <= endIdx; x++) {
+      var bar = candlesD1[x];
+      if (pat.dir === 'BUY') {
+        if (bar.low <= sl) { exitInfo = { idx: x, p: sl, r: 'SL' }; break; }
+        if (bar.high >= tp) { exitInfo = { idx: x, p: tp, r: 'TP' }; break; }
+      } else {
+        if (bar.high >= sl) { exitInfo = { idx: x, p: sl, r: 'SL' }; break; }
+        if (bar.low <= tp) { exitInfo = { idx: x, p: tp, r: 'TP' }; break; }
+      }
+    }
+    if (!exitInfo) {
+      exitInfo = { idx: endIdx, p: candlesD1[endIdx].close, r: 'TIMEOUT' };
+    }
+    var exitPrice = exitInfo.p + (pat.dir === 'BUY' ? -spread / 2 : spread / 2);
+    var pnl = pat.dir === 'BUY' ? (exitPrice - entry) : (entry - exitPrice);
+    var rMult = pnl / slDist;
+    var pnlPct = (pnl / entry) * 100;
+
+    trades.push({
+      symbol: symbol, bot: 'PA', dir: pat.dir,
+      entryTime: candlesD1[k+1].time, entryPrice: entry, sl: sl, tp: tp,
+      exitTime: candlesD1[exitInfo.idx].time, exitPrice: exitPrice,
+      exitReason: exitInfo.r, barsHeld: exitInfo.idx - k - 1,
+      pnlPct: pnlPct, rMult: rMult, pattern: pat.name
+    });
+    lastSigIdx = k;
+  }
+  return trades;
+}
+
+// ─── Aggregator: calcola metriche da una lista trade ──────────────────────────
+function btComputeMetrics(trades) {
+  if (!trades.length) return {
+    count: 0, wins: 0, losses: 0, winRate: 0,
+    profitFactor: 0, expectancyR: 0, totalR: 0,
+    avgWinR: 0, avgLossR: 0, maxDdR: 0,
+    bestR: 0, worstR: 0, avgBarsHeld: 0
+  };
+  var rs = trades.map(function(t) { return t.rMult; });
+  var wins = rs.filter(function(r) { return r > 0; });
+  var losses = rs.filter(function(r) { return r <= 0; });
+  var grossWin = wins.reduce(function(a, b) { return a + b; }, 0);
+  var grossLoss = Math.abs(losses.reduce(function(a, b) { return a + b; }, 0)) || 0.0001;
+  var cumR = 0, peak = 0, maxDd = 0;
+  for (var i = 0; i < rs.length; i++) {
+    cumR += rs[i];
+    if (cumR > peak) peak = cumR;
+    var dd = peak - cumR;
+    if (dd > maxDd) maxDd = dd;
+  }
+  return {
+    count: trades.length,
+    wins: wins.length,
+    losses: losses.length,
+    winRate: Math.round(wins.length / trades.length * 1000) / 10,
+    profitFactor: Math.round(grossWin / grossLoss * 100) / 100,
+    expectancyR: Math.round(rs.reduce(function(a, b) { return a + b; }, 0) / rs.length * 1000) / 1000,
+    totalR: Math.round(rs.reduce(function(a, b) { return a + b; }, 0) * 100) / 100,
+    avgWinR: wins.length ? Math.round(grossWin / wins.length * 100) / 100 : 0,
+    avgLossR: losses.length ? Math.round(losses.reduce(function(a,b){return a+b;}, 0) / losses.length * 100) / 100 : 0,
+    maxDdR: Math.round(maxDd * 100) / 100,
+    bestR: Math.round(Math.max.apply(null, rs) * 100) / 100,
+    worstR: Math.round(Math.min.apply(null, rs) * 100) / 100,
+    avgBarsHeld: Math.round(trades.reduce(function(a, t) { return a + t.barsHeld; }, 0) / trades.length * 10) / 10
+  };
+}
+
+// ─── Runner asincrono ────────────────────────────────────────────────────────
+async function btRun() {
+  if (bt.running) return;
+  bt.running = true;
+  bt.progress = 0;
+  bt.status = 'fetching';
+  bt.message = 'Scaricamento storico esteso da TwelveData...';
+  bt.startedAt = Date.now();
+  bt.results = null;
+  bt.error = null;
+
+  try {
+    // Simboli per ogni bot (riusa quelli configurati)
+    var mtfSymbols = activeSymbols.slice();
+    var paSymbols = (typeof PA_SYMBOLS !== 'undefined') ? PA_SYMBOLS.slice() : [];
+    var orbSymbols = (typeof ORB_SYMBOLS !== 'undefined') ? ORB_SYMBOLS.slice() : [];
+    var totalSymbols = mtfSymbols.length + paSymbols.length + orbSymbols.length;
+    var done = 0;
+
+    var historyData = {}; // sym -> { '15min', '1h', '4h', '1day' }
+
+    // Fetch MTF symbols (M15 + H1 + H4 + D1)
+    for (var i = 0; i < mtfSymbols.length; i++) {
+      var sym = mtfSymbols[i];
+      bt.message = 'Fetch storico ' + sym + ' (MTF)...';
+      historyData[sym] = {};
+      var isCrypto = CRYPTO.indexOf(sym) !== -1;
+      var fetcher = isCrypto ? btFetchYahooHistory : btFetchHistory;
+      historyData[sym]['15min'] = await fetcher(sym, '15min');
+      historyData[sym]['1h'] = await fetcher(sym, '1h');
+      historyData[sym]['4h'] = await fetcher(sym, '4h');
+      historyData[sym]['1day'] = await fetcher(sym, '1day');
+      done++;
+      bt.progress = Math.round(done / totalSymbols * 50);
+      await new Promise(function(r) { setTimeout(r, 1000); }); // rate limit
+    }
+
+    // Fetch PA symbols (D1 + H4)
+    for (var p = 0; p < paSymbols.length; p++) {
+      var psym = paSymbols[p];
+      if (historyData[psym] && historyData[psym]['1day']) { done++; continue; }
+      bt.message = 'Fetch storico ' + psym + ' (PA D1)...';
+      if (!historyData[psym]) historyData[psym] = {};
+      var isCrypto2 = CRYPTO.indexOf(psym) !== -1;
+      var fetcher2 = isCrypto2 ? btFetchYahooHistory : btFetchHistory;
+      if (!historyData[psym]['1day']) historyData[psym]['1day'] = await fetcher2(psym, '1day');
+      if (!historyData[psym]['4h']) historyData[psym]['4h'] = await fetcher2(psym, '4h');
+      done++;
+      bt.progress = Math.round(done / totalSymbols * 50);
+      await new Promise(function(r) { setTimeout(r, 1000); });
+    }
+
+    // Fetch ORB symbols (M15 + H1)
+    for (var o = 0; o < orbSymbols.length; o++) {
+      var osym = orbSymbols[o];
+      bt.message = 'Fetch storico ' + osym + ' (ORB)...';
+      historyData[osym] = historyData[osym] || {};
+      historyData[osym]['15min'] = await btFetchHistory(osym, '15min') ||
+                                    await btFetchYahooHistory(osym, '15min');
+      historyData[osym]['1h'] = await btFetchHistory(osym, '1h') ||
+                                 await btFetchYahooHistory(osym, '1h');
+      done++;
+      bt.progress = Math.round(done / totalSymbols * 50);
+      await new Promise(function(r) { setTimeout(r, 1000); });
+    }
+
+    bt.status = 'simulating';
+    bt.message = 'Simulazione strategie in corso...';
+
+    // Esegui simulazioni
+    var results = {
+      clean: { MTF: {}, ORB: {}, PA: {} },
+      costs: { MTF: {}, ORB: {}, PA: {} }
+    };
+
+    var simStep = 0;
+    var totalSims = mtfSymbols.length * 2 + paSymbols.length * 2 + orbSymbols.length * 2;
+
+    // MTF
+    for (var mi = 0; mi < mtfSymbols.length; mi++) {
+      var ms = mtfSymbols[mi];
+      var hd = historyData[ms];
+      if (!hd) continue;
+      bt.message = 'Simulazione MTF ' + ms + '...';
+      var spread = BT_SPREADS[ms] || 0;
+      results.clean.MTF[ms] = btSimulateMTF(ms, hd['15min'], hd['1h'], hd['4h'], hd['1day'], 0);
+      results.costs.MTF[ms] = btSimulateMTF(ms, hd['15min'], hd['1h'], hd['4h'], hd['1day'], spread);
+      simStep += 2;
+      bt.progress = 50 + Math.round(simStep / totalSims * 50);
+    }
+
+    // ORB
+    for (var oi = 0; oi < orbSymbols.length; oi++) {
+      var os = orbSymbols[oi];
+      var hod = historyData[os];
+      if (!hod) continue;
+      bt.message = 'Simulazione ORB ' + os + '...';
+      var ospread = BT_SPREADS[os] || 0;
+      results.clean.ORB[os] = btSimulateORB(os, hod['15min'], hod['1h'], 0);
+      results.costs.ORB[os] = btSimulateORB(os, hod['15min'], hod['1h'], ospread);
+      simStep += 2;
+      bt.progress = 50 + Math.round(simStep / totalSims * 50);
+    }
+
+    // PA
+    for (var pi = 0; pi < paSymbols.length; pi++) {
+      var ps = paSymbols[pi];
+      var hpd = historyData[ps];
+      if (!hpd) continue;
+      bt.message = 'Simulazione PA ' + ps + '...';
+      var pspread = BT_SPREADS[ps] || 0;
+      results.clean.PA[ps] = btSimulatePA(ps, hpd['1day'], hpd['4h'], 0);
+      results.costs.PA[ps] = btSimulatePA(ps, hpd['1day'], hpd['4h'], pspread);
+      simStep += 2;
+      bt.progress = 50 + Math.round(simStep / totalSims * 50);
+    }
+
+    // Aggrega metriche
+    var summary = {
+      generated: new Date().toISOString(),
+      durationMs: Date.now() - bt.startedAt,
+      perBot: {},
+      perSymbol: {},
+      total: {}
+    };
+
+    var allBots = ['MTF', 'ORB', 'PA'];
+    var allClean = [], allCosts = [];
+
+    allBots.forEach(function(b) {
+      var bClean = [], bCosts = [];
+      Object.keys(results.clean[b]).forEach(function(s) {
+        bClean = bClean.concat(results.clean[b][s]);
+        bCosts = bCosts.concat(results.costs[b][s]);
+      });
+      summary.perBot[b] = {
+        clean: btComputeMetrics(bClean),
+        costs: btComputeMetrics(bCosts)
+      };
+      // Per simbolo (solo costs per dashboard)
+      Object.keys(results.costs[b]).forEach(function(s) {
+        if (!summary.perSymbol[s]) summary.perSymbol[s] = {};
+        summary.perSymbol[s][b] = btComputeMetrics(results.costs[b][s]);
+      });
+      allClean = allClean.concat(bClean);
+      allCosts = allCosts.concat(bCosts);
+    });
+
+    summary.total = {
+      clean: btComputeMetrics(allClean),
+      costs: btComputeMetrics(allCosts)
+    };
+
+    // Verdict automatico
+    var pf = summary.total.costs.profitFactor;
+    var verdict = '';
+    if (summary.total.costs.count === 0) {
+      verdict = 'Nessun trade generato. Possibili cause: dati storici insufficienti, filtri troppo stretti, periodo storico anomalo.';
+    } else if (pf >= 2.0) {
+      verdict = 'ECCELLENTE - Sistema con edge solido. Profit factor ' + pf + ' con costi reali. Da operare.';
+    } else if (pf >= 1.5) {
+      verdict = 'BUONO - Sistema con edge plausibile. PF ' + pf + ' con costi. Operabile con disciplina.';
+    } else if (pf >= 1.2) {
+      verdict = 'MARGINALE - PF ' + pf + ' sopravvive a malapena ai costi. Da ricalibrare per migliorare.';
+    } else if (pf >= 1.0) {
+      verdict = 'PROBLEMATICO - PF ' + pf + ', edge troppo piccolo per essere significativo.';
+    } else {
+      verdict = 'PERDENTE - PF ' + pf + ', sistema non profittevole nel periodo testato. Strategia da rivedere.';
+    }
+    summary.verdict = verdict;
+
+    // Trade list per export (limitiamo a 500 per non gonfiare la response)
+    summary.tradeListSample = allCosts
+      .sort(function(a, b) { return a.entryTime - b.entryTime; })
+      .slice(0, 500)
+      .map(function(t) {
+        return {
+          symbol: t.symbol, bot: t.bot, dir: t.dir,
+          entryTime: new Date(t.entryTime).toISOString(),
+          exitTime: new Date(t.exitTime).toISOString(),
+          entryPrice: Math.round(t.entryPrice * 100000) / 100000,
+          exitPrice: Math.round(t.exitPrice * 100000) / 100000,
+          exitReason: t.exitReason,
+          pnlPct: Math.round(t.pnlPct * 100) / 100,
+          rMult: Math.round(t.rMult * 100) / 100,
+          barsHeld: t.barsHeld
+        };
+      });
+
+    bt.results = summary;
+    bt.status = 'complete';
+    bt.progress = 100;
+    bt.message = 'Backtest completato';
+    bt.finishedAt = Date.now();
+
+    console.log('Backtest done in ' + ((bt.finishedAt - bt.startedAt) / 1000).toFixed(0) + 's');
+
+  } catch(e) {
+    bt.status = 'error';
+    bt.error = e.message;
+    bt.message = 'Errore: ' + e.message;
+    console.error('Backtest error:', e);
+  } finally {
+    bt.running = false;
+  }
+}
+
+// ─── API endpoints ────────────────────────────────────────────────────────────
+app.post('/api/backtest', function(req, res) {
+  if (bt.running) {
+    res.json({ ok: false, message: 'Backtest gia in esecuzione', status: bt.status });
+    return;
+  }
+  bt.results = null;
+  btRun();  // fire-and-forget
+  res.json({ ok: true, message: 'Backtest avviato' });
+});
+
+app.get('/api/backtest-status', function(req, res) {
+  res.json({
+    running: bt.running,
+    progress: bt.progress,
+    status: bt.status,
+    message: bt.message,
+    startedAt: bt.startedAt,
+    finishedAt: bt.finishedAt,
+    hasResults: bt.results !== null,
+    error: bt.error
+  });
+});
+
+app.get('/api/backtest-results', function(req, res) {
+  if (!bt.results) {
+    res.status(404).json({ ok: false, message: 'Nessun risultato disponibile. Lancia /api/backtest prima.' });
+    return;
+  }
+  res.json(bt.results);
+});
+
 
 // ══════════════════════════════════════════════════════════════════════════════
 // AVVIO SERVER (auto-start tutti i bot)
