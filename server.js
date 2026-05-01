@@ -121,7 +121,7 @@ function isValidPrice(sym, price) {
 // ══════════════════════════════════════
 var ENV_SYMBOLS  = process.env.DEFAULT_SYMBOLS ? process.env.DEFAULT_SYMBOLS.split(',').map(function(s){return s.trim();}) : null;
 var ENV_REFRESH  = parseInt(process.env.REFRESH_SEC) || 300;
-var ENV_COOLDOWN = parseInt(process.env.COOLDOWN_MIN) || 60;  // MTF: 60 min default (era 15 con SuperTrend)
+var ENV_COOLDOWN = parseInt(process.env.COOLDOWN_MIN) || 60;  // 60 min default per MTF
 
 const DEFAULT_SYMBOLS = ENV_SYMBOLS || ['XAUUSD','EURUSD','BTCUSD'];
 
@@ -159,28 +159,6 @@ function calcATR(c, p) {
   var a = [t[0]];
   for (var j = 1; j < t.length; j++) a.push((a[j-1] * (p-1) + t[j]) / p);
   return a;
-}
-
-function calcST(c, period, mult) {
-  var atrs = calcATR(c, period);
-  var res = [], dir = 1, pu = 0, pl = 0;
-  for (var i = 1; i < c.length; i++) {
-    var atr = atrs[i-1] || atrs[0];
-    var hl2 = (c[i].high + c[i].low) / 2;
-    var u = hl2 + mult * atr;
-    var l = hl2 - mult * atr;
-    if (i > 1) {
-      u = (u < pu || c[i-1].close > pu) ? u : pu;
-      l = (l > pl || c[i-1].close < pl) ? l : pl;
-    }
-    var cl = c[i].close;
-    if (dir === 1 && cl < l) dir = -1;
-    else if (dir === -1 && cl > u) dir = 1;
-    res.push({ dir: dir, line: dir === 1 ? l : u, atr: atr });
-    pu = u;
-    pl = l;
-  }
-  return res;
 }
 
 function calcADX(c, period) {
@@ -262,7 +240,7 @@ function calcEMA(c, p) {
 // se è ancora in formazione). Determina la chiusura confrontando il timestamp
 // dell'ultimo bar con (now - intervallo). Se l'intervallo non è specificato,
 // lo deduce dalla differenza tra penultimo e antepenultimo timestamp.
-// Questo previene segnali basati su ADX/SuperTrend di un bar in formazione
+// Questo previene segnali basati su indicatori di un bar in formazione
 // che può oscillare drasticamente fino al close.
 // ──────────────────────────────────────────────────────────────────────────
 function confirmedCandles(c, intervalMs) {
@@ -476,7 +454,7 @@ async function tgSend(text) {
 // ══════════════════════════════════════════════════════════════════════════════
 // GENERAZIONE SEGNALE TREND BOT — Multi-Timeframe Confluence (MTF)
 //
-// Sostituisce il vecchio SuperTrend triplo M15 con un sistema multi-timeframe
+// Multi-Timeframe Confluence (MTF):
 // che richiede confluenza di evidenze prima di generare un segnale:
 //
 //   Layer 1 — D1 (contesto macro):     EMA50>EMA200 + RSI non estremo
