@@ -34,7 +34,7 @@ const FOREX  = ['EURUSD','GBPUSD','USDJPY','GBPJPY','AUDUSD','USDCAD','USDCHF','
 //
 // Per la nuova logica Multi-Timeframe Confluence:
 //   - SL e' STRUTTURALE (swing low/high M15) — non serve piu' slMult
-//   - ADX e' su H1 con soglia fissa 22 — non serve piu' adxMin per simbolo
+//   - ADX e' su H1 con soglia fissa 18 — non serve piu' adxMin per simbolo
 //   - rr: target R:R per il TP (default 2.5)
 //   - allowLong/allowShort: come prima, per restrizioni direzionali
 // ══════════════════════════════════════════════════════════════════════════════
@@ -459,7 +459,7 @@ async function tgSend(text) {
 //
 //   Layer 1 — D1 (contesto macro):     EMA50>EMA200 + RSI non estremo
 //   Layer 2 — H4 (struttura):          Prezzo allineato a EMA20 H4
-//   Layer 3 — H1 (trend operativo):    ADX>22 + EMA20>EMA50 alignment
+//   Layer 3 — H1 (trend operativo):    ADX>18 + EMA20>EMA50 alignment
 //   Layer 4 — M15 (entry trigger):     pullback EMA20 + candela reversal + RSI exit
 //
 // Ogni layer agisce come filtro: se uno solo non passa, niente segnale.
@@ -593,7 +593,7 @@ async function checkSignal(sym, cooldownMin) {
 
     var d1Bull = emaD1_50 > emaD1_200 && lastD1.close > emaD1_50;
     var d1Bear = emaD1_50 < emaD1_200 && lastD1.close < emaD1_50;
-    var rsiD1Ok = rsiD1 >= 30 && rsiD1 <= 70;
+    var rsiD1Ok = rsiD1 >= 25 && rsiD1 <= 75;
 
     if (!d1Bull && !d1Bear) {
       st.stats.lastFilter = 'D1: trend non definito (EMA50/200 non allineate)';
@@ -622,8 +622,8 @@ async function checkSignal(sym, cooldownMin) {
     // LAYER 3 — H1 (trend operativo)
     // ═════════════════════════════════════════════════════════════
     var adxH1 = calcADX(cH1, 14);
-    if (adxH1 < 22) {
-      st.stats.lastFilter = 'H1 ADX ' + adxH1.toFixed(1) + ' < 22 (no trend forte)';
+    if (adxH1 < 18) {
+      st.stats.lastFilter = 'H1 ADX ' + adxH1.toFixed(1) + ' < 18 (no trend definito)';
       return;
     }
 
@@ -646,7 +646,7 @@ async function checkSignal(sym, cooldownMin) {
     var atr = atrArr[atrArr.length - 1] || 0;
 
     // 4a. Pullback verso EMA20 nelle ultime 5 candele
-    var hadPullback = hadRecentPullback(c15, emaM15_20, atr, 5, biasD1 === 'BUY');
+    var hadPullback = hadRecentPullback(c15, emaM15_20, atr, 8, biasD1 === 'BUY');
     if (!hadPullback) {
       st.stats.lastFilter = 'M15 no pullback recente verso EMA20';
       return;
@@ -661,17 +661,18 @@ async function checkSignal(sym, cooldownMin) {
     }
 
     // 4c. RSI esce dalla zona pullback nella direzione corretta
-    //     BUY: RSI tra 40-50 e in salita → segno che il pullback finisce
-    //     SELL: RSI tra 50-60 e in discesa
+    //     RILASSATO: accetta se RSI sale (BUY) o scende (SELL) ed e' nella zona neutra/favorevole
+    //     - BUY: RSI > prev (sta girando su) e RSI tra 35-65 (non estremo, non ipercomprato)
+    //     - SELL: RSI < prev (sta girando giu) e RSI tra 35-65
     var rsiM15Prev = calcRSI(c15.slice(0, -1), 14);
     var rsiOk = false;
     if (biasD1 === 'BUY') {
-      rsiOk = rsiM15Prev <= 50 && rsiM15 > rsiM15Prev && rsiM15 >= 40;
+      rsiOk = rsiM15 > rsiM15Prev && rsiM15 >= 35 && rsiM15 <= 65;
     } else {
-      rsiOk = rsiM15Prev >= 50 && rsiM15 < rsiM15Prev && rsiM15 <= 60;
+      rsiOk = rsiM15 < rsiM15Prev && rsiM15 >= 35 && rsiM15 <= 65;
     }
     if (!rsiOk) {
-      st.stats.lastFilter = 'M15 RSI not exiting pullback zone (now: ' +
+      st.stats.lastFilter = 'M15 RSI not turning in bias direction (now: ' +
                             rsiM15.toFixed(1) + ', prev: ' + rsiM15Prev.toFixed(1) + ')';
       return;
     }
@@ -848,7 +849,7 @@ app.get('/api/status', function(req, res) {
           var lastD1 = cD1[cD1.length - 1];
           var d1Bull = emaD1_50 > emaD1_200 && lastD1.close > emaD1_50;
           var d1Bear = emaD1_50 < emaD1_200 && lastD1.close < emaD1_50;
-          var rsiD1Ok = rsiD1 >= 30 && rsiD1 <= 70;
+          var rsiD1Ok = rsiD1 >= 25 && rsiD1 <= 75;
           var d1Pass = (d1Bull || d1Bear) && rsiD1Ok;
           var bias = d1Bull ? 'BUY' : d1Bear ? 'SELL' : 'NONE';
 
@@ -862,7 +863,7 @@ app.get('/api/status', function(req, res) {
           var adxH1 = calcADX(cH1, 14);
           var emaH1_20 = calcEMA(cH1, 20);
           var emaH1_50 = calcEMA(cH1, 50);
-          var h1AdxOk = adxH1 >= 22;
+          var h1AdxOk = adxH1 >= 18;
           var h1EmaAligned = (bias === 'BUY' && emaH1_20 > emaH1_50) ||
                              (bias === 'SELL' && emaH1_20 < emaH1_50);
           var h1Pass = h1AdxOk && h1EmaAligned;
@@ -873,16 +874,16 @@ app.get('/api/status', function(req, res) {
           var atrArr = calcATR(c15, 14);
           var atr = atrArr[atrArr.length - 1] || 0;
 
-          var hadPullback = hadRecentPullback(c15, emaM15_20, atr, 5, bias === 'BUY');
+          var hadPullback = hadRecentPullback(c15, emaM15_20, atr, 8, bias === 'BUY');
           var reversal = detectReversal(c15);
           var reversalBuy = reversal === 'BUY';
           var reversalSell = reversal === 'SELL';
           var rsiM15Prev = calcRSI(c15.slice(0, -1), 14);
           var rsiOk = false;
           if (bias === 'BUY') {
-            rsiOk = rsiM15Prev <= 50 && rsiM15 > rsiM15Prev && rsiM15 >= 40;
+            rsiOk = rsiM15 > rsiM15Prev && rsiM15 >= 35 && rsiM15 <= 65;
           } else if (bias === 'SELL') {
-            rsiOk = rsiM15Prev >= 50 && rsiM15 < rsiM15Prev && rsiM15 <= 60;
+            rsiOk = rsiM15 < rsiM15Prev && rsiM15 >= 35 && rsiM15 <= 65;
           }
 
           var m15Trigger = hadPullback &&
@@ -1035,6 +1036,13 @@ app.get('/api/version', function(req, res) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 var PA_SYMBOLS = process.env.PA_SYMBOLS ? process.env.PA_SYMBOLS.split(',').map(function(s){return s.trim();}) : DEFAULT_SYMBOLS.slice();
+
+// PA Blacklist: simboli con edge negativo confermato da backtest
+// (PF < 1.0 al netto dei costi su sample >= 30 trade in 6 mesi)
+// Aggiornare quando il backtest mostra evidenza di edge negativo strutturale
+var PA_BLACKLIST = (process.env.PA_BLACKLIST ? process.env.PA_BLACKLIST.split(',').map(function(s){return s.trim();}) : ['GBPUSD']);
+PA_SYMBOLS = PA_SYMBOLS.filter(function(s) { return PA_BLACKLIST.indexOf(s) === -1; });
+console.log('PA Bot: ' + PA_SYMBOLS.length + ' simboli attivi (blacklist: ' + PA_BLACKLIST.join(',') + ')');
 var PA_COOLDOWN_HOURS = parseInt(process.env.PA_COOLDOWN_HOURS) || 24;
 var PA_REFRESH_SEC = parseInt(process.env.PA_REFRESH_SEC) || 3600;
 
@@ -2897,7 +2905,7 @@ function btSimulateMTF(symbol, candles15, candlesH1, candlesH4, candlesD1, sprea
 
     // Layer 3 - H1
     var h1Adx = h1AdxArr[h1Idx];
-    if (h1Adx < 22) continue;
+    if (h1Adx < 18) continue;
     var h1E20 = h1E20Arr[h1Idx];
     var h1E50 = h1E50Arr[h1Idx];
     if ((bias === 'BUY' && h1E20 <= h1E50) || (bias === 'SELL' && h1E20 >= h1E50)) continue;
@@ -2910,12 +2918,12 @@ function btSimulateMTF(symbol, candles15, candlesH1, candlesH4, candlesD1, sprea
     var rsiM15 = calcRSI(slice15, 14);
     var rsiM15Prev = calcRSI(slice15.slice(0, -1), 14);
 
-    if (!hadRecentPullback(slice15, ema20M15, atr, 5, bias === 'BUY')) continue;
+    if (!hadRecentPullback(slice15, ema20M15, atr, 8, bias === 'BUY')) continue;
     if (detectReversal(slice15) !== bias) continue;
 
     var rsiOk = bias === 'BUY' ?
-      (rsiM15Prev <= 50 && rsiM15 > rsiM15Prev && rsiM15 >= 40) :
-      (rsiM15Prev >= 50 && rsiM15 < rsiM15Prev && rsiM15 <= 60);
+      (rsiM15 > rsiM15Prev && rsiM15 >= 35 && rsiM15 <= 65) :
+      (rsiM15 < rsiM15Prev && rsiM15 >= 35 && rsiM15 <= 65);
     if (!rsiOk) continue;
     if (bias === lastDir) continue;
 
@@ -2965,11 +2973,18 @@ function btSimulateMTF(symbol, candles15, candlesH1, candlesH4, candlesD1, sprea
 
 // ─── Backtest Bot 2: ORB Indici ───────────────────────────────────────────────
 var BT_ORB_SESSIONS = {
+  // TwelveData ticker style
   SPX:  { tz: 'America/New_York', openH: 9, openM: 30 },
   NDX:  { tz: 'America/New_York', openH: 9, openM: 30 },
   DAX:  { tz: 'Europe/Berlin',    openH: 9, openM: 0  },
   UKX:  { tz: 'Europe/London',    openH: 8, openM: 0  },
-  N225: { tz: 'Asia/Tokyo',       openH: 9, openM: 0  }
+  N225: { tz: 'Asia/Tokyo',       openH: 9, openM: 0  },
+  // Capital.com style (matches ORB_SYMBOLS used elsewhere)
+  US500: { tz: 'America/New_York', openH: 9, openM: 30 },
+  US100: { tz: 'America/New_York', openH: 9, openM: 30 },
+  GER40: { tz: 'Europe/Berlin',    openH: 9, openM: 0  },
+  UK100: { tz: 'Europe/London',    openH: 8, openM: 0  },
+  JP225: { tz: 'Asia/Tokyo',       openH: 9, openM: 0  }
 };
 
 function btGetLocalHour(tsMs, tz) {
@@ -3192,7 +3207,8 @@ function btSimulatePA(symbol, candlesD1, candlesH4, spread) {
 function btComputeMetrics(trades) {
   if (!trades.length) return {
     count: 0, wins: 0, losses: 0, winRate: 0,
-    profitFactor: 0, expectancyR: 0, totalR: 0,
+    profitFactor: 0, profitFactorRaw: 0, sampleSignificant: false,
+    expectancyR: 0, totalR: 0,
     avgWinR: 0, avgLossR: 0, maxDdR: 0,
     bestR: 0, worstR: 0, avgBarsHeld: 0
   };
@@ -3200,7 +3216,15 @@ function btComputeMetrics(trades) {
   var wins = rs.filter(function(r) { return r > 0; });
   var losses = rs.filter(function(r) { return r <= 0; });
   var grossWin = wins.reduce(function(a, b) { return a + b; }, 0);
-  var grossLoss = Math.abs(losses.reduce(function(a, b) { return a + b; }, 0)) || 0.0001;
+  var grossLossRaw = Math.abs(losses.reduce(function(a, b) { return a + b; }, 0));
+  // Profit factor: solo se losses esistono. Altrimenti il valore non e' significativo.
+  // Inoltre, sample size minimo per significativita' = 30 trade
+  var pf;
+  if (losses.length === 0) {
+    pf = trades.length === 0 ? 0 : -1;  // -1 = sentinel "no losses, undefined"
+  } else {
+    pf = Math.round(grossWin / grossLossRaw * 100) / 100;
+  }
   var cumR = 0, peak = 0, maxDd = 0;
   for (var i = 0; i < rs.length; i++) {
     cumR += rs[i];
@@ -3213,7 +3237,8 @@ function btComputeMetrics(trades) {
     wins: wins.length,
     losses: losses.length,
     winRate: Math.round(wins.length / trades.length * 1000) / 10,
-    profitFactor: Math.round(grossWin / grossLoss * 100) / 100,
+    profitFactor: pf,
+    sampleSignificant: trades.length >= 30,  // soglia significativita' statistica
     expectancyR: Math.round(rs.reduce(function(a, b) { return a + b; }, 0) / rs.length * 1000) / 1000,
     totalR: Math.round(rs.reduce(function(a, b) { return a + b; }, 0) * 100) / 100,
     avgWinR: wins.length ? Math.round(grossWin / wins.length * 100) / 100 : 0,
@@ -3380,19 +3405,27 @@ async function btRun() {
 
     // Verdict automatico
     var pf = summary.total.costs.profitFactor;
+    var nTrades = summary.total.costs.count;
     var verdict = '';
-    if (summary.total.costs.count === 0) {
-      verdict = 'Nessun trade generato. Possibili cause: dati storici insufficienti, filtri troppo stretti, periodo storico anomalo.';
+    if (nTrades === 0) {
+      verdict = 'Nessun trade generato in 6 mesi. Possibili cause: dati storici insufficienti, filtri troppo stretti, periodo storico anomalo.';
+    } else if (nTrades < 30) {
+      verdict = 'SAMPLE TROPPO PICCOLO - solo ' + nTrades + ' trade in 6 mesi. ' +
+                'Servono almeno 30 trade per significativita statistica. ' +
+                'Rilassa i filtri o estendi il periodo prima di valutare l edge.';
+    } else if (pf === -1) {
+      verdict = 'NESSUNA PERDITA registrata - statisticamente sospetto, ' +
+                'probabilmente bias nei dati o periodo anomalo. ' + nTrades + ' trade.';
     } else if (pf >= 2.0) {
-      verdict = 'ECCELLENTE - Sistema con edge solido. Profit factor ' + pf + ' con costi reali. Da operare.';
+      verdict = 'ECCELLENTE - Sistema con edge solido. PF ' + pf + ' con costi reali su ' + nTrades + ' trade. Da operare.';
     } else if (pf >= 1.5) {
-      verdict = 'BUONO - Sistema con edge plausibile. PF ' + pf + ' con costi. Operabile con disciplina.';
+      verdict = 'BUONO - Sistema con edge plausibile. PF ' + pf + ' con costi su ' + nTrades + ' trade. Operabile con disciplina.';
     } else if (pf >= 1.2) {
-      verdict = 'MARGINALE - PF ' + pf + ' sopravvive a malapena ai costi. Da ricalibrare per migliorare.';
+      verdict = 'MARGINALE - PF ' + pf + ' su ' + nTrades + ' trade, sopravvive a malapena ai costi. Da ricalibrare.';
     } else if (pf >= 1.0) {
-      verdict = 'PROBLEMATICO - PF ' + pf + ', edge troppo piccolo per essere significativo.';
+      verdict = 'PROBLEMATICO - PF ' + pf + ' su ' + nTrades + ' trade, edge troppo piccolo per essere significativo.';
     } else {
-      verdict = 'PERDENTE - PF ' + pf + ', sistema non profittevole nel periodo testato. Strategia da rivedere.';
+      verdict = 'PERDENTE - PF ' + pf + ' su ' + nTrades + ' trade, sistema non profittevole nel periodo testato. Strategia da rivedere.';
     }
     summary.verdict = verdict;
 
