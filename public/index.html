@@ -1308,6 +1308,241 @@ body::before {
 .stk-sched-val.cu { color:var(--a-copper); }
 .stk-sched-val.up { color:var(--d-up); }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   BACKTEST PAGE — historical edge verification
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Hero block: big run button + status */
+.bt-hero {
+  background:var(--c-surface);
+  padding:40px 36px;
+  border-bottom:1px solid var(--c-line-1);
+}
+.bt-hero-title {
+  font-family:var(--ff-display);
+  font-style:italic;
+  font-size:22px;
+  color:var(--t-mute);
+  letter-spacing:-0.01em;
+  margin-bottom:10px;
+}
+.bt-hero-msg {
+  font-family:var(--ff-mono);
+  font-size:12px;
+  color:var(--t-soft);
+  letter-spacing:0.02em;
+  margin-bottom:24px;
+  line-height:1.5;
+  max-width:540px;
+}
+.bt-run-btn {
+  display:inline-flex;
+  align-items:center;
+  gap:10px;
+  padding:14px 28px;
+  background:var(--a-copper);
+  color:var(--c-base);
+  border:none;
+  font-family:var(--ff-mono);
+  font-size:12px;
+  letter-spacing:0.18em;
+  text-transform:uppercase;
+  font-weight:600;
+  cursor:pointer;
+  transition:opacity 0.18s, transform 0.18s;
+}
+.bt-run-btn:hover { opacity:0.85; transform:translateY(-1px); }
+.bt-run-btn:disabled { opacity:0.4; cursor:not-allowed; transform:none; }
+.bt-run-btn.running { background:var(--c-elevate); color:var(--a-copper);
+                       border:1px solid var(--a-copper); }
+
+/* Progress bar */
+.bt-progress {
+  margin-top:24px;
+  background:var(--c-base);
+  border:1px solid var(--c-line-1);
+  height:8px;
+  overflow:hidden;
+  position:relative;
+}
+.bt-progress-fill {
+  height:100%;
+  background:linear-gradient(90deg, var(--a-copper), var(--d-up));
+  width:0%;
+  transition:width 0.4s ease;
+}
+.bt-progress-text {
+  font-family:var(--ff-mono);
+  font-size:10px;
+  letter-spacing:0.15em;
+  color:var(--t-mute);
+  text-transform:uppercase;
+  margin-top:10px;
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+}
+
+/* Verdict card */
+.bt-verdict {
+  margin:0 0 18px;
+  padding:24px 28px;
+  background:linear-gradient(135deg, var(--a-copper-bg) 0%, var(--c-elevate) 80%);
+  border:1px solid var(--a-copper-bd);
+  border-left:3px solid var(--a-copper);
+  font-family:var(--ff-display);
+  font-style:italic;
+  font-size:18px;
+  line-height:1.5;
+  color:var(--t-pure);
+  letter-spacing:-0.01em;
+}
+.bt-verdict.win { border-left-color:var(--d-up); }
+.bt-verdict.lose { border-left-color:var(--d-dn); }
+.bt-verdict.warn { border-left-color:var(--a-copper); }
+
+/* Summary metrics grid (top-level numbers) */
+.bt-metrics {
+  display:grid;
+  grid-template-columns:repeat(2, 1fr);
+  gap:1px;
+  background:var(--c-line-1);
+  margin-bottom:18px;
+}
+@media(min-width:600px) { .bt-metrics { grid-template-columns:repeat(3, 1fr); } }
+@media(min-width:900px) { .bt-metrics { grid-template-columns:repeat(6, 1fr); } }
+
+.bt-metric {
+  background:var(--c-surface);
+  padding:18px 20px;
+}
+.bt-metric-lbl {
+  font-family:var(--ff-mono);
+  font-size:9px;
+  letter-spacing:0.18em;
+  color:var(--t-faint);
+  text-transform:uppercase;
+  margin-bottom:8px;
+}
+.bt-metric-val {
+  font-family:var(--ff-display);
+  font-style:italic;
+  font-size:26px;
+  font-weight:400;
+  letter-spacing:-0.02em;
+  font-variant-numeric:tabular-nums;
+  line-height:1;
+  color:var(--t-pure);
+}
+.bt-metric-val.up { color:var(--d-up); }
+.bt-metric-val.dn { color:var(--d-dn); }
+.bt-metric-val.cu { color:var(--a-copper); }
+.bt-metric-sub {
+  font-family:var(--ff-mono);
+  font-size:10px;
+  color:var(--t-mute);
+  margin-top:4px;
+}
+
+/* Per-bot detail panels */
+.bt-bot-panel {
+  background:var(--c-surface);
+  border:1px solid var(--c-line-1);
+  margin-bottom:18px;
+}
+.bt-bot-head {
+  padding:18px 24px;
+  border-bottom:1px solid var(--c-line-1);
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:16px;
+  flex-wrap:wrap;
+}
+.bt-bot-name {
+  font-family:var(--ff-display);
+  font-style:italic;
+  font-size:18px;
+  color:var(--t-pure);
+  letter-spacing:-0.01em;
+}
+.bt-bot-tag {
+  font-family:var(--ff-mono);
+  font-size:9px;
+  letter-spacing:0.18em;
+  color:var(--t-mute);
+  text-transform:uppercase;
+}
+.bt-bot-grid {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:1px;
+  background:var(--c-line-1);
+}
+@media(max-width:680px) { .bt-bot-grid { grid-template-columns:1fr; } }
+
+.bt-bot-cell {
+  background:var(--c-surface);
+  padding:18px 24px;
+}
+.bt-bot-cell-eyebrow {
+  font-family:var(--ff-mono);
+  font-size:9px;
+  letter-spacing:0.16em;
+  text-transform:uppercase;
+  color:var(--t-faint);
+  margin-bottom:14px;
+}
+
+/* Mini metric rows */
+.bt-mini-row {
+  display:flex;
+  justify-content:space-between;
+  padding:6px 0;
+  border-bottom:1px dashed var(--c-line-1);
+  font-family:var(--ff-mono);
+  font-size:12px;
+}
+.bt-mini-row:last-child { border-bottom:none; }
+.bt-mini-row span:first-child { color:var(--t-mute); }
+.bt-mini-row span:last-child {
+  color:var(--t-pure);
+  font-variant-numeric:tabular-nums;
+  font-weight:500;
+}
+.bt-mini-row.up span:last-child { color:var(--d-up); }
+.bt-mini-row.dn span:last-child { color:var(--d-dn); }
+
+/* Symbol breakdown table */
+.bt-table {
+  width:100%;
+  border-collapse:collapse;
+  font-family:var(--ff-mono);
+  font-size:11px;
+}
+.bt-table th {
+  text-align:left;
+  padding:10px 18px;
+  background:var(--c-base);
+  color:var(--t-faint);
+  font-size:9px;
+  letter-spacing:0.16em;
+  text-transform:uppercase;
+  font-weight:500;
+  border-bottom:1px solid var(--c-line-1);
+}
+.bt-table td {
+  padding:10px 18px;
+  border-bottom:1px solid var(--c-line-1);
+  color:var(--t-strong);
+  font-variant-numeric:tabular-nums;
+}
+.bt-table tr:last-child td { border-bottom:none; }
+.bt-table td.up { color:var(--d-up); }
+.bt-table td.dn { color:var(--d-dn); }
+.bt-table td.cu { color:var(--a-copper); }
+
 /* Empty state */
 .empty {
   padding:36px 22px;
@@ -1860,6 +2095,7 @@ body::before {
       <div class="side-section-label">Controllo</div>
       <nav class="side-nav">
         <div class="side-link" data-page="signals">signals</div>
+        <div class="side-link" data-page="backtest">backtest<span class="side-link-tag">edge</span></div>
         <div class="side-link" data-page="risk">risk</div>
         <div class="side-link" data-page="settings">settings</div>
         <div class="side-link" data-page="stats">stats</div>
@@ -1913,52 +2149,59 @@ body::before {
       <div class="page is-on" id="page-analysis">
         <div class="page-head">
           <div class="page-title-block">
-            <div class="page-eyebrow">trend bot · m15</div>
+            <div class="page-eyebrow">trend bot · m15 mtf</div>
             <div class="page-title">analysis</div>
-            <div class="page-sub">triple supertrend · adx min · per-symbol thresholds</div>
+            <div class="page-sub">multi-timeframe confluence · d1 + h4 + h1 + m15</div>
           </div>
           <div class="bd bd-cu" id="conBadge">awaiting</div>
         </div>
 
         <div class="grid-asym">
           <div>
-            <!-- CONSENSUS -->
+            <!-- MTF CONFLUENCE -->
             <div class="panel">
               <div class="consensus">
                 <div class="consensus-row">
                   <div>
-                    <div class="t-eyebrow t-eyebrow-cu">current signal</div>
+                    <div class="t-eyebrow t-eyebrow-cu">current bias</div>
                     <div class="consensus-dir" id="conDir" style="margin-top:8px">no signal</div>
                   </div>
                   <div class="consensus-side">
-                    <div class="t-eyebrow">consensus</div>
-                    <div class="consensus-votes" id="conScore">0/3</div>
+                    <div class="t-eyebrow">layers passed</div>
+                    <div class="consensus-votes" id="conScore">0/4</div>
                   </div>
                 </div>
                 <div class="consensus-pills" id="conBars">
-                  <span class="bd bd-up">buy 0</span>
-                  <span class="bd bd-dn">sell 0</span>
-                  <span class="bd">wait 3</span>
+                  <span class="bd">d1 —</span>
+                  <span class="bd">h4 —</span>
+                  <span class="bd">h1 —</span>
+                  <span class="bd">m15 —</span>
                 </div>
               </div>
               <div class="st-list">
                 <div class="st-item" id="stI1">
-                  <span class="st-name">fast</span>
-                  <span class="st-cfg">atr 7 × 2.0</span>
+                  <span class="st-name">d1</span>
+                  <span class="st-cfg">ema50 vs ema200 · rsi extremes</span>
                   <span class="st-px" id="stP1">—</span>
                   <span class="bd" id="stB1">wait</span>
                 </div>
                 <div class="st-item" id="stI2">
-                  <span class="st-name">mid</span>
-                  <span class="st-cfg">atr 14 × 3.0</span>
+                  <span class="st-name">h4</span>
+                  <span class="st-cfg">price vs ema20</span>
                   <span class="st-px" id="stP2">—</span>
                   <span class="bd" id="stB2">wait</span>
                 </div>
                 <div class="st-item" id="stI3">
-                  <span class="st-name">slow</span>
-                  <span class="st-cfg">atr 21 × 4.5</span>
+                  <span class="st-name">h1</span>
+                  <span class="st-cfg">adx ≥ 22 · ema20 vs ema50</span>
                   <span class="st-px" id="stP3">—</span>
                   <span class="bd" id="stB3">wait</span>
+                </div>
+                <div class="st-item" id="stI4">
+                  <span class="st-name">m15</span>
+                  <span class="st-cfg">pullback ema20 · reversal · rsi</span>
+                  <span class="st-px" id="stP4">—</span>
+                  <span class="bd" id="stB4">wait</span>
                 </div>
               </div>
             </div>
@@ -1972,12 +2215,12 @@ body::before {
                 </div>
               </div>
               <div class="ind-grid">
-                <div class="ind-cell"><div class="ind-lbl">m15 st</div><div class="ind-val" id="iM15">—</div></div>
-                <div class="ind-cell"><div class="ind-lbl">h1 trend</div><div class="ind-val" id="iH1">—</div></div>
-                <div class="ind-cell"><div class="ind-lbl">rsi 14</div><div class="ind-val" id="iRSI">—</div></div>
-                <div class="ind-cell"><div class="ind-lbl">ema 50</div><div class="ind-val" id="iEMA">—</div></div>
-                <div class="ind-cell"><div class="ind-lbl">adx 14</div><div class="ind-val" id="iADX">—</div></div>
-                <div class="ind-cell"><div class="ind-lbl">volume</div><div class="ind-val" id="iVOL">—</div></div>
+                <div class="ind-cell"><div class="ind-lbl">d1 trend</div><div class="ind-val" id="iD1">—</div></div>
+                <div class="ind-cell"><div class="ind-lbl">h4 align</div><div class="ind-val" id="iH4">—</div></div>
+                <div class="ind-cell"><div class="ind-lbl">h1 adx</div><div class="ind-val" id="iH1">—</div></div>
+                <div class="ind-cell"><div class="ind-lbl">m15 rsi</div><div class="ind-val" id="iRSI">—</div></div>
+                <div class="ind-cell"><div class="ind-lbl">m15 ema20</div><div class="ind-val" id="iEMA">—</div></div>
+                <div class="ind-cell"><div class="ind-lbl">d1 rsi</div><div class="ind-val" id="iVOL">—</div></div>
               </div>
             </div>
 
@@ -2230,6 +2473,43 @@ body::before {
       </div>
 
       <!-- ═══════════════════════════════════════════════════════════════
+           PAGE: BACKTEST
+           ═══════════════════════════════════════════════════════════════ -->
+      <div class="page" id="page-backtest">
+        <div class="page-head">
+          <div class="page-title-block">
+            <div class="page-eyebrow">historical edge verification</div>
+            <div class="page-title">backtest</div>
+            <div class="page-sub">simulate the 3 strategies on real history · clean vs costs · twelvedata + yahoo</div>
+          </div>
+          <div class="bd bd-cu" id="btBadge">idle</div>
+        </div>
+
+        <!-- HERO: run button + progress -->
+        <div class="panel" style="padding:0">
+          <div class="bt-hero">
+            <div class="bt-hero-title">verify if the strategies have edge</div>
+            <div class="bt-hero-msg">
+              Runs the 3 bots (mtf trend m15, orb indices, pa d1) on ~6 months of historical
+              data, simulates each trade with sl/tp/trailing, computes win rate, profit factor
+              and expectancy. Two modes: clean (no friction) and with capital.com spreads.
+              Takes 60-180 seconds.
+            </div>
+            <button class="bt-run-btn" id="btRunBtn" onclick="btRun()">▸ run backtest</button>
+            <div class="bt-progress" id="btProgress" style="display:none">
+              <div class="bt-progress-fill" id="btProgressFill"></div>
+            </div>
+            <div class="bt-progress-text" id="btProgressText" style="display:none">
+              <span id="btStage">—</span><span id="btPct">0%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- RESULTS (popolato via JS) -->
+        <div id="btResults"></div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════════════
            PAGE: RISK
            ═══════════════════════════════════════════════════════════════ -->
       <div class="page" id="page-risk">
@@ -2440,6 +2720,7 @@ body::before {
       <div class="mob-link" data-page="pa">pa</div>
       <div class="mob-link" data-page="stocks">stocks</div>
       <div class="mob-link" data-page="signals">signals</div>
+      <div class="mob-link" data-page="backtest">backtest</div>
       <div class="mob-link" data-page="risk">risk</div>
       <div class="mob-link" data-page="settings">settings</div>
       <div class="mob-link" data-page="stats">stats</div>
@@ -2723,69 +3004,130 @@ async function loadAndUpdate(sym) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   ANALYSIS PAGE
+   ANALYSIS PAGE — MTF Confluence rendering
    ══════════════════════════════════════════════════════════════════════════ */
 function updateAnalysis(sym) {
   var c = S.candles[sym];
   if (!c || !c.length) return;
   var price = c[c.length-1].close;
   var dec = price > 1000 ? 2 : price > 10 ? 3 : 4;
-  var cfgs = [{a:7,m:2.0},{a:14,m:3.0},{a:21,m:4.5}];
-  var buys = 0, sells = 0;
-  cfgs.forEach(function(cfg, i) {
-    var st = calcST(c, cfg.a, cfg.m);
-    if (!st.length) return;
-    var last = st[st.length-1];
-    var sig = last.dir === 1 ? 'up' : 'dn';
-    var row = document.getElementById('stI' + (i+1));
-    var badge = document.getElementById('stB' + (i+1));
-    var line = document.getElementById('stP' + (i+1));
+
+  // Calcoli M15 locali (come prima)
+  var rsiM15 = calcRSI(c, 14);
+  var emaM15_20 = calcEMA(c, 20);
+
+  // Per ottenere lo stato MTF reale serve il fetch dei dati H1/H4/D1 dal server.
+  // Il server espone /api/status con {symbolStates: {SYM: {layers: {...}}}}.
+  // Se questi dati non sono ancora disponibili, mostro placeholder neutri.
+  var stState = (S.statusData && S.statusData.symbolStates &&
+                 S.statusData.symbolStates[sym]) || null;
+  var layers = (stState && stState.layers) || null;
+
+  // Fallback: se non ci sono dati layer dal server, deduco da quel poco che ho M15
+  // (mostra "wait" su tutti tranne M15 RSI base)
+  var l1Pass = layers ? !!layers.d1Pass : false;       // D1 trend + RSI
+  var l2Pass = layers ? !!layers.h4Aligned : false;    // H4 alignment
+  var l3Pass = layers ? !!layers.h1Pass : false;       // H1 ADX + EMA
+  var l4Pass = layers ? !!layers.m15Trigger : false;   // M15 trigger
+  var bias = layers ? (layers.bias || 'NONE') : 'NONE'; // 'BUY' | 'SELL' | 'NONE'
+
+  var passed = (l1Pass?1:0) + (l2Pass?1:0) + (l3Pass?1:0) + (l4Pass?1:0);
+
+  // ─── ST list rows (4 layer items) ───
+  var rows = [
+    { id: 1, name: 'd1', pass: l1Pass,
+      label: layers ? (layers.d1Bull ? 'bull · rsi ' + (layers.d1Rsi||0).toFixed(0) :
+                       layers.d1Bear ? 'bear · rsi ' + (layers.d1Rsi||0).toFixed(0) :
+                       'no trend') : '—' },
+    { id: 2, name: 'h4', pass: l2Pass,
+      label: layers ? (layers.h4Aligned ? 'aligned' : 'misaligned') : '—' },
+    { id: 3, name: 'h1', pass: l3Pass,
+      label: layers ? ('adx ' + (layers.h1Adx||0).toFixed(1) +
+                       (layers.h1EmaAligned ? ' · ema ok' : ' · ema no')) : '—' },
+    { id: 4, name: 'm15', pass: l4Pass,
+      label: layers ? (layers.m15Trigger ? 'all ok' :
+                       layers.m15Pullback && (layers.m15ReversalBuy||layers.m15ReversalSell) ? 'wait rsi' :
+                       layers.m15Pullback ? 'wait reversal' :
+                       'wait pullback') : 'rsi ' + rsiM15.toFixed(1) }
+  ];
+
+  rows.forEach(function(r) {
+    var row = document.getElementById('stI' + r.id);
+    var badge = document.getElementById('stB' + r.id);
+    var line = document.getElementById('stP' + r.id);
     if (!row) return;
+
     row.classList.remove('up','dn');
-    row.classList.add(sig);
-    if (badge) {
-      badge.className = 'bd ' + (sig === 'up' ? 'bd-up' : 'bd-dn');
-      badge.textContent = sig === 'up' ? 'buy' : 'sell';
+    if (r.pass) {
+      row.classList.add(bias === 'BUY' ? 'up' : bias === 'SELL' ? 'dn' : 'up');
     }
-    if (line) line.textContent = last.line.toFixed(dec);
-    if (sig === 'up') buys++; else sells++;
+    if (badge) {
+      if (r.pass) {
+        badge.className = 'bd ' + (bias === 'SELL' ? 'bd-dn' : 'bd-up');
+        badge.textContent = 'pass';
+      } else {
+        badge.className = 'bd';
+        badge.textContent = 'wait';
+      }
+    }
+    if (line) line.textContent = r.label;
   });
 
-  var dir = buys >= 3 ? 'BUY' : sells >= 3 ? 'SELL' : buys >= 2 ? 'BUY' : sells >= 2 ? 'SELL' : null;
-  var score = Math.max(buys, sells);
+  // ─── Consensus card ───
+  var allFour = passed === 4;
+  var dir = allFour ? bias : null;
 
   var cd = document.getElementById('conDir');
   if (cd) {
-    cd.textContent = dir ? dir.toLowerCase() : 'no signal';
-    cd.className = 'consensus-dir ' + (dir === 'BUY' ? 'up' : dir === 'SELL' ? 'dn' : '');
+    cd.textContent = dir ? dir.toLowerCase() :
+                     bias !== 'NONE' && passed >= 2 ? bias.toLowerCase() + ' (partial)' :
+                     'no signal';
+    cd.className = 'consensus-dir ' + (dir === 'BUY' ? 'up' :
+                                        dir === 'SELL' ? 'dn' : '');
   }
-  setTxt('conScore', score + '/3');
+  setTxt('conScore', passed + '/4');
 
   var cb = document.getElementById('conBadge');
   if (cb) {
-    cb.className = 'bd ' + (dir === 'BUY' ? 'bd-up' : dir === 'SELL' ? 'bd-dn' : 'bd-cu');
+    cb.className = 'bd ' + (dir === 'BUY' ? 'bd-up' :
+                            dir === 'SELL' ? 'bd-dn' : 'bd-cu');
     cb.textContent = dir ? dir.toLowerCase() : 'awaiting';
   }
 
+  // ─── Consensus pills (4 layer pills) ───
+  function pillCls(p) {
+    return 'bd' + (p ? (bias === 'SELL' ? ' bd-dn' : ' bd-up') : '');
+  }
   setHTML('conBars',
-    '<span class="bd bd-up">buy ' + buys + '</span>' +
-    '<span class="bd bd-dn">sell ' + sells + '</span>' +
-    '<span class="bd">wait ' + (3 - buys - sells) + '</span>');
+    '<span class="' + pillCls(l1Pass) + '">d1 ' + (l1Pass ? 'ok' : '—') + '</span>' +
+    '<span class="' + pillCls(l2Pass) + '">h4 ' + (l2Pass ? 'ok' : '—') + '</span>' +
+    '<span class="' + pillCls(l3Pass) + '">h1 ' + (l3Pass ? 'ok' : '—') + '</span>' +
+    '<span class="' + pillCls(l4Pass) + '">m15 ' + (l4Pass ? 'ok' : '—') + '</span>');
 
-  var rsi = calcRSI(c, 14);
-  var ema = calcEMA(c, 50);
-  var adx = calcADX(c, 14);
-  var m15 = buys >= 2 ? 'BUY' : sells >= 2 ? 'SELL' : 'WAIT';
-  var avgVol = calcAvgVol(c, 20);
-  var lastVol = c[c.length-1].vol || 0;
-  var volPct = avgVol > 0 ? Math.round(lastVol/avgVol*100) : 0;
+  // ─── Indicators grid (mapped to MTF layers) ───
+  var d1Trend = layers ? (layers.d1Bull ? 'bull' : layers.d1Bear ? 'bear' : 'flat') : '—';
+  var d1Cls = layers ? (layers.d1Bull ? 'up' : layers.d1Bear ? 'dn' : '') : '';
+  setInd('iD1', d1Trend, d1Cls);
 
-  setInd('iM15', m15.toLowerCase(), m15 === 'BUY' ? 'up' : m15 === 'SELL' ? 'dn' : '');
-  setInd('iH1', '—', 'mu');
-  setInd('iRSI', rsi.toFixed(1), rsi > 70 ? 'dn' : rsi < 30 ? 'up' : '');
-  setInd('iEMA', price > ema ? 'above' : 'below', price > ema ? 'up' : 'dn');
-  setInd('iADX', adx.toFixed(1), adx >= 25 ? 'up' : adx >= 15 ? 'cu' : 'dn');
-  setInd('iVOL', volPct + '%', volPct >= 80 ? 'up' : volPct >= 60 ? 'cu' : 'dn');
+  var h4State = layers ? (layers.h4Aligned ? 'aligned' : 'no') : '—';
+  var h4Cls = layers ? (layers.h4Aligned ? 'up' : 'dn') : '';
+  setInd('iH4', h4State, h4Cls);
+
+  var h1AdxVal = layers && layers.h1Adx != null ? layers.h1Adx.toFixed(1) : '—';
+  var h1Cls = layers && layers.h1Adx != null ?
+              (layers.h1Adx >= 22 ? 'up' : 'dn') : '';
+  setInd('iH1', h1AdxVal, h1Cls);
+
+  setInd('iRSI', rsiM15.toFixed(1),
+    rsiM15 > 70 ? 'dn' : rsiM15 < 30 ? 'up' : '');
+  setInd('iEMA', price > emaM15_20 ? 'above' : 'below',
+    price > emaM15_20 ? 'up' : 'dn');
+
+  // iVOL slot riusato per RSI D1 (la nostra logica MTF non usa volume)
+  var d1Rsi = layers && layers.d1Rsi != null ? layers.d1Rsi.toFixed(0) : '—';
+  var d1RsiCls = layers && layers.d1Rsi != null ?
+                 (layers.d1Rsi > 70 ? 'dn' : layers.d1Rsi < 30 ? 'up' : '') : '';
+  setInd('iVOL', d1Rsi, d1RsiCls);
 }
 function setInd(id, val, cls) {
   var e = document.getElementById(id);
@@ -3429,6 +3771,260 @@ function renderStocksSchedule(data) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
+   BACKTEST — run, poll progress, render results
+   ══════════════════════════════════════════════════════════════════════════ */
+S.btPollHandle = null;
+
+async function btRun() {
+  var btn = document.getElementById('btRunBtn');
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  btn.classList.add('running');
+  btn.textContent = 'starting…';
+
+  // Show progress UI
+  document.getElementById('btProgress').style.display = 'block';
+  document.getElementById('btProgressText').style.display = 'flex';
+  document.getElementById('btProgressFill').style.width = '0%';
+  setTxt('btStage', 'launching');
+  setTxt('btPct', '0%');
+  setTxt('btBadge', 'running');
+
+  // Clear old results
+  document.getElementById('btResults').innerHTML = '';
+
+  try {
+    var r = await fetch('/api/backtest', { method: 'POST' });
+    var d = await r.json();
+    if (!d.ok) {
+      btShowError(d.message || 'Errore avvio backtest');
+      return;
+    }
+    // Start polling
+    btPollProgress();
+  } catch(e) {
+    btShowError('Errore di rete: ' + e.message);
+  }
+}
+
+function btPollProgress() {
+  if (S.btPollHandle) clearInterval(S.btPollHandle);
+  S.btPollHandle = setInterval(async function() {
+    try {
+      var r = await fetch('/api/backtest-status');
+      var s = await r.json();
+
+      var pct = Math.max(0, Math.min(100, s.progress || 0));
+      document.getElementById('btProgressFill').style.width = pct + '%';
+      setTxt('btPct', pct + '%');
+      setTxt('btStage', s.message || s.status || '—');
+
+      if (!s.running && s.hasResults) {
+        clearInterval(S.btPollHandle);
+        S.btPollHandle = null;
+        await btLoadResults();
+      } else if (!s.running && s.error) {
+        clearInterval(S.btPollHandle);
+        S.btPollHandle = null;
+        btShowError('Errore durante backtest: ' + s.error);
+      }
+    } catch(e) {
+      // Network glitch, continua a pollare
+    }
+  }, 2000);
+}
+
+async function btLoadResults() {
+  try {
+    var r = await fetch('/api/backtest-results');
+    var data = await r.json();
+    btRenderResults(data);
+    btResetButton('▸ run again');
+    setTxt('btBadge', 'complete');
+    document.getElementById('btBadge').className = 'bd bd-up';
+    toast('Backtest completato', 'ok');
+  } catch(e) {
+    btShowError('Errore caricamento risultati: ' + e.message);
+  }
+}
+
+function btShowError(msg) {
+  document.getElementById('btResults').innerHTML =
+    '<div class="bt-verdict lose">⚠ ' + msg + '</div>';
+  btResetButton('▸ retry');
+  setTxt('btBadge', 'error');
+  document.getElementById('btBadge').className = 'bd bd-dn';
+}
+
+function btResetButton(label) {
+  var btn = document.getElementById('btRunBtn');
+  btn.disabled = false;
+  btn.classList.remove('running');
+  btn.textContent = label;
+}
+
+function btMetricCls(value, isProfit) {
+  if (isProfit) return value > 0 ? 'up' : value < 0 ? 'dn' : '';
+  return value >= 1.5 ? 'up' : value >= 1.2 ? 'cu' : 'dn';
+}
+
+function btRenderResults(data) {
+  var el = document.getElementById('btResults');
+  if (!data || !data.total) {
+    el.innerHTML = '<div class="empty">No results</div>';
+    return;
+  }
+
+  var html = '';
+
+  // Verdict
+  var pf = (data.total.costs && data.total.costs.profitFactor) || 0;
+  var verdictCls = pf >= 1.5 ? 'win' : pf >= 1.2 ? 'warn' : 'lose';
+  html += '<div class="bt-verdict ' + verdictCls + '">' +
+          (data.verdict || 'Backtest completato') + '</div>';
+
+  // Aggregate metrics with costs
+  var t = data.total.costs || {};
+  var tc = data.total.clean || {};
+
+  html += '<div class="bt-metrics">';
+  html += btMetricCard('trades', t.count || 0, '');
+  html += btMetricCard('win rate', (t.winRate || 0) + '%', t.winRate >= 50 ? 'up' : 'dn');
+  html += btMetricCard('profit factor', t.profitFactor || 0,
+                        btMetricCls(t.profitFactor || 0, false));
+  html += btMetricCard('expectancy', (t.expectancyR > 0 ? '+' : '') + (t.expectancyR || 0) + 'R',
+                        t.expectancyR > 0 ? 'up' : 'dn');
+  html += btMetricCard('total return', (t.totalR > 0 ? '+' : '') + (t.totalR || 0) + 'R',
+                        t.totalR > 0 ? 'up' : 'dn');
+  html += btMetricCard('max drawdown', (t.maxDdR || 0) + 'R', 'cu');
+  html += '</div>';
+
+  // Per-bot detail
+  ['MTF', 'ORB', 'PA'].forEach(function(bot) {
+    var bm = data.perBot[bot];
+    if (!bm || (bm.costs.count === 0 && bm.clean.count === 0)) return;
+
+    var botName = bot === 'MTF' ? 'trend mtf m15' :
+                  bot === 'ORB' ? 'orb indices' :
+                  'pa bot d1';
+    var botTag = bot === 'MTF' ? 'multi-timeframe confluence' :
+                 bot === 'ORB' ? 'opening range breakout' :
+                 'candlestick patterns';
+
+    html += '<div class="bt-bot-panel">';
+    html += '<div class="bt-bot-head">' +
+            '<div><div class="bt-bot-name">' + botName + '</div>' +
+            '<div class="bt-bot-tag">' + botTag + '</div></div>' +
+            '<span class="bd bd-cu">' + (bm.costs.count || 0) + ' trades</span>' +
+            '</div>';
+
+    html += '<div class="bt-bot-grid">';
+    html += '<div class="bt-bot-cell">';
+    html += '<div class="bt-bot-cell-eyebrow">clean — pure logic</div>';
+    html += btMiniRows(bm.clean);
+    html += '</div>';
+    html += '<div class="bt-bot-cell">';
+    html += '<div class="bt-bot-cell-eyebrow">with capital.com spreads</div>';
+    html += btMiniRows(bm.costs);
+    html += '</div>';
+    html += '</div>';
+
+    // Per-symbol breakdown for this bot
+    var symRows = [];
+    Object.keys(data.perSymbol || {}).forEach(function(sym) {
+      var sm = data.perSymbol[sym][bot];
+      if (sm && sm.count > 0) {
+        symRows.push({ sym: sym, m: sm });
+      }
+    });
+    if (symRows.length) {
+      symRows.sort(function(a, b) { return b.m.totalR - a.m.totalR; });
+      html += '<table class="bt-table">';
+      html += '<thead><tr><th>symbol</th><th>trades</th><th>win%</th>' +
+              '<th>pf</th><th>total r</th><th>worst</th></tr></thead><tbody>';
+      symRows.forEach(function(r) {
+        var rcls = r.m.totalR > 0 ? 'up' : r.m.totalR < 0 ? 'dn' : '';
+        var pfcls = btMetricCls(r.m.profitFactor, false);
+        html += '<tr>' +
+                '<td>' + r.sym + '</td>' +
+                '<td>' + r.m.count + '</td>' +
+                '<td>' + r.m.winRate + '%</td>' +
+                '<td class="' + pfcls + '">' + r.m.profitFactor + '</td>' +
+                '<td class="' + rcls + '">' + (r.m.totalR > 0 ? '+' : '') + r.m.totalR + 'R</td>' +
+                '<td class="dn">' + r.m.worstR + 'R</td>' +
+                '</tr>';
+      });
+      html += '</tbody></table>';
+    }
+
+    html += '</div>';  // bt-bot-panel
+  });
+
+  // Footer info
+  var dur = data.durationMs ? (data.durationMs / 1000).toFixed(0) + 's' : '—';
+  html += '<div style="font-family:var(--ff-mono); font-size:10px; color:var(--t-faint); ' +
+          'letter-spacing:0.05em; margin-top:24px; padding:14px 0; text-align:center; ' +
+          'border-top:1px solid var(--c-line-1);">' +
+          'completed in ' + dur + ' · ' + (t.count || 0) + ' trades simulated · ' +
+          (data.generated ? data.generated.slice(0, 19) + ' UTC' : '') +
+          '</div>';
+
+  el.innerHTML = html;
+}
+
+function btMetricCard(lbl, val, cls) {
+  return '<div class="bt-metric">' +
+         '<div class="bt-metric-lbl">' + lbl + '</div>' +
+         '<div class="bt-metric-val ' + (cls || '') + '">' + val + '</div>' +
+         '</div>';
+}
+
+function btMiniRows(m) {
+  if (!m || m.count === 0) {
+    return '<div style="font-family:var(--ff-display); font-style:italic; ' +
+           'color:var(--t-faint); padding:12px 0">no trades generated</div>';
+  }
+  var rows = [
+    ['count', m.count, ''],
+    ['win rate', m.winRate + '%', m.winRate >= 50 ? 'up' : 'dn'],
+    ['profit factor', m.profitFactor, btMetricCls(m.profitFactor, false)],
+    ['expectancy', (m.expectancyR > 0 ? '+' : '') + m.expectancyR + 'R',
+     m.expectancyR > 0 ? 'up' : 'dn'],
+    ['total return', (m.totalR > 0 ? '+' : '') + m.totalR + 'R',
+     m.totalR > 0 ? 'up' : 'dn'],
+    ['avg win', '+' + m.avgWinR + 'R', 'up'],
+    ['avg loss', m.avgLossR + 'R', 'dn'],
+    ['max drawdown', m.maxDdR + 'R', ''],
+    ['best trade', '+' + m.bestR + 'R', 'up'],
+    ['worst trade', m.worstR + 'R', 'dn'],
+  ];
+  return rows.map(function(r) {
+    return '<div class="bt-mini-row ' + r[2] + '">' +
+           '<span>' + r[0] + '</span><span>' + r[1] + '</span></div>';
+  }).join('');
+}
+
+// On page load, check if a backtest is already running or has results
+async function btCheckExisting() {
+  try {
+    var r = await fetch('/api/backtest-status');
+    var s = await r.json();
+    if (s.running) {
+      // Reattach to running backtest
+      var btn = document.getElementById('btRunBtn');
+      btn.disabled = true;
+      btn.classList.add('running');
+      btn.textContent = 'running…';
+      document.getElementById('btProgress').style.display = 'block';
+      document.getElementById('btProgressText').style.display = 'flex';
+      btPollProgress();
+    } else if (s.hasResults) {
+      await btLoadResults();
+    }
+  } catch(e) {}
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
    STATUS POLLING
    ══════════════════════════════════════════════════════════════════════════ */
 var lastLogLen = 0;
@@ -3438,6 +4034,7 @@ async function pollAll() {
   try {
     var r = await fetch('/api/status');
     var d = await r.json();
+    S.statusData = d;  // Salvo per uso da updateAnalysis (MTF layers state)
     setSidebarStatus(d.dataConnected, d.tgConnected);
 
     var pillT = document.getElementById('pillTrend');
@@ -3771,6 +4368,7 @@ setInterval(fetchAllPrices, 30000);
 switchSym('XAUUSD');
 pollAll();
 setInterval(pollAll, 5000);
+btCheckExisting();
 
 </script>
 
