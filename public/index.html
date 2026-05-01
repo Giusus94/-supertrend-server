@@ -3818,7 +3818,23 @@ function btResetButton(label) {
 
 function btMetricCls(value, isProfit) {
   if (isProfit) return value > 0 ? 'up' : value < 0 ? 'dn' : '';
+  if (value === -1) return 'cu';   // no losses, undefined
   return value >= 1.5 ? 'up' : value >= 1.2 ? 'cu' : 'dn';
+}
+
+// Formatta PF gestendo casi limite: -1 = no losses, 0 = no trades
+function btFmtPF(pf) {
+  if (pf === -1) return '∞';
+  if (pf === 0) return '—';
+  return pf;
+}
+
+// Etichetta sample size per warning su numeri piccoli
+function btSampleNote(count) {
+  if (count === 0) return '';
+  if (count < 10) return ' <span style="color:var(--d-dn); font-size:9px">low sample</span>';
+  if (count < 30) return ' <span style="color:var(--a-copper); font-size:9px">small sample</span>';
+  return '';
 }
 
 function btRenderResults(data) {
@@ -3843,7 +3859,7 @@ function btRenderResults(data) {
   html += '<div class="bt-metrics">';
   html += btMetricCard('trades', t.count || 0, '');
   html += btMetricCard('win rate', (t.winRate || 0) + '%', t.winRate >= 50 ? 'up' : 'dn');
-  html += btMetricCard('profit factor', t.profitFactor || 0,
+  html += btMetricCard('profit factor', btFmtPF(t.profitFactor),
                         btMetricCls(t.profitFactor || 0, false));
   html += btMetricCard('expectancy', (t.expectancyR > 0 ? '+' : '') + (t.expectancyR || 0) + 'R',
                         t.expectancyR > 0 ? 'up' : 'dn');
@@ -3898,11 +3914,12 @@ function btRenderResults(data) {
       symRows.forEach(function(r) {
         var rcls = r.m.totalR > 0 ? 'up' : r.m.totalR < 0 ? 'dn' : '';
         var pfcls = btMetricCls(r.m.profitFactor, false);
+        var sampleNote = btSampleNote(r.m.count);
         html += '<tr>' +
-                '<td>' + r.sym + '</td>' +
+                '<td>' + r.sym + sampleNote + '</td>' +
                 '<td>' + r.m.count + '</td>' +
                 '<td>' + r.m.winRate + '%</td>' +
-                '<td class="' + pfcls + '">' + r.m.profitFactor + '</td>' +
+                '<td class="' + pfcls + '">' + btFmtPF(r.m.profitFactor) + '</td>' +
                 '<td class="' + rcls + '">' + (r.m.totalR > 0 ? '+' : '') + r.m.totalR + 'R</td>' +
                 '<td class="dn">' + r.m.worstR + 'R</td>' +
                 '</tr>';
@@ -3940,7 +3957,7 @@ function btMiniRows(m) {
   var rows = [
     ['count', m.count, ''],
     ['win rate', m.winRate + '%', m.winRate >= 50 ? 'up' : 'dn'],
-    ['profit factor', m.profitFactor, btMetricCls(m.profitFactor, false)],
+    ['profit factor', btFmtPF(m.profitFactor), btMetricCls(m.profitFactor, false)],
     ['expectancy', (m.expectancyR > 0 ? '+' : '') + m.expectancyR + 'R',
      m.expectancyR > 0 ? 'up' : 'dn'],
     ['total return', (m.totalR > 0 ? '+' : '') + m.totalR + 'R',
