@@ -3374,29 +3374,59 @@ async function btRun() {
       costs: btComputeMetrics(allCosts)
     };
 
-    // Verdict automatico
+    // Verdict automatico — bot-aware: ORB e PA hanno dinamiche diverse, valutarli
+    // separatamente e' piu' onesto del solo PF aggregato (che mescola sistemi diversi)
     var pf = summary.total.costs.profitFactor;
     var nTrades = summary.total.costs.count;
+
+    // Helper: classifica un singolo bot in base a PF + sample size
+    function classifyBot(botName, botData) {
+      if (!botData || botData.count === 0) return null;
+      var p = botData.profitFactor;
+      var n = botData.count;
+      if (n < 30)        return { bot: botName, label: 'SAMPLE PICCOLO', tone: 'warn',  pf: p, n: n };
+      if (p >= 2.0)      return { bot: botName, label: 'ECCELLENTE',    tone: 'great', pf: p, n: n };
+      if (p >= 1.5)      return { bot: botName, label: 'BUONO',         tone: 'good',  pf: p, n: n };
+      if (p >= 1.2)      return { bot: botName, label: 'POSITIVO',      tone: 'ok',    pf: p, n: n };
+      if (p >= 1.05)     return { bot: botName, label: 'MARGINALE',     tone: 'warn',  pf: p, n: n };
+      if (p >= 1.0)      return { bot: botName, label: 'BREAKEVEN',     tone: 'warn',  pf: p, n: n };
+      return                     { bot: botName, label: 'PERDENTE',     tone: 'bad',   pf: p, n: n };
+    }
+
+    var orbVerdict = classifyBot('ORB', summary.perBot && summary.perBot.ORB && summary.perBot.ORB.costs);
+    var paVerdict  = classifyBot('PA',  summary.perBot && summary.perBot.PA  && summary.perBot.PA.costs);
+    var bots = [orbVerdict, paVerdict].filter(function(v){ return v !== null; });
+
+    // Verdict aggregato basato sulla combinazione dei bot, non solo PF aggregato
     var verdict = '';
     if (nTrades === 0) {
       verdict = 'Nessun trade generato in 6 mesi. Possibili cause: dati storici insufficienti, filtri troppo stretti, periodo storico anomalo.';
-    } else if (nTrades < 30) {
-      verdict = 'SAMPLE TROPPO PICCOLO - solo ' + nTrades + ' trade in 6 mesi. ' +
-                'Servono almeno 30 trade per significativita statistica. ' +
-                'Rilassa i filtri o estendi il periodo prima di valutare l edge.';
-    } else if (pf === -1) {
-      verdict = 'NESSUNA PERDITA registrata - statisticamente sospetto, ' +
-                'probabilmente bias nei dati o periodo anomalo. ' + nTrades + ' trade.';
-    } else if (pf >= 2.0) {
-      verdict = 'ECCELLENTE - Sistema con edge solido. PF ' + pf + ' con costi reali su ' + nTrades + ' trade. Da operare.';
-    } else if (pf >= 1.5) {
-      verdict = 'BUONO - Sistema con edge plausibile. PF ' + pf + ' con costi su ' + nTrades + ' trade. Operabile con disciplina.';
-    } else if (pf >= 1.2) {
-      verdict = 'MARGINALE - PF ' + pf + ' su ' + nTrades + ' trade, sopravvive a malapena ai costi. Da ricalibrare.';
-    } else if (pf >= 1.0) {
-      verdict = 'PROBLEMATICO - PF ' + pf + ' su ' + nTrades + ' trade, edge troppo piccolo per essere significativo.';
+    } else if (bots.length === 0) {
+      verdict = 'SAMPLE INSUFFICIENTE - solo ' + nTrades + ' trade tra tutti i bot. Estendi periodo o rilassa filtri.';
     } else {
-      verdict = 'PERDENTE - PF ' + pf + ' su ' + nTrades + ' trade, sistema non profittevole nel periodo testato. Strategia da rivedere.';
+      // Costruisci verdict per-bot leggibile
+      var perBotTxt = bots.map(function(b) {
+        return b.bot + ' ' + b.label + ' (PF ' + b.pf + ', ' + b.n + ' trade)';
+      }).join(' | ');
+
+      // Decisione operativa basata su quanti bot hanno edge
+      var hasGoodBot     = bots.some(function(b){ return b.tone === 'great' || b.tone === 'good'; });
+      var hasOkBot       = bots.some(function(b){ return b.tone === 'ok'; });
+      var hasOnlyBadBots = bots.every(function(b){ return b.tone === 'bad'; });
+
+      var headline = '';
+      if (hasOnlyBadBots) {
+        headline = 'PERDENTE - Tutti i bot hanno PF < 1.0 nel periodo testato.';
+      } else if (hasGoodBot && hasOkBot) {
+        headline = 'OPERABILE - Edge confermato su almeno un bot, altri positivi. Risk asymmetric consigliato.';
+      } else if (hasGoodBot) {
+        headline = 'OPERABILE - Sistema con edge solido su almeno un bot.';
+      } else if (hasOkBot) {
+        headline = 'MARGINALE - Edge piccolo ma positivo. Operabile con risk basso.';
+      } else {
+        headline = 'BREAKEVEN - Sopravvive ai costi ma non genera profitto significativo.';
+      }
+      verdict = headline + ' ' + perBotTxt + ' | Aggregato: PF ' + pf + ', ' + nTrades + ' trade.';
     }
     summary.verdict = verdict;
 
