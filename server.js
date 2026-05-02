@@ -2895,18 +2895,31 @@ function btSimulateMTF(symbol, candles15, candlesH1, candlesH4, candlesD1, sprea
   var lastDir = null;
   var cooldownMin = 60;
 
+  // ─── COUNTER DIAGNOSTICI per identificare il bottleneck ───
+  var diag = {
+    totalBars: 0,
+    skipCooldown: 0, skipDaily: 0, skipHtfData: 0,
+    skipL1Trend: 0, skipL1Rsi: 0,
+    skipL2: 0,
+    skipL3Adx: 0, skipL3Ema: 0,
+    skipL4Pullback: 0, skipL4Reversal: 0, skipL4Rsi: 0,
+    skipDirRepeat: 0,
+    passed: 0
+  };
+
   for (var i = 50; i < candles15.length; i++) {
+    diag.totalBars++;
     var ts = candles15[i].time;
 
-    if (ts - lastSignalTime < cooldownMin * 60 * 1000) continue;
+    if (ts - lastSignalTime < cooldownMin * 60 * 1000) { diag.skipCooldown++; continue; }
     var dateKey = new Date(ts).toISOString().slice(0, 10);
-    if ((dailyCount[dateKey] || 0) >= 2) continue;
+    if ((dailyCount[dateKey] || 0) >= 2) { diag.skipDaily++; continue; }
 
     // Lookup HTF al tempo ts
     var d1Idx = btFindHtfIdx(candlesD1, ts);
     var h4Idx = btFindHtfIdx(candlesH4, ts);
     var h1Idx = btFindHtfIdx(candlesH1, ts);
-    if (d1Idx < 200 || h4Idx < 25 || h1Idx < 50) continue;
+    if (d1Idx < 200 || h4Idx < 25 || h1Idx < 50) { diag.skipHtfData++; continue; }
 
     // Layer 1 - D1
     var d1C = candlesD1[d1Idx].close;
@@ -2915,21 +2928,21 @@ function btSimulateMTF(symbol, candles15, candlesH1, candlesH4, candlesD1, sprea
     var d1Rsi = d1RsiArr[d1Idx];
     var d1Bull = d1E50 > d1E200 && d1C > d1E50;
     var d1Bear = d1E50 < d1E200 && d1C < d1E50;
-    if (!d1Bull && !d1Bear) continue;
-    if (d1Rsi < 25 || d1Rsi > 75) continue;
+    if (!d1Bull && !d1Bear) { diag.skipL1Trend++; continue; }
+    if (d1Rsi < 25 || d1Rsi > 75) { diag.skipL1Rsi++; continue; }
     var bias = d1Bull ? 'BUY' : 'SELL';
 
     // Layer 2 - H4
     var h4C = candlesH4[h4Idx].close;
     var h4E20 = h4E20Arr[h4Idx];
-    if ((bias === 'BUY' && h4C <= h4E20) || (bias === 'SELL' && h4C >= h4E20)) continue;
+    if ((bias === 'BUY' && h4C <= h4E20) || (bias === 'SELL' && h4C >= h4E20)) { diag.skipL2++; continue; }
 
     // Layer 3 - H1
     var h1Adx = h1AdxArr[h1Idx];
-    if (h1Adx < 18) continue;
+    if (h1Adx < 18) { diag.skipL3Adx++; continue; }
     var h1E20 = h1E20Arr[h1Idx];
     var h1E50 = h1E50Arr[h1Idx];
-    if ((bias === 'BUY' && h1E20 <= h1E50) || (bias === 'SELL' && h1E20 >= h1E50)) continue;
+    if ((bias === 'BUY' && h1E20 <= h1E50) || (bias === 'SELL' && h1E20 >= h1E50)) { diag.skipL3Ema++; continue; }
 
     // Layer 4 - M15
     var slice15 = candles15.slice(0, i + 1);
@@ -2939,14 +2952,15 @@ function btSimulateMTF(symbol, candles15, candlesH1, candlesH4, candlesD1, sprea
     var rsiM15 = calcRSI(slice15, 14);
     var rsiM15Prev = calcRSI(slice15.slice(0, -1), 14);
 
-    if (!hadRecentPullback(slice15, ema20M15, atr, 8, bias === 'BUY')) continue;
-    if (detectReversal(slice15) !== bias) continue;
+    if (!hadRecentPullback(slice15, ema20M15, atr, 8, bias === 'BUY')) { diag.skipL4Pullback++; continue; }
+    if (detectReversal(slice15) !== bias) { diag.skipL4Reversal++; continue; }
 
     var rsiOk = bias === 'BUY' ?
       (rsiM15 > rsiM15Prev && rsiM15 >= 35 && rsiM15 <= 65) :
       (rsiM15 < rsiM15Prev && rsiM15 >= 35 && rsiM15 <= 65);
-    if (!rsiOk) continue;
-    if (bias === lastDir) continue;
+    if (!rsiOk) { diag.skipL4Rsi++; continue; }
+    if (bias === lastDir) { diag.skipDirRepeat++; continue; }
+    diag.passed++;
 
     // ENTRY
     var entryPrice = candles15[i].close + (bias === 'BUY' ? spread / 2 : -spread / 2);
@@ -2988,6 +3002,23 @@ function btSimulateMTF(symbol, candles15, candlesH1, candlesH4, candlesD1, sprea
     lastDir = bias;
     dailyCount[dateKey] = (dailyCount[dateKey] || 0) + 1;
   }
+
+  // Diagnostica per debugging perche' MTF genera pochi trade
+  // Ritorna anche stat sui filtri se chiamato con flag (skip per default)
+  console.log('[BT MTF DIAG ' + symbol + '] bars=' + diag.totalBars +
+              ' cooldown=' + diag.skipCooldown +
+              ' daily=' + diag.skipDaily +
+              ' htfData=' + diag.skipHtfData +
+              ' L1trend=' + diag.skipL1Trend +
+              ' L1rsi=' + diag.skipL1Rsi +
+              ' L2=' + diag.skipL2 +
+              ' L3adx=' + diag.skipL3Adx +
+              ' L3ema=' + diag.skipL3Ema +
+              ' L4pull=' + diag.skipL4Pullback +
+              ' L4rev=' + diag.skipL4Reversal +
+              ' L4rsi=' + diag.skipL4Rsi +
+              ' dirRepeat=' + diag.skipDirRepeat +
+              ' PASSED=' + diag.passed);
 
   return trades;
 }
