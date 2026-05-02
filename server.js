@@ -1037,14 +1037,18 @@ app.get('/api/version', function(req, res) {
 
 var PA_SYMBOLS = process.env.PA_SYMBOLS ? process.env.PA_SYMBOLS.split(',').map(function(s){return s.trim();}) : DEFAULT_SYMBOLS.slice();
 
-// PA Blacklist: simboli con edge negativo confermato da backtest
-// (PF < 1.0 al netto dei costi su sample >= 30 trade in 6 mesi)
-// Aggiornare quando il backtest mostra evidenza di edge negativo strutturale
-var PA_BLACKLIST = (process.env.PA_BLACKLIST ? process.env.PA_BLACKLIST.split(',').map(function(s){return s.trim();}) : ['GBPUSD']);
+// PA Blacklist: simboli con edge non significativo dal backtest
+//   - GBPUSD: PF 0.75 con costi (edge negativo strutturale)
+//   - EURUSD: PF 1.02 con costi (rumore puro, +1.33R su 125 trade)
+// Aggiornare quando il backtest mostra evidenza di edge negativo o nullo
+var PA_BLACKLIST = (process.env.PA_BLACKLIST ? process.env.PA_BLACKLIST.split(',').map(function(s){return s.trim();}) : ['GBPUSD', 'EURUSD']);
 PA_SYMBOLS = PA_SYMBOLS.filter(function(s) { return PA_BLACKLIST.indexOf(s) === -1; });
 console.log('PA Bot: ' + PA_SYMBOLS.length + ' simboli attivi (blacklist: ' + PA_BLACKLIST.join(',') + ')');
 var PA_COOLDOWN_HOURS = parseInt(process.env.PA_COOLDOWN_HOURS) || 24;
 var PA_REFRESH_SEC = parseInt(process.env.PA_REFRESH_SEC) || 3600;
+// PA risk per trade: ridotto a 1.5% (default) perche' WR 33% richiede risk piu' basso.
+// Backtest 6 mesi mostra max DD 33R con risk 3% = -100% balance. Con 1.5% diventa gestibile.
+var PA_RISK_PCT = parseFloat(process.env.PA_RISK_PCT) || 1.5;
 
 var paState = {};
 var paRunning = false;
@@ -1383,7 +1387,7 @@ async function checkPASignal(sym) {
     var tp = (best.dir === 'BUY' ? price + tpDist : price - tpDist).toFixed(dec);
 
     var lots = [100, 500, 1000].map(function(b) {
-      return b + 'EUR: ' + calcLotSize(sym, b, 3, slDist) + ' lot';
+      return b + 'EUR: ' + calcLotSize(sym, b, PA_RISK_PCT, slDist) + ' lot';
     }).join(' | ');
 
     var nearbySR = srLevels.filter(function(l) { return Math.abs(l.price - price) < atr * 3; })
@@ -1402,7 +1406,7 @@ async function checkPASignal(sym) {
       '<b>R:R:</b> 1:2.5' + nl +
       'Trend D1: ' + (d1Trend || '--') + ' | H4: ' + (h4Trend || '--') + nl +
       (nearbySR ? 'S/R vicini: ' + nearbySR + nl : '') +
-      '<b>Lot (3% rischio):</b>' + nl + lots + nl +
+      '<b>Lot (' + PA_RISK_PCT + '% rischio):</b>' + nl + lots + nl +
       '<i>' + time + ' UTC</i>';
 
     var ok = await tgSend(msg);
@@ -2895,7 +2899,7 @@ function btSimulateMTF(symbol, candles15, candlesH1, candlesH4, candlesD1, sprea
     var d1Bull = d1E50 > d1E200 && d1C > d1E50;
     var d1Bear = d1E50 < d1E200 && d1C < d1E50;
     if (!d1Bull && !d1Bear) continue;
-    if (d1Rsi < 30 || d1Rsi > 70) continue;
+    if (d1Rsi < 25 || d1Rsi > 75) continue;
     var bias = d1Bull ? 'BUY' : 'SELL';
 
     // Layer 2 - H4
@@ -3311,6 +3315,10 @@ async function btRun() {
                                     await btFetchYahooHistory(osym, '15min');
       historyData[osym]['1h'] = await btFetchHistory(osym, '1h') ||
                                  await btFetchYahooHistory(osym, '1h');
+      // DIAGNOSTICA: log stato fetch per debug ORB missing
+      var n15 = historyData[osym]['15min'] ? historyData[osym]['15min'].length : 0;
+      var n1h = historyData[osym]['1h'] ? historyData[osym]['1h'].length : 0;
+      console.log('[BT ORB FETCH] ' + osym + ': M15=' + n15 + ' H1=' + n1h);
       done++;
       bt.progress = Math.round(done / totalSymbols * 50);
       await new Promise(function(r) { setTimeout(r, 1000); });
@@ -3337,6 +3345,13 @@ async function btRun() {
       var spread = BT_SPREADS[ms] || 0;
       results.clean.MTF[ms] = btSimulateMTF(ms, hd['15min'], hd['1h'], hd['4h'], hd['1day'], 0);
       results.costs.MTF[ms] = btSimulateMTF(ms, hd['15min'], hd['1h'], hd['4h'], hd['1day'], spread);
+      // DIAGNOSTICA
+      console.log('[BT MTF] ' + ms + ': clean=' + results.clean.MTF[ms].length +
+                  ' costs=' + results.costs.MTF[ms].length +
+                  ' (data: M15=' + (hd['15min']||[]).length +
+                  ' H1=' + (hd['1h']||[]).length +
+                  ' H4=' + (hd['4h']||[]).length +
+                  ' D1=' + (hd['1day']||[]).length + ')');
       simStep += 2;
       bt.progress = 50 + Math.round(simStep / totalSims * 50);
     }
