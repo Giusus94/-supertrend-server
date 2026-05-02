@@ -2210,8 +2210,8 @@ async function fetchStocksW1(sym) {
       }
     }
 
-    if (out.length < 200) {
-      console.warn('STOCKS ' + sym + ': only ' + out.length + ' weeks (need 200+)');
+    if (out.length < 150) {
+      console.warn('STOCKS ' + sym + ': only ' + out.length + ' weeks (need 150+)');
     }
 
     st.candlesW1 = out;
@@ -2228,8 +2228,8 @@ async function fetchStocksW1(sym) {
 // ──────────────────────────────────────────────────────────────────────────────
 function checkStocksSignal(sym) {
   var st = stocksState[sym];
-  if (!st || !st.candlesW1 || st.candlesW1.length < 200) {
-    if (st) st.stats.lastFilter = 'dati insufficienti (need 200 weeks)';
+  if (!st || !st.candlesW1 || st.candlesW1.length < 150) {
+    if (st) st.stats.lastFilter = 'dati insufficienti (need 150 weeks)';
     return null;
   }
 
@@ -3323,35 +3323,43 @@ async function btRun() {
       await new Promise(function(r) { setTimeout(r, 1000); });
     }
 
-    // Fetch ORB symbols (M15 + H1)
+    // Fetch ORB symbols (M15 + H1) — usa Yahoo direttamente perche' TwelveData
+    // ritorna prezzi non-index (ratio/yield) per cash indices con piano standard.
+    // Yahoo ha dati cash indices puliti su tutti gli indici principali.
     for (var o = 0; o < orbSymbols.length; o++) {
       var osym = orbSymbols[o];
       bt.message = 'Fetch storico ' + osym + ' (ORB)...';
       historyData[osym] = historyData[osym] || {};
 
-      // Tentativo TD M15
-      var tdRes15 = await btFetchHistory(osym, '15min');
-      console.log('[BT ORB] ' + osym + ' TD M15: ' + (tdRes15 ? tdRes15.length + ' candele' : 'FAIL'));
-      if (!tdRes15 || tdRes15.length === 0) {
-        var yhRes15 = await btFetchYahooHistory(osym, '15min');
-        console.log('[BT ORB] ' + osym + ' Yahoo M15: ' + (yhRes15 ? yhRes15.length + ' candele' : 'FAIL'));
-        historyData[osym]['15min'] = yhRes15;
-      } else {
-        historyData[osym]['15min'] = tdRes15;
+      // Yahoo direttamente (skip TD per indici)
+      var yhRes15 = await btFetchYahooHistory(osym, '15min');
+      console.log('[BT ORB] ' + osym + ' Yahoo M15: ' + (yhRes15 ? yhRes15.length + ' candele' : 'FAIL'));
+      // Sanity check prezzo: scarta se fuori range plausibile per quell'indice
+      if (yhRes15 && yhRes15.length && ORB_PRICE_RANGES[osym]) {
+        var lastP = yhRes15[yhRes15.length - 1].close;
+        var range = ORB_PRICE_RANGES[osym];
+        if (lastP < range[0] || lastP > range[1]) {
+          console.log('[BT ORB] ' + osym + ' Yahoo M15 prezzo ' + lastP +
+                      ' fuori range [' + range[0] + ',' + range[1] + '], SCARTATO');
+          yhRes15 = null;
+        }
       }
+      historyData[osym]['15min'] = yhRes15;
 
-      // Tentativo TD H1
-      var tdRes1h = await btFetchHistory(osym, '1h');
-      console.log('[BT ORB] ' + osym + ' TD H1: ' + (tdRes1h ? tdRes1h.length + ' candele' : 'FAIL'));
-      if (!tdRes1h || tdRes1h.length === 0) {
-        var yhRes1h = await btFetchYahooHistory(osym, '1h');
-        console.log('[BT ORB] ' + osym + ' Yahoo H1: ' + (yhRes1h ? yhRes1h.length + ' candele' : 'FAIL'));
-        historyData[osym]['1h'] = yhRes1h;
-      } else {
-        historyData[osym]['1h'] = tdRes1h;
+      var yhRes1h = await btFetchYahooHistory(osym, '1h');
+      console.log('[BT ORB] ' + osym + ' Yahoo H1: ' + (yhRes1h ? yhRes1h.length + ' candele' : 'FAIL'));
+      if (yhRes1h && yhRes1h.length && ORB_PRICE_RANGES[osym]) {
+        var lastP1 = yhRes1h[yhRes1h.length - 1].close;
+        var range1 = ORB_PRICE_RANGES[osym];
+        if (lastP1 < range1[0] || lastP1 > range1[1]) {
+          console.log('[BT ORB] ' + osym + ' Yahoo H1 prezzo ' + lastP1 +
+                      ' fuori range [' + range1[0] + ',' + range1[1] + '], SCARTATO');
+          yhRes1h = null;
+        }
       }
+      historyData[osym]['1h'] = yhRes1h;
 
-      // Riepilogo finale
+      // Riepilogo
       var n15 = historyData[osym]['15min'] ? historyData[osym]['15min'].length : 0;
       var n1h = historyData[osym]['1h'] ? historyData[osym]['1h'].length : 0;
       console.log('[BT ORB FETCH] ' + osym + ': M15=' + n15 + ' H1=' + n1h +
