@@ -2694,8 +2694,10 @@ var BT_SPREADS = {
 
 // ─── Helper: fetch storico esteso da TwelveData (5000 candele) ────────────────
 async function btFetchHistory(symbol, interval) {
-  if (!TD_KEY) return null;
-  // Usa la stessa mappatura del fetchTD live (TD_MAP per forex/metalli, ORB_TD_MAP per indici)
+  if (!TD_KEY) {
+    console.log('[BT TD] ' + symbol + ' ' + interval + ': NO TD_KEY');
+    return null;
+  }
   var tdSym = (typeof ORB_TD_MAP !== 'undefined' && ORB_TD_MAP[symbol]) ||
               (typeof TD_MAP !== 'undefined' && TD_MAP[symbol]) ||
               symbol;
@@ -2705,9 +2707,16 @@ async function btFetchHistory(symbol, interval) {
             '&outputsize=5000&order=ASC&apikey=' + TD_KEY;
   try {
     var r = await fetch(url, { headers: { 'User-Agent': 'ST-EA-Backtest/1.0' }});
-    if (!r.ok) return null;
+    if (!r.ok) {
+      console.log('[BT TD] ' + symbol + ' ' + interval + ' (' + tdSym + '): HTTP ' + r.status);
+      return null;
+    }
     var data = await r.json();
-    if (data.status === 'error' || !data.values) return null;
+    if (data.status === 'error' || !data.values) {
+      console.log('[BT TD] ' + symbol + ' ' + interval + ' (' + tdSym + '): ' +
+                  (data.message || data.status || 'no values'));
+      return null;
+    }
     return data.values.map(function(v) {
       return {
         time: new Date(v.datetime + 'Z').getTime(),
@@ -2721,7 +2730,7 @@ async function btFetchHistory(symbol, interval) {
       return !isNaN(c.open) && !isNaN(c.high) && !isNaN(c.low) && !isNaN(c.close);
     });
   } catch(e) {
-    console.error('BT fetch ' + symbol + ' ' + interval + ': ' + e.message);
+    console.error('[BT TD] ' + symbol + ' ' + interval + ': ' + e.message);
     return null;
   }
 }
@@ -2746,10 +2755,18 @@ async function btFetchYahooHistory(symbol, interval) {
             '?interval=' + yhInterval + '&range=' + yhRange;
   try {
     var r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }});
-    if (!r.ok) return null;
+    if (!r.ok) {
+      console.log('[BT YH] ' + symbol + ' ' + interval + ' (' + yhSym + '): HTTP ' + r.status);
+      return null;
+    }
     var data = await r.json();
     var chart = data && data.chart && data.chart.result && data.chart.result[0];
-    if (!chart || !chart.timestamp) return null;
+    if (!chart || !chart.timestamp) {
+      var errMsg = data && data.chart && data.chart.error ?
+                   JSON.stringify(data.chart.error) : 'no chart data';
+      console.log('[BT YH] ' + symbol + ' ' + interval + ' (' + yhSym + '): ' + errMsg);
+      return null;
+    }
     var ts = chart.timestamp;
     var q = chart.indicators.quote[0];
     var out = [];
@@ -3311,14 +3328,34 @@ async function btRun() {
       var osym = orbSymbols[o];
       bt.message = 'Fetch storico ' + osym + ' (ORB)...';
       historyData[osym] = historyData[osym] || {};
-      historyData[osym]['15min'] = await btFetchHistory(osym, '15min') ||
-                                    await btFetchYahooHistory(osym, '15min');
-      historyData[osym]['1h'] = await btFetchHistory(osym, '1h') ||
-                                 await btFetchYahooHistory(osym, '1h');
-      // DIAGNOSTICA: log stato fetch per debug ORB missing
+
+      // Tentativo TD M15
+      var tdRes15 = await btFetchHistory(osym, '15min');
+      console.log('[BT ORB] ' + osym + ' TD M15: ' + (tdRes15 ? tdRes15.length + ' candele' : 'FAIL'));
+      if (!tdRes15 || tdRes15.length === 0) {
+        var yhRes15 = await btFetchYahooHistory(osym, '15min');
+        console.log('[BT ORB] ' + osym + ' Yahoo M15: ' + (yhRes15 ? yhRes15.length + ' candele' : 'FAIL'));
+        historyData[osym]['15min'] = yhRes15;
+      } else {
+        historyData[osym]['15min'] = tdRes15;
+      }
+
+      // Tentativo TD H1
+      var tdRes1h = await btFetchHistory(osym, '1h');
+      console.log('[BT ORB] ' + osym + ' TD H1: ' + (tdRes1h ? tdRes1h.length + ' candele' : 'FAIL'));
+      if (!tdRes1h || tdRes1h.length === 0) {
+        var yhRes1h = await btFetchYahooHistory(osym, '1h');
+        console.log('[BT ORB] ' + osym + ' Yahoo H1: ' + (yhRes1h ? yhRes1h.length + ' candele' : 'FAIL'));
+        historyData[osym]['1h'] = yhRes1h;
+      } else {
+        historyData[osym]['1h'] = tdRes1h;
+      }
+
+      // Riepilogo finale
       var n15 = historyData[osym]['15min'] ? historyData[osym]['15min'].length : 0;
       var n1h = historyData[osym]['1h'] ? historyData[osym]['1h'].length : 0;
-      console.log('[BT ORB FETCH] ' + osym + ': M15=' + n15 + ' H1=' + n1h);
+      console.log('[BT ORB FETCH] ' + osym + ': M15=' + n15 + ' H1=' + n1h +
+                  ' (sessione TZ=' + (BT_ORB_SESSIONS[osym] ? BT_ORB_SESSIONS[osym].tz : 'UNDEFINED') + ')');
       done++;
       bt.progress = Math.round(done / totalSymbols * 50);
       await new Promise(function(r) { setTimeout(r, 1000); });
