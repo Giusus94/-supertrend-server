@@ -911,6 +911,8 @@ app.get('/api/status', function(req, res) {
   res.json({
     isRunning: isRunning,
     activeSymbols: activeSymbols,
+    paSymbols: typeof PA_SYMBOLS !== 'undefined' ? PA_SYMBOLS : [],
+    orbSymbols: typeof ORB_SYMBOLS !== 'undefined' ? ORB_SYMBOLS : [],
     globalStats: globalStats,
     globalLog: globalLog.slice(0, 20),
     tgConnected: !!(TG_TOKEN && TG_CHAT_ID),
@@ -3389,8 +3391,9 @@ async function btRun() {
   bt.error = null;
 
   try {
-    // Simboli per ogni bot (riusa quelli configurati)
-    var mtfSymbols = activeSymbols.slice();
+    // Simboli per ogni bot. MTF usa DEFAULT_SYMBOLS (anche se MTF live disabilitato,
+    // il backtest serve per validare possibili miglioramenti futuri della strategia)
+    var mtfSymbols = DEFAULT_SYMBOLS.slice();
     var paSymbols = (typeof PA_SYMBOLS !== 'undefined') ? PA_SYMBOLS.slice() : [];
     var orbSymbols = (typeof ORB_SYMBOLS !== 'undefined') ? ORB_SYMBOLS.slice() : [];
     var totalSymbols = mtfSymbols.length + paSymbols.length + orbSymbols.length;
