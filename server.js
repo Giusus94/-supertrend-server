@@ -2930,182 +2930,6 @@ function btFindHtfIdx(htfCandles, tsMs) {
   return ans - 1;
 }
 
-// ─── Backtest Bot 1: MTF Trend M15 ────────────────────────────────────────────
-function btSimulateMTF(symbol, candles15, candlesH1, candlesH4, candlesD1, spread) {
-  if (!candles15 || candles15.length < 100 ||
-      !candlesH1 || candlesH1.length < 60 ||
-      !candlesH4 || candlesH4.length < 30 ||
-      !candlesD1 || candlesD1.length < 200) {
-    return [];
-  }
-
-  // Pre-calcolo serie complete una volta sola
-  // Pre-calcolo HTF series in O(N) totale (era O(N^2) prima — causava OOM crash)
-  var d1E50Arr = calcEMASeries(candlesD1, 50);
-  var d1E200Arr = calcEMASeries(candlesD1, 200);
-  var d1RsiArr = calcRSISeries(candlesD1, 14);
-
-  var h4E20Arr = calcEMASeries(candlesH4, 20);
-
-  var h1E20Arr = calcEMASeries(candlesH1, 20);
-  var h1E50Arr = calcEMASeries(candlesH1, 50);
-  var h1AdxArr = calcADXSeries(candlesH1, 14);
-
-  // M15 series pre-calcolate (era calcolato a ogni iterazione → memory leak)
-  var m15Ema20Arr = calcEMASeries(candles15, 20);
-  var m15RsiArr = calcRSISeries(candles15, 14);
-  var m15AtrArr = calcATRSeries(candles15, 14);
-
-  var trades = [];
-  var lastSignalTime = 0;
-  var dailyCount = {};
-  var lastDir = null;
-  var cooldownMin = 60;
-
-  // ─── COUNTER DIAGNOSTICI per identificare il bottleneck ───
-  var diag = {
-    totalBars: 0,
-    skipCooldown: 0, skipDaily: 0, skipHtfData: 0,
-    skipL1Trend: 0, skipL1Rsi: 0,
-    skipL2: 0,
-    skipL3Adx: 0, skipL3Ema: 0,
-    skipL4Pullback: 0, skipL4Reversal: 0, skipL4Rsi: 0,
-    skipDirRepeat: 0,
-    passed: 0
-  };
-
-  for (var i = 50; i < candles15.length; i++) {
-    diag.totalBars++;
-    var ts = candles15[i].time;
-
-    if (ts - lastSignalTime < cooldownMin * 60 * 1000) { diag.skipCooldown++; continue; }
-    var dateKey = new Date(ts).toISOString().slice(0, 10);
-    if ((dailyCount[dateKey] || 0) >= 2) { diag.skipDaily++; continue; }
-
-    // Lookup HTF al tempo ts
-    var d1Idx = btFindHtfIdx(candlesD1, ts);
-    var h4Idx = btFindHtfIdx(candlesH4, ts);
-    var h1Idx = btFindHtfIdx(candlesH1, ts);
-    if (d1Idx < 200 || h4Idx < 25 || h1Idx < 50) { diag.skipHtfData++; continue; }
-
-    // Layer 1 - D1
-    var d1C = candlesD1[d1Idx].close;
-    var d1E50 = d1E50Arr[d1Idx];
-    var d1E200 = d1E200Arr[d1Idx];
-    var d1Rsi = d1RsiArr[d1Idx];
-    var d1Bull = d1E50 > d1E200 && d1C > d1E50;
-    var d1Bear = d1E50 < d1E200 && d1C < d1E50;
-    if (!d1Bull && !d1Bear) { diag.skipL1Trend++; continue; }
-    if (d1Rsi < 25 || d1Rsi > 75) { diag.skipL1Rsi++; continue; }
-    var bias = d1Bull ? 'BUY' : 'SELL';
-
-    // Layer 2 - H4
-    var h4C = candlesH4[h4Idx].close;
-    var h4E20 = h4E20Arr[h4Idx];
-    if ((bias === 'BUY' && h4C <= h4E20) || (bias === 'SELL' && h4C >= h4E20)) { diag.skipL2++; continue; }
-
-    // Layer 3 - H1
-    var h1Adx = h1AdxArr[h1Idx];
-    if (h1Adx < 18) { diag.skipL3Adx++; continue; }
-    var h1E20 = h1E20Arr[h1Idx];
-    var h1E50 = h1E50Arr[h1Idx];
-    if ((bias === 'BUY' && h1E20 <= h1E50) || (bias === 'SELL' && h1E20 >= h1E50)) { diag.skipL3Ema++; continue; }
-
-    // Layer 4 - M15 (lookup O(1) sulle series pre-calcolate)
-    var atr = m15AtrArr[i];
-    var ema20M15Now = m15Ema20Arr[i];
-    var rsiM15 = m15RsiArr[i];
-    var rsiM15Prev = i > 0 ? m15RsiArr[i - 1] : 50;
-    if (isNaN(atr) || isNaN(ema20M15Now) || isNaN(rsiM15)) { diag.skipL4Pullback++; continue; }
-
-    // Pullback check inline: nelle ultime 8 candele il prezzo ha toccato EMA20 ± buffer
-    var hadPullback = false;
-    var pbBuf = atr * 0.3;
-    var pbStart = Math.max(0, i - 7);
-    for (var pb = pbStart; pb <= i; pb++) {
-      var emaPb = m15Ema20Arr[pb];
-      if (isNaN(emaPb)) continue;
-      if (bias === 'BUY' && candles15[pb].low <= emaPb + pbBuf) { hadPullback = true; break; }
-      if (bias === 'SELL' && candles15[pb].high >= emaPb - pbBuf) { hadPullback = true; break; }
-    }
-    if (!hadPullback) { diag.skipL4Pullback++; continue; }
-    // RIMOSSO: detectReversal era il vero killer (taglia 80%+ dei trade post-L3).
-    // I 5 layer D1 trend + H4 align + H1 ADX + pullback + RSI sono gia' confluenti.
-
-    var rsiOk = bias === 'BUY' ?
-      (rsiM15 > rsiM15Prev && rsiM15 >= 35 && rsiM15 <= 65) :
-      (rsiM15 < rsiM15Prev && rsiM15 >= 35 && rsiM15 <= 65);
-    if (!rsiOk) { diag.skipL4Rsi++; continue; }
-    diag.passed++;
-
-    // ENTRY
-    var entryPrice = candles15[i].close + (bias === 'BUY' ? spread / 2 : -spread / 2);
-
-    // Swing inline: min/max ultimi 10 bar M15
-    var swingStart = Math.max(0, i - 9);
-    var swing = bias === 'BUY' ? Infinity : -Infinity;
-    for (var sw = swingStart; sw <= i; sw++) {
-      if (bias === 'BUY' && candles15[sw].low < swing) swing = candles15[sw].low;
-      if (bias === 'SELL' && candles15[sw].high > swing) swing = candles15[sw].high;
-    }
-    var buf = atr * 0.3;
-    var sl = bias === 'BUY' ? swing - buf : swing + buf;
-    var slDist = Math.abs(entryPrice - sl);
-    var maxSl = entryPrice * 0.015;
-    if (slDist > maxSl) {
-      sl = bias === 'BUY' ? entryPrice - maxSl : entryPrice + maxSl;
-      slDist = maxSl;
-    }
-    var rr = 2.5;
-    var tp = bias === 'BUY' ? entryPrice + slDist * rr : entryPrice - slDist * rr;
-
-    // Trail su EMA50 H1
-    var trail = function(idxM15) {
-      var t = candles15[idxM15].time;
-      var hi = btFindHtfIdx(candlesH1, t);
-      return (hi >= 0 && hi < h1E50Arr.length) ? h1E50Arr[hi] : null;
-    };
-
-    var outcome = btSimulateTradeOutcome(candles15, i, bias, sl, tp, 384, trail);
-    var exitPrice = outcome.exitPrice + (bias === 'BUY' ? -spread / 2 : spread / 2);
-    var pnl = bias === 'BUY' ? (exitPrice - entryPrice) : (entryPrice - exitPrice);
-    var rMult = slDist > 0 ? pnl / slDist : 0;
-    var pnlPct = (pnl / entryPrice) * 100;
-
-    trades.push({
-      symbol: symbol, bot: 'MTF', dir: bias,
-      entryTime: ts, entryPrice: entryPrice,
-      sl: sl, tp: tp,
-      exitTime: candles15[outcome.exitIdx].time,
-      exitPrice: exitPrice, exitReason: outcome.reason,
-      barsHeld: outcome.barsHeld, pnlPct: pnlPct, rMult: rMult
-    });
-
-    lastSignalTime = ts;
-    lastDir = bias;
-    dailyCount[dateKey] = (dailyCount[dateKey] || 0) + 1;
-  }
-
-  // Diagnostica per debugging perche' MTF genera pochi trade
-  // Ritorna anche stat sui filtri se chiamato con flag (skip per default)
-  console.log('[BT MTF DIAG ' + symbol + '] bars=' + diag.totalBars +
-              ' cooldown=' + diag.skipCooldown +
-              ' daily=' + diag.skipDaily +
-              ' htfData=' + diag.skipHtfData +
-              ' L1trend=' + diag.skipL1Trend +
-              ' L1rsi=' + diag.skipL1Rsi +
-              ' L2=' + diag.skipL2 +
-              ' L3adx=' + diag.skipL3Adx +
-              ' L3ema=' + diag.skipL3Ema +
-              ' L4pull=' + diag.skipL4Pullback +
-              ' L4rev=' + diag.skipL4Reversal +
-              ' L4rsi=' + diag.skipL4Rsi +
-              ' dirRepeat=' + diag.skipDirRepeat +
-              ' PASSED=' + diag.passed);
-
-  return trades;
-}
-
 // ─── Backtest Bot 2: ORB Indici ───────────────────────────────────────────────
 var BT_ORB_SESSIONS = {
   // TwelveData ticker style
@@ -3391,42 +3215,23 @@ async function btRun() {
   bt.error = null;
 
   try {
-    // Simboli per ogni bot. MTF usa DEFAULT_SYMBOLS (anche se MTF live disabilitato,
-    // il backtest serve per validare possibili miglioramenti futuri della strategia)
-    var mtfSymbols = DEFAULT_SYMBOLS.slice();
+    // Simboli per i 2 bot operativi (MTF rimosso definitivamente: PF 0.37 in backtest)
     var paSymbols = (typeof PA_SYMBOLS !== 'undefined') ? PA_SYMBOLS.slice() : [];
     var orbSymbols = (typeof ORB_SYMBOLS !== 'undefined') ? ORB_SYMBOLS.slice() : [];
-    var totalSymbols = mtfSymbols.length + paSymbols.length + orbSymbols.length;
+    var totalSymbols = paSymbols.length + orbSymbols.length;
     var done = 0;
 
     var historyData = {}; // sym -> { '15min', '1h', '4h', '1day' }
 
-    // Fetch MTF symbols (M15 + H1 + H4 + D1)
-    for (var i = 0; i < mtfSymbols.length; i++) {
-      var sym = mtfSymbols[i];
-      bt.message = 'Fetch storico ' + sym + ' (MTF)...';
-      historyData[sym] = {};
-      var isCrypto = CRYPTO.indexOf(sym) !== -1;
-      var fetcher = isCrypto ? btFetchYahooHistory : btFetchHistory;
-      historyData[sym]['15min'] = await fetcher(sym, '15min');
-      historyData[sym]['1h'] = await fetcher(sym, '1h');
-      historyData[sym]['4h'] = await fetcher(sym, '4h');
-      historyData[sym]['1day'] = await fetcher(sym, '1day');
-      done++;
-      bt.progress = Math.round(done / totalSymbols * 50);
-      await new Promise(function(r) { setTimeout(r, 1000); }); // rate limit
-    }
-
     // Fetch PA symbols (D1 + H4)
     for (var p = 0; p < paSymbols.length; p++) {
       var psym = paSymbols[p];
-      if (historyData[psym] && historyData[psym]['1day']) { done++; continue; }
       bt.message = 'Fetch storico ' + psym + ' (PA D1)...';
       if (!historyData[psym]) historyData[psym] = {};
       var isCrypto2 = CRYPTO.indexOf(psym) !== -1;
       var fetcher2 = isCrypto2 ? btFetchYahooHistory : btFetchHistory;
-      if (!historyData[psym]['1day']) historyData[psym]['1day'] = await fetcher2(psym, '1day');
-      if (!historyData[psym]['4h']) historyData[psym]['4h'] = await fetcher2(psym, '4h');
+      historyData[psym]['1day'] = await fetcher2(psym, '1day');
+      historyData[psym]['4h'] = await fetcher2(psym, '4h');
       done++;
       bt.progress = Math.round(done / totalSymbols * 50);
       await new Promise(function(r) { setTimeout(r, 1000); });
@@ -3481,37 +3286,14 @@ async function btRun() {
     bt.status = 'simulating';
     bt.message = 'Simulazione strategie in corso...';
 
-    // Esegui simulazioni
+    // Esegui simulazioni (solo ORB + PA, MTF rimosso definitivamente)
     var results = {
-      clean: { MTF: {}, ORB: {}, PA: {} },
-      costs: { MTF: {}, ORB: {}, PA: {} }
+      clean: { ORB: {}, PA: {} },
+      costs: { ORB: {}, PA: {} }
     };
 
     var simStep = 0;
-    var totalSims = mtfSymbols.length * 2 + paSymbols.length * 2 + orbSymbols.length * 2;
-
-    // MTF
-    for (var mi = 0; mi < mtfSymbols.length; mi++) {
-      var ms = mtfSymbols[mi];
-      var hd = historyData[ms];
-      if (!hd) continue;
-      bt.message = 'Simulazione MTF ' + ms + '...';
-      var spread = BT_SPREADS[ms] || 0;
-      results.clean.MTF[ms] = btSimulateMTF(ms, hd['15min'], hd['1h'], hd['4h'], hd['1day'], 0);
-      results.costs.MTF[ms] = btSimulateMTF(ms, hd['15min'], hd['1h'], hd['4h'], hd['1day'], spread);
-      // DIAGNOSTICA
-      console.log('[BT MTF] ' + ms + ': clean=' + results.clean.MTF[ms].length +
-                  ' costs=' + results.costs.MTF[ms].length +
-                  ' (data: M15=' + (hd['15min']||[]).length +
-                  ' H1=' + (hd['1h']||[]).length +
-                  ' H4=' + (hd['4h']||[]).length +
-                  ' D1=' + (hd['1day']||[]).length + ')');
-      simStep += 2;
-      bt.progress = 50 + Math.round(simStep / totalSims * 50);
-      // Yield event loop + dai GC tempo di liberare le series temporanee
-      await new Promise(function(r) { setTimeout(r, 100); });
-      if (global.gc) global.gc();
-    }
+    var totalSims = paSymbols.length * 2 + orbSymbols.length * 2;
 
     // ORB
     for (var oi = 0; oi < orbSymbols.length; oi++) {
@@ -3552,7 +3334,7 @@ async function btRun() {
       total: {}
     };
 
-    var allBots = ['MTF', 'ORB', 'PA'];
+    var allBots = ['ORB', 'PA'];
     var allClean = [], allCosts = [];
 
     allBots.forEach(function(b) {
