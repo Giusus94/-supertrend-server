@@ -3189,99 +3189,99 @@ function btSimulateStocks(symbol, candlesW1, spread) {
   var inPosition = false;
   var entryPrice = 0, entrySL = 0, entryTP = 0, entryIdx = 0;
   var cooldownUntilIdx = -1;
+
+  // ─── COUNTER DIAGNOSTICI ───
+  var diag = {
+    totalBars: 0, inPosBars: 0, cooldownBars: 0, dataNa: 0,
+    skipTrend: 0, skipRsi: 0, skipReversal: 0, skipForza13w: 0,
+    skipAdx: 0, skipVol: 0, passed: 0
+  };
   // Usiamo idx-based week cooldown (il global "1 sig/settimana" del live va emulato per-symbol qui)
 
   for (var i = 50; i < candlesW1.length; i++) {
-    if (i < 200 && isNaN(ema200Arr[i])) continue;  // serve EMA200
+    diag.totalBars++;
+    if (i < 200 && isNaN(ema200Arr[i])) { diag.dataNa++; continue; }
     var bar = candlesW1[i];
     var ema50 = ema50Arr[i];
     var ema200 = ema200Arr[i];
     var rsi = rsiArr[i];
     var atr = atrArr[i];
     var adx = adxArr[i] || 0;
-    if (isNaN(ema50) || isNaN(ema200) || isNaN(rsi) || isNaN(atr)) continue;
+    if (isNaN(ema50) || isNaN(ema200) || isNaN(rsi) || isNaN(atr)) { diag.dataNa++; continue; }
 
-    // ─── Logica EXIT se in posizione ───
+    // EXIT logic
     if (inPosition) {
+      diag.inPosBars++;
       var exitPx = null;
       var exitReason = null;
-      // Priorita': SL/TP intra-week (low/high), poi chiusura/RSI a fine week
-      if (bar.low <= entrySL) {
-        exitPx = entrySL;
-        exitReason = 'SL';
-      } else if (bar.high >= entryTP) {
-        exitPx = entryTP;
-        exitReason = 'TP';
-      } else if (bar.close < ema50) {
-        exitPx = bar.close;
-        exitReason = 'BELOW_EMA50';
-      } else if (rsi > 75) {
-        exitPx = bar.close;
-        exitReason = 'OVERBOUGHT';
-      }
+      if (bar.low <= entrySL) { exitPx = entrySL; exitReason = 'SL'; }
+      else if (bar.high >= entryTP) { exitPx = entryTP; exitReason = 'TP'; }
+      else if (bar.close < ema50) { exitPx = bar.close; exitReason = 'BELOW_EMA50'; }
+      else if (rsi > 75) { exitPx = bar.close; exitReason = 'OVERBOUGHT'; }
 
       if (exitPx !== null) {
         var slDist = entryPrice - entrySL;
         var pnl = exitPx - entryPrice;
         var rMult = pnl / slDist;
-        // Spread cost (stocks: spread piccolo, applichiamo solo come % del prezzo)
-        if (spread > 0) {
-          rMult -= (spread / entryPrice) * (entryPrice / slDist);
-        }
+        if (spread > 0) rMult -= (spread / entryPrice) * (entryPrice / slDist);
         trades.push({
-          symbol: symbol,
-          dir: 'BUY',
-          entryTime: candlesW1[entryIdx].time,
-          entryPrice: entryPrice,
-          exitTime: bar.time,
-          exitPrice: exitPx,
-          rMult: rMult,
-          weeksHeld: i - entryIdx,
-          exitReason: exitReason
+          symbol: symbol, dir: 'BUY',
+          entryTime: candlesW1[entryIdx].time, entryPrice: entryPrice,
+          exitTime: bar.time, exitPrice: exitPx,
+          rMult: rMult, weeksHeld: i - entryIdx, exitReason: exitReason
         });
         inPosition = false;
-        // Cooldown 4 settimane dopo exit
         cooldownUntilIdx = i + 4;
       }
       continue;
     }
 
-    // ─── Cooldown attivo? ───
-    if (i < cooldownUntilIdx) continue;
+    if (i < cooldownUntilIdx) { diag.cooldownBars++; continue; }
 
-    // ─── Logica ENTRY (6 filtri) ───
-    // Filtro 1: trend (close > EMA50 > EMA200)
-    if (!(bar.close > ema50 && ema50 > ema200)) continue;
-    // Filtro 2: pullback RSI 40-55
-    if (rsi < 40 || rsi > 55) continue;
-    // Filtro 3: reversal (verde dopo rosso)
+    // Filtro 1: trend
+    if (!(bar.close > ema50 && ema50 > ema200)) { diag.skipTrend++; continue; }
+    // Filtro 2: RSI 40-55
+    if (rsi < 40 || rsi > 55) { diag.skipRsi++; continue; }
+    // Filtro 3: reversal verde dopo rosso
     var lastGreen = bar.close > bar.open;
     var prevBar = candlesW1[i - 1];
     var prevRed = prevBar.close < prevBar.open;
-    if (!lastGreen || !prevRed) continue;
-    // Filtro 4: forza relativa 13 settimane
-    if (i < 14) continue;
+    if (!lastGreen || !prevRed) { diag.skipReversal++; continue; }
+    // Filtro 4: forza relativa 13w
+    if (i < 14) { diag.skipForza13w++; continue; }
     var px13w = candlesW1[i - 13].close;
-    if (bar.close <= px13w) continue;
-    // Filtro 5: ADX >= 18
-    if (adx < 18) continue;
-    // Filtro 6: volume sopra media 10w (skip se vol non disponibile)
+    if (bar.close <= px13w) { diag.skipForza13w++; continue; }
+    // Filtro 5: ADX
+    if (adx < 18) { diag.skipAdx++; continue; }
+    // Filtro 6: volume
     if (bar.vol > 0) {
       var volSum = 0, volCount = 0;
       for (var v = Math.max(0, i - 10); v < i; v++) {
         if (candlesW1[v].vol > 0) { volSum += candlesW1[v].vol; volCount++; }
       }
       var volAvg = volCount > 0 ? volSum / volCount : 0;
-      if (volAvg > 0 && bar.vol < volAvg) continue;
+      if (volAvg > 0 && bar.vol < volAvg) { diag.skipVol++; continue; }
     }
+    diag.passed++;
 
-    // ─── ENTRY confermato ───
     inPosition = true;
     entryPrice = bar.close + (spread / 2 || 0);
     entrySL = bar.low - 0.5 * atr;
-    entryTP = entryPrice + (entryPrice - entrySL) * 3;  // R:R 1:3
+    entryTP = entryPrice + (entryPrice - entrySL) * 3;
     entryIdx = i;
   }
+
+  console.log('[BT STOCKS DIAG ' + symbol + '] bars=' + diag.totalBars +
+              ' dataNa=' + diag.dataNa +
+              ' inPos=' + diag.inPosBars +
+              ' cooldown=' + diag.cooldownBars +
+              ' trend=' + diag.skipTrend +
+              ' rsi40-55=' + diag.skipRsi +
+              ' reversal=' + diag.skipReversal +
+              ' forza13w=' + diag.skipForza13w +
+              ' adx18=' + diag.skipAdx +
+              ' vol=' + diag.skipVol +
+              ' PASSED=' + diag.passed);
 
   return trades;
 }
