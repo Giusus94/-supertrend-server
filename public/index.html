@@ -2084,8 +2084,7 @@ body::before {
     <div class="side-section">
       <div class="side-section-label">Strategie</div>
       <nav class="side-nav">
-        <div class="side-link is-active" data-page="analysis">analysis</div>
-        <div class="side-link" data-page="orb">orb<span class="side-link-tag">indices</span></div>
+        <div class="side-link is-active" data-page="orb">orb<span class="side-link-tag">indices</span></div>
         <div class="side-link" data-page="pa">pa bot<span class="side-link-tag">d1</span></div>
         <div class="side-link" data-page="stocks">stocks<span class="side-link-tag">w1</span></div>
       </nav>
@@ -2143,124 +2142,16 @@ body::before {
     <!-- BODY -->
     <div class="body-area">
 
-      <!-- ═══════════════════════════════════════════════════════════════
-           PAGE: ANALYSIS
-           ═══════════════════════════════════════════════════════════════ -->
-      <div class="page is-on" id="page-analysis">
-        <div class="page-head">
-          <div class="page-title-block">
-            <div class="page-eyebrow">trend bot · m15 mtf</div>
-            <div class="page-title">analysis</div>
-            <div class="page-sub">multi-timeframe confluence · d1 + h4 + h1 + m15</div>
-          </div>
-          <div class="bd bd-cu" id="conBadge">awaiting</div>
-        </div>
-
-        <div class="grid-asym">
-          <div>
-            <!-- MTF CONFLUENCE -->
-            <div class="panel">
-              <div class="consensus">
-                <div class="consensus-row">
-                  <div>
-                    <div class="t-eyebrow t-eyebrow-cu">current bias</div>
-                    <div class="consensus-dir" id="conDir" style="margin-top:8px">no signal</div>
-                  </div>
-                  <div class="consensus-side">
-                    <div class="t-eyebrow">layers passed</div>
-                    <div class="consensus-votes" id="conScore">0/4</div>
-                  </div>
-                </div>
-                <div class="consensus-pills" id="conBars">
-                  <span class="bd">d1 —</span>
-                  <span class="bd">h4 —</span>
-                  <span class="bd">h1 —</span>
-                  <span class="bd">m15 —</span>
-                </div>
-              </div>
-              <div class="st-list">
-                <div class="st-item" id="stI1">
-                  <span class="st-name">d1</span>
-                  <span class="st-cfg">ema50 vs ema200 · rsi extremes</span>
-                  <span class="st-px" id="stP1">—</span>
-                  <span class="bd" id="stB1">wait</span>
-                </div>
-                <div class="st-item" id="stI2">
-                  <span class="st-name">h4</span>
-                  <span class="st-cfg">price vs ema20</span>
-                  <span class="st-px" id="stP2">—</span>
-                  <span class="bd" id="stB2">wait</span>
-                </div>
-                <div class="st-item" id="stI3">
-                  <span class="st-name">h1</span>
-                  <span class="st-cfg">adx ≥ 22 · ema20 vs ema50</span>
-                  <span class="st-px" id="stP3">—</span>
-                  <span class="bd" id="stB3">wait</span>
-                </div>
-                <div class="st-item" id="stI4">
-                  <span class="st-name">m15</span>
-                  <span class="st-cfg">pullback ema20 · reversal · rsi</span>
-                  <span class="st-px" id="stP4">—</span>
-                  <span class="bd" id="stB4">wait</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- INDICATORS -->
-            <div class="panel">
-              <div class="panel-head">
-                <div class="panel-head-title">
-                  <div class="panel-eyebrow">snapshot</div>
-                  <div class="panel-name">indicators</div>
-                </div>
-              </div>
-              <div class="ind-grid">
-                <div class="ind-cell"><div class="ind-lbl">d1 trend</div><div class="ind-val" id="iD1">—</div></div>
-                <div class="ind-cell"><div class="ind-lbl">h4 align</div><div class="ind-val" id="iH4">—</div></div>
-                <div class="ind-cell"><div class="ind-lbl">h1 adx</div><div class="ind-val" id="iH1">—</div></div>
-                <div class="ind-cell"><div class="ind-lbl">m15 rsi</div><div class="ind-val" id="iRSI">—</div></div>
-                <div class="ind-cell"><div class="ind-lbl">m15 ema20</div><div class="ind-val" id="iEMA">—</div></div>
-                <div class="ind-cell"><div class="ind-lbl">d1 rsi</div><div class="ind-val" id="iVOL">—</div></div>
-              </div>
-            </div>
-
-            <!-- FILTER STATUS -->
-            <div class="panel">
-              <div class="panel-head">
-                <div class="panel-head-title">
-                  <div class="panel-eyebrow">live</div>
-                  <div class="panel-name">filter status</div>
-                </div>
-              </div>
-              <div class="panel-body-flush" id="filterList"><div class="empty">No data yet</div></div>
-            </div>
-          </div>
-
-          <!-- RIGHT COLUMN -->
-          <div>
-            <div class="panel">
-              <div class="panel-head">
-                <div class="panel-head-title">
-                  <div class="panel-eyebrow">levels</div>
-                  <div class="panel-name">support &amp; resistance</div>
-                </div>
-                <span class="bd bd-cu">auto</span>
-              </div>
-              <div class="panel-body-flush" id="srList"><div class="empty">No levels detected</div></div>
-            </div>
-          </div>
-        </div>
-      </div>
 
       <!-- ═══════════════════════════════════════════════════════════════
-           PAGE: ORB BOT
+           PAGE: ORB BOT (default home)
            ═══════════════════════════════════════════════════════════════ -->
-      <div class="page" id="page-orb">
+      <div class="page is-on" id="page-orb">
         <div class="page-head">
           <div class="page-title-block">
             <div class="page-eyebrow">opening range breakout · indices</div>
             <div class="page-title">orb bot</div>
-            <div class="page-sub">us500 · us100 · ger40 · uk100 · jp225 — 30min OR · trailing ema20 m15</div>
+            <div class="page-sub">jp225 · ger40 · uk100 — 30min OR · trailing ema20 m15</div>
           </div>
           <div class="bd bd-cu" id="orbBadge">offline</div>
         </div>
@@ -2377,7 +2268,7 @@ body::before {
           <div class="page-title-block">
             <div class="page-eyebrow">price action · daily timeframe</div>
             <div class="page-title">pa bot</div>
-            <div class="page-sub">candlestick patterns · d1/h4 trend alignment · s/r proximity</div>
+            <div class="page-sub">xagusd · btcusd · xauusd — candlestick patterns · d1/h4 trend alignment</div>
           </div>
           <div class="bd bd-cu" id="paBadge">offline</div>
         </div>
@@ -2490,10 +2381,10 @@ body::before {
           <div class="bt-hero">
             <div class="bt-hero-title">verify if the strategies have edge</div>
             <div class="bt-hero-msg">
-              Runs the 3 bots (mtf trend m15, orb indices, pa d1) on ~6 months of historical
+              Runs orb (indices) and pa d1 bots on ~6 months of historical
               data, simulates each trade with sl/tp/trailing, computes win rate, profit factor
               and expectancy. Two modes: clean (no friction) and with capital.com spreads.
-              Takes 60-180 seconds.
+              Takes 30-90 seconds. MTF Trend M15 disabled by default (PF 0.37 in backtest).
             </div>
             <button class="bt-run-btn" id="btRunBtn" onclick="btRun()">▸ run backtest</button>
             <div class="bt-progress" id="btProgress" style="display:none">
@@ -2715,8 +2606,7 @@ body::before {
 
     <!-- MOBILE NAV -->
     <nav class="mob-nav">
-      <div class="mob-link is-active" data-page="analysis">analysis</div>
-      <div class="mob-link" data-page="orb">orb</div>
+      <div class="mob-link is-active" data-page="orb">orb</div>
       <div class="mob-link" data-page="pa">pa</div>
       <div class="mob-link" data-page="stocks">stocks</div>
       <div class="mob-link" data-page="signals">signals</div>
@@ -2949,167 +2839,13 @@ async function loadAndUpdate(sym) {
     var d = await r.json();
     if (d.candles && d.candles.length) {
       S.candles[sym] = d.candles;
-      updateAnalysis(sym);
-      updateSR(sym);
       updateRisk();
     }
   } catch(e) {}
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   ANALYSIS PAGE — MTF Confluence rendering
-   ══════════════════════════════════════════════════════════════════════════ */
-function updateAnalysis(sym) {
-  var c = S.candles[sym];
-  if (!c || !c.length) return;
-  var price = c[c.length-1].close;
-  var dec = price > 1000 ? 2 : price > 10 ? 3 : 4;
-
-  // Calcoli M15 locali (come prima)
-  var rsiM15 = calcRSI(c, 14);
-  var emaM15_20 = calcEMA(c, 20);
-
-  // Per ottenere lo stato MTF reale serve il fetch dei dati H1/H4/D1 dal server.
-  // Il server espone /api/status con {symbolStates: {SYM: {layers: {...}}}}.
-  // Se questi dati non sono ancora disponibili, mostro placeholder neutri.
-  var stState = (S.statusData && S.statusData.symbolStates &&
-                 S.statusData.symbolStates[sym]) || null;
-  var layers = (stState && stState.layers) || null;
-
-  // Fallback: se non ci sono dati layer dal server, deduco da quel poco che ho M15
-  // (mostra "wait" su tutti tranne M15 RSI base)
-  var l1Pass = layers ? !!layers.d1Pass : false;       // D1 trend + RSI
-  var l2Pass = layers ? !!layers.h4Aligned : false;    // H4 alignment
-  var l3Pass = layers ? !!layers.h1Pass : false;       // H1 ADX + EMA
-  var l4Pass = layers ? !!layers.m15Trigger : false;   // M15 trigger
-  var bias = layers ? (layers.bias || 'NONE') : 'NONE'; // 'BUY' | 'SELL' | 'NONE'
-
-  var passed = (l1Pass?1:0) + (l2Pass?1:0) + (l3Pass?1:0) + (l4Pass?1:0);
-
-  // ─── ST list rows (4 layer items) ───
-  var rows = [
-    { id: 1, name: 'd1', pass: l1Pass,
-      label: layers ? (layers.d1Bull ? 'bull · rsi ' + (layers.d1Rsi||0).toFixed(0) :
-                       layers.d1Bear ? 'bear · rsi ' + (layers.d1Rsi||0).toFixed(0) :
-                       'no trend') : '—' },
-    { id: 2, name: 'h4', pass: l2Pass,
-      label: layers ? (layers.h4Aligned ? 'aligned' : 'misaligned') : '—' },
-    { id: 3, name: 'h1', pass: l3Pass,
-      label: layers ? ('adx ' + (layers.h1Adx||0).toFixed(1) +
-                       (layers.h1EmaAligned ? ' · ema ok' : ' · ema no')) : '—' },
-    { id: 4, name: 'm15', pass: l4Pass,
-      label: layers ? (layers.m15Trigger ? 'all ok' :
-                       layers.m15Pullback && (layers.m15ReversalBuy||layers.m15ReversalSell) ? 'wait rsi' :
-                       layers.m15Pullback ? 'wait reversal' :
-                       'wait pullback') : 'rsi ' + rsiM15.toFixed(1) }
-  ];
-
-  rows.forEach(function(r) {
-    var row = document.getElementById('stI' + r.id);
-    var badge = document.getElementById('stB' + r.id);
-    var line = document.getElementById('stP' + r.id);
-    if (!row) return;
-
-    row.classList.remove('up','dn');
-    if (r.pass) {
-      row.classList.add(bias === 'BUY' ? 'up' : bias === 'SELL' ? 'dn' : 'up');
-    }
-    if (badge) {
-      if (r.pass) {
-        badge.className = 'bd ' + (bias === 'SELL' ? 'bd-dn' : 'bd-up');
-        badge.textContent = 'pass';
-      } else {
-        badge.className = 'bd';
-        badge.textContent = 'wait';
-      }
-    }
-    if (line) line.textContent = r.label;
-  });
-
-  // ─── Consensus card ───
-  var allFour = passed === 4;
-  var dir = allFour ? bias : null;
-
-  var cd = document.getElementById('conDir');
-  if (cd) {
-    cd.textContent = dir ? dir.toLowerCase() :
-                     bias !== 'NONE' && passed >= 2 ? bias.toLowerCase() + ' (partial)' :
-                     'no signal';
-    cd.className = 'consensus-dir ' + (dir === 'BUY' ? 'up' :
-                                        dir === 'SELL' ? 'dn' : '');
-  }
-  setTxt('conScore', passed + '/4');
-
-  var cb = document.getElementById('conBadge');
-  if (cb) {
-    cb.className = 'bd ' + (dir === 'BUY' ? 'bd-up' :
-                            dir === 'SELL' ? 'bd-dn' : 'bd-cu');
-    cb.textContent = dir ? dir.toLowerCase() : 'awaiting';
-  }
-
-  // ─── Consensus pills (4 layer pills) ───
-  function pillCls(p) {
-    return 'bd' + (p ? (bias === 'SELL' ? ' bd-dn' : ' bd-up') : '');
-  }
-  setHTML('conBars',
-    '<span class="' + pillCls(l1Pass) + '">d1 ' + (l1Pass ? 'ok' : '—') + '</span>' +
-    '<span class="' + pillCls(l2Pass) + '">h4 ' + (l2Pass ? 'ok' : '—') + '</span>' +
-    '<span class="' + pillCls(l3Pass) + '">h1 ' + (l3Pass ? 'ok' : '—') + '</span>' +
-    '<span class="' + pillCls(l4Pass) + '">m15 ' + (l4Pass ? 'ok' : '—') + '</span>');
-
-  // ─── Indicators grid (mapped to MTF layers) ───
-  var d1Trend = layers ? (layers.d1Bull ? 'bull' : layers.d1Bear ? 'bear' : 'flat') : '—';
-  var d1Cls = layers ? (layers.d1Bull ? 'up' : layers.d1Bear ? 'dn' : '') : '';
-  setInd('iD1', d1Trend, d1Cls);
-
-  var h4State = layers ? (layers.h4Aligned ? 'aligned' : 'no') : '—';
-  var h4Cls = layers ? (layers.h4Aligned ? 'up' : 'dn') : '';
-  setInd('iH4', h4State, h4Cls);
-
-  var h1AdxVal = layers && layers.h1Adx != null ? layers.h1Adx.toFixed(1) : '—';
-  var h1Cls = layers && layers.h1Adx != null ?
-              (layers.h1Adx >= 22 ? 'up' : 'dn') : '';
-  setInd('iH1', h1AdxVal, h1Cls);
-
-  setInd('iRSI', rsiM15.toFixed(1),
-    rsiM15 > 70 ? 'dn' : rsiM15 < 30 ? 'up' : '');
-  setInd('iEMA', price > emaM15_20 ? 'above' : 'below',
-    price > emaM15_20 ? 'up' : 'dn');
-
-  // iVOL slot riusato per RSI D1 (la nostra logica MTF non usa volume)
-  var d1Rsi = layers && layers.d1Rsi != null ? layers.d1Rsi.toFixed(0) : '—';
-  var d1RsiCls = layers && layers.d1Rsi != null ?
-                 (layers.d1Rsi > 70 ? 'dn' : layers.d1Rsi < 30 ? 'up' : '') : '';
-  setInd('iVOL', d1Rsi, d1RsiCls);
-}
-function setInd(id, val, cls) {
-  var e = document.getElementById(id);
-  if (!e) return;
-  e.textContent = val;
-  e.className = 'ind-val' + (cls ? ' ' + cls : '');
-}
-function updateSR(sym) {
-  var c = S.candles[sym];
-  if (!c || !c.length) return;
-  var price = c[c.length-1].close;
-  var dec = price > 1000 ? 2 : price > 10 ? 3 : 4;
-  var levels = calcSR(c, 50).sort(function(a,b){return b.price - a.price;});
-  var el = document.getElementById('srList');
-  if (!el) return;
-  if (!levels.length) { el.innerHTML = '<div class="empty">No levels detected</div>'; return; }
-  el.innerHTML = levels.map(function(l) {
-    var dist = ((l.price - price)/price*100);
-    var cls = l.type === 'R' ? 'r' : 's';
-    var distCls = dist > 0 ? 'up' : 'dn';
-    var lbl = l.type === 'R' ? 'resist' : 'support';
-    return '<div class="sr-row">' +
-      '<span class="sr-tag ' + cls + '">' + lbl + '</span>' +
-      '<span class="sr-px">' + l.price.toFixed(dec) + '</span>' +
-      '<span class="sr-str">×' + l.str + '</span>' +
-      '<span class="sr-dist ' + distCls + '" style="color:var(--d-' + (dist>0?'up':'dn') + ')">' +
-      (dist > 0 ? '+' : '') + dist.toFixed(2) + '%</span></div>';
-  }).join('');
-}
+   RISK
 
 /* ══════════════════════════════════════════════════════════════════════════
    RISK
