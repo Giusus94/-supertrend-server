@@ -2371,7 +2371,7 @@ body::before {
           <div class="page-title-block">
             <div class="page-eyebrow">historical edge verification</div>
             <div class="page-title">backtest</div>
-            <div class="page-sub">simulate the 3 strategies on real history · clean vs costs · twelvedata + yahoo</div>
+            <div class="page-sub">simulate orb + pa on real history · clean vs costs · twelvedata + yahoo</div>
           </div>
           <div class="bd bd-cu" id="btBadge">idle</div>
         </div>
@@ -3604,17 +3604,13 @@ function btRenderResults(data) {
   html += btMetricCard('max drawdown', (t.maxDdR || 0) + 'R', 'cu');
   html += '</div>';
 
-  // Per-bot detail
-  ['MTF', 'ORB', 'PA'].forEach(function(bot) {
+  // Per-bot detail (solo ORB + PA, MTF rimosso)
+  ['ORB', 'PA'].forEach(function(bot) {
     var bm = data.perBot[bot];
     if (!bm || (bm.costs.count === 0 && bm.clean.count === 0)) return;
 
-    var botName = bot === 'MTF' ? 'trend mtf m15' :
-                  bot === 'ORB' ? 'orb indices' :
-                  'pa bot d1';
-    var botTag = bot === 'MTF' ? 'multi-timeframe confluence' :
-                 bot === 'ORB' ? 'opening range breakout' :
-                 'candlestick patterns';
+    var botName = bot === 'ORB' ? 'orb indices' : 'pa bot d1';
+    var botTag = bot === 'ORB' ? 'opening range breakout' : 'candlestick patterns';
 
     html += '<div class="bt-bot-panel">';
     html += '<div class="bt-bot-head">' +
