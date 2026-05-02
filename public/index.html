@@ -2371,7 +2371,7 @@ body::before {
           <div class="page-title-block">
             <div class="page-eyebrow">historical edge verification</div>
             <div class="page-title">backtest</div>
-            <div class="page-sub">simulate orb + pa on real history · clean vs costs · twelvedata + yahoo</div>
+            <div class="page-sub">simulate orb + pa + stocks on real history · clean vs costs · twelvedata + yahoo</div>
           </div>
           <div class="bd bd-cu" id="btBadge">idle</div>
         </div>
@@ -2381,10 +2381,10 @@ body::before {
           <div class="bt-hero">
             <div class="bt-hero-title">verify if the strategies have edge</div>
             <div class="bt-hero-msg">
-              Runs orb (indices) and pa d1 bots on ~6 months of historical
-              data, simulates each trade with sl/tp/trailing, computes win rate, profit factor
-              and expectancy. Two modes: clean (no friction) and with capital.com spreads.
-              Takes 30-90 seconds. MTF Trend M15 disabled by default (PF 0.37 in backtest).
+              Runs orb (indices), pa d1 (forex/crypto/metals), and stocks w1 (US equities + sector ETFs)
+              bots on ~6 months of historical data, simulates each trade with sl/tp/trailing, computes
+              win rate, profit factor and expectancy. Two modes: clean (no friction) and with capital.com
+              spreads. Takes 30-90 seconds. MTF Trend M15 disabled by default (PF 0.37 in backtest).
             </div>
             <button class="bt-run-btn" id="btRunBtn" onclick="btRun()">▸ run backtest</button>
             <div class="bt-progress" id="btProgress" style="display:none">
@@ -3607,13 +3607,17 @@ function btRenderResults(data) {
   html += btMetricCard('max drawdown', (t.maxDdR || 0) + 'R', 'cu');
   html += '</div>';
 
-  // Per-bot detail (solo ORB + PA, MTF rimosso)
-  ['ORB', 'PA'].forEach(function(bot) {
+  // Per-bot detail (ORB + PA + STOCKS)
+  ['ORB', 'PA', 'STOCKS'].forEach(function(bot) {
     var bm = data.perBot[bot];
     if (!bm || (bm.costs.count === 0 && bm.clean.count === 0)) return;
 
-    var botName = bot === 'ORB' ? 'orb indices' : 'pa bot d1';
-    var botTag = bot === 'ORB' ? 'opening range breakout' : 'candlestick patterns';
+    var botName = bot === 'ORB' ? 'orb indices' :
+                  bot === 'PA'  ? 'pa bot d1'   :
+                  'stocks w1';
+    var botTag = bot === 'ORB' ? 'opening range breakout' :
+                 bot === 'PA'  ? 'candlestick patterns' :
+                 'momentum + pullback weekly';
 
     html += '<div class="bt-bot-panel">';
     html += '<div class="bt-bot-head">' +
