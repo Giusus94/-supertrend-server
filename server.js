@@ -652,13 +652,8 @@ async function checkSignal(sym, cooldownMin) {
       return;
     }
 
-    // 4b. Candela reversal sull'ultimo bar
-    var reversal = detectReversal(c15);
-    if (reversal !== biasD1) {
-      st.stats.lastFilter = 'M15 no reversal candle (got: ' +
-                            (reversal || 'none') + ', need: ' + biasD1 + ')';
-      return;
-    }
+    // 4b. RIMOSSO detectReversal: era il filtro killer (taglia 80% dei trade post-L3).
+    // I 5 layer D1 trend + H4 align + H1 ADX + pullback + RSI sono gia' confluenti.
 
     // 4c. RSI esce dalla zona pullback nella direzione corretta
     //     RILASSATO: accetta se RSI sale (BUY) o scende (SELL) ed e' nella zona neutra/favorevole
@@ -689,10 +684,7 @@ async function checkSignal(sym, cooldownMin) {
       st.stats.lastFilter = 'SHORT disabilitato per ' + sym;
       return;
     }
-    if (dir === st.lastDir) {
-      st.stats.lastFilter = 'Cooldown: ' + dir + ' gia inviato';
-      return;
-    }
+    // RIMOSSO dirRepeat: il cooldown 60min + max 2 trade/giorno gia' previene over-trading
 
     var price = lastM15.close;
     var dec = price > 1000 ? 2 : price > 10 ? 3 : 4;
@@ -875,6 +867,8 @@ app.get('/api/status', function(req, res) {
           var atr = atrArr[atrArr.length - 1] || 0;
 
           var hadPullback = hadRecentPullback(c15, emaM15_20, atr, 8, bias === 'BUY');
+          // detectReversal RIMOSSO dalla logica di trigger (era killer filtro).
+          // Lo lascio calcolato qui solo per indicazione visiva nella dashboard.
           var reversal = detectReversal(c15);
           var reversalBuy = reversal === 'BUY';
           var reversalSell = reversal === 'SELL';
@@ -886,9 +880,8 @@ app.get('/api/status', function(req, res) {
             rsiOk = rsiM15 < rsiM15Prev && rsiM15 >= 35 && rsiM15 <= 65;
           }
 
-          var m15Trigger = hadPullback &&
-                          ((bias === 'BUY' && reversalBuy && rsiOk) ||
-                           (bias === 'SELL' && reversalSell && rsiOk));
+          // Trigger ora richiede solo pullback + RSI girando (no piu' reversal candle)
+          var m15Trigger = hadPullback && rsiOk;
 
           layers = {
             bias: bias,
@@ -2953,13 +2946,15 @@ function btSimulateMTF(symbol, candles15, candlesH1, candlesH4, candlesD1, sprea
     var rsiM15Prev = calcRSI(slice15.slice(0, -1), 14);
 
     if (!hadRecentPullback(slice15, ema20M15, atr, 8, bias === 'BUY')) { diag.skipL4Pullback++; continue; }
-    if (detectReversal(slice15) !== bias) { diag.skipL4Reversal++; continue; }
+    // RIMOSSO: detectReversal era il vero killer (taglia 80%+ dei trade post-L3).
+    // I 5 layer D1 trend + H4 align + H1 ADX + pullback + RSI sono gia' confluenti.
 
     var rsiOk = bias === 'BUY' ?
       (rsiM15 > rsiM15Prev && rsiM15 >= 35 && rsiM15 <= 65) :
       (rsiM15 < rsiM15Prev && rsiM15 >= 35 && rsiM15 <= 65);
     if (!rsiOk) { diag.skipL4Rsi++; continue; }
-    if (bias === lastDir) { diag.skipDirRepeat++; continue; }
+    // RIMOSSO: dirRepeat (era "if bias === lastDir continue") - tagliava trade
+    // legittimi consecutivi nello stesso trend
     diag.passed++;
 
     // ENTRY
