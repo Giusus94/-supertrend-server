@@ -3582,9 +3582,12 @@ function btRenderResults(data) {
 
   var html = '';
 
-  // Verdict
-  var pf = (data.total.costs && data.total.costs.profitFactor) || 0;
-  var verdictCls = pf >= 1.5 ? 'win' : pf >= 1.2 ? 'warn' : 'lose';
+  // Verdict — color basato sul contenuto (le keyword OPERABILE/MARGINALE/PERDENTE
+  // riflettono la valutazione bot-aware piu' fedelmente del solo PF aggregato)
+  var verdictTxt = (data.verdict || '').toUpperCase();
+  var verdictCls = verdictTxt.indexOf('OPERABILE') === 0 ? 'win' :
+                   verdictTxt.indexOf('PERDENTE') === 0  ? 'lose' :
+                   'warn';  // MARGINALE, BREAKEVEN, SAMPLE INSUFFICIENTE
   html += '<div class="bt-verdict ' + verdictCls + '">' +
           (data.verdict || 'Backtest completato') + '</div>';
 
