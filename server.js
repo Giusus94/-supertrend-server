@@ -1043,9 +1043,12 @@ PA_SYMBOLS = PA_SYMBOLS.filter(function(s) { return PA_BLACKLIST.indexOf(s) === 
 console.log('PA Bot: ' + PA_SYMBOLS.length + ' simboli attivi (blacklist: ' + PA_BLACKLIST.join(',') + ')');
 var PA_COOLDOWN_HOURS = parseInt(process.env.PA_COOLDOWN_HOURS) || 24;
 var PA_REFRESH_SEC = parseInt(process.env.PA_REFRESH_SEC) || 3600;
-// PA risk per trade: ridotto a 1.5% (default) perche' WR 33% richiede risk piu' basso.
-// Backtest 6 mesi mostra max DD 33R con risk 3% = -100% balance. Con 1.5% diventa gestibile.
-var PA_RISK_PCT = parseFloat(process.env.PA_RISK_PCT) || 1.5;
+// PA risk per trade: ridotto a 1.0% (default) basato su backtest 6 mesi:
+//   - Total return PA: +20.72R / Max DD: 27.68R = ratio 0.75x (rischioso)
+//   - WR 33% combinato a alto DD richiede risk minore di ORB (che ha WR 52% e PF 1.77)
+//   - 1.0% mantiene profittabilita' (~+€100/6mesi) con DD gestibile (~-€138 / 28% balance)
+// Override via env var: PA_RISK_PCT=1.5 (vecchio default) o PA_RISK_PCT=0.5 (ultra-safe)
+var PA_RISK_PCT = parseFloat(process.env.PA_RISK_PCT) || 1.0;
 
 var paState = {};
 var paRunning = false;
@@ -1564,6 +1567,11 @@ var ORB_SESSIONS = {
 };
 
 var ORB_REFRESH_SEC = parseInt(process.env.ORB_REFRESH_SEC) || 300;
+// ORB risk per trade: 1.5% (default) basato su backtest 6 mesi:
+//   - PF 1.77 con costi (eccellente per retail)
+//   - WR 52% e DD basso (2.77R) permettono risk piu' alto di PA
+//   - Override: ORB_RISK_PCT=2.0 (aggressivo) o 1.0 (conservativo)
+var ORB_RISK_PCT = parseFloat(process.env.ORB_RISK_PCT) || 1.5;
 
 var orbState = {};
 var orbRunning = false;
@@ -1844,6 +1852,10 @@ async function checkOrbSignal(sym) {
   var nl = '\n';
   var time = new Date().toUTCString().slice(0, 25);
 
+  var orbLots = [100, 500, 1000].map(function(b) {
+    return b + 'EUR: ' + calcLotSize(sym, b, ORB_RISK_PCT, slDist) + ' lot';
+  }).join(' | ');
+
   var msg =
     '<b>[ORB-EA] ' + dir + ' ' + name + '</b> (' + sym + ')' + nl +
     '<b>Entry:</b> ' + entry.toFixed(dec) + nl +
@@ -1851,6 +1863,7 @@ async function checkOrbSignal(sym) {
     '<b>Distanza SL:</b> ' + slDist.toFixed(dec) + ' (' + (slDist / entry * 100).toFixed(2) + '%)' + nl +
     '<b>OR Width:</b> ' + orWidth.toFixed(dec) + ' (' + (orPct * 100).toFixed(2) + '%)' + nl +
     '<b>Uscita:</b> Trailing su EMA20 M15' + nl +
+    '<b>Lot (' + ORB_RISK_PCT + '% rischio):</b>' + nl + orbLots + nl +
     '<i>Sessione: ' + cfg.localTz + ' | ' + time + ' UTC</i>';
 
   var ok = await tgSend(msg);
