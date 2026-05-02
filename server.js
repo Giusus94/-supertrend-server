@@ -2830,7 +2830,11 @@ async function btFetchYahooHistory(symbol, interval) {
     BTCUSD: 'BTC-USD', ETHUSD: 'ETH-USD', SOLUSD: 'SOL-USD',
     XRPUSD: 'XRP-USD', BNBUSD: 'BNB-USD',
     SPX: '^GSPC', NDX: '^NDX', DAX: '^GDAXI', UKX: '^FTSE', N225: '^N225',
-    US500: '^GSPC', US100: '^NDX', GER40: '^GDAXI', UK100: '^FTSE', JP225: '^N225'
+    US500: '^GSPC', US100: '^NDX', GER40: '^GDAXI', UK100: '^FTSE', JP225: '^N225',
+    // Stocks Bot (ticker == ticker Yahoo per stocks/ETF US)
+    AAPL: 'AAPL', MSFT: 'MSFT', NVDA: 'NVDA', GOOGL: 'GOOGL',
+    XLK: 'XLK', XLE: 'XLE', XLF: 'XLF', XLV: 'XLV', XLI: 'XLI',
+    SPY: 'SPY', QQQ: 'QQQ', IWM: 'IWM'
   };
   var yhSym = yhMap[symbol] || symbol;
   var yhInterval = {'15min':'15m','1h':'1h','4h':'1h','1day':'1d','1week':'1wk'}[interval] || '1d';
@@ -3169,7 +3173,120 @@ function btSimulatePA(symbol, candlesD1, candlesH4, spread) {
   return trades;
 }
 
-// ─── Aggregator: calcola metriche da una lista trade ──────────────────────────
+// ─── Backtest Bot 3: Stocks W1 (momentum + pullback) ──────────────────────────
+// Replica esatta della logica live in checkStocksSignal()
+function btSimulateStocks(symbol, candlesW1, spread) {
+  if (!candlesW1 || candlesW1.length < 60) return [];
+
+  // Pre-calcolo series O(N)
+  var ema50Arr  = calcEMASeries(candlesW1, 50);
+  var ema200Arr = calcEMASeries(candlesW1, 200);
+  var rsiArr    = calcRSISeries(candlesW1, 14);
+  var atrArr    = calcATRSeries(candlesW1, 14);
+  var adxArr    = calcADXSeries(candlesW1, 14);
+
+  var trades = [];
+  var inPosition = false;
+  var entryPrice = 0, entrySL = 0, entryTP = 0, entryIdx = 0;
+  var cooldownUntilIdx = -1;
+  // Usiamo idx-based week cooldown (il global "1 sig/settimana" del live va emulato per-symbol qui)
+
+  for (var i = 50; i < candlesW1.length; i++) {
+    if (i < 200 && isNaN(ema200Arr[i])) continue;  // serve EMA200
+    var bar = candlesW1[i];
+    var ema50 = ema50Arr[i];
+    var ema200 = ema200Arr[i];
+    var rsi = rsiArr[i];
+    var atr = atrArr[i];
+    var adx = adxArr[i] || 0;
+    if (isNaN(ema50) || isNaN(ema200) || isNaN(rsi) || isNaN(atr)) continue;
+
+    // ─── Logica EXIT se in posizione ───
+    if (inPosition) {
+      var exitPx = null;
+      var exitReason = null;
+      // Priorita': SL/TP intra-week (low/high), poi chiusura/RSI a fine week
+      if (bar.low <= entrySL) {
+        exitPx = entrySL;
+        exitReason = 'SL';
+      } else if (bar.high >= entryTP) {
+        exitPx = entryTP;
+        exitReason = 'TP';
+      } else if (bar.close < ema50) {
+        exitPx = bar.close;
+        exitReason = 'BELOW_EMA50';
+      } else if (rsi > 75) {
+        exitPx = bar.close;
+        exitReason = 'OVERBOUGHT';
+      }
+
+      if (exitPx !== null) {
+        var slDist = entryPrice - entrySL;
+        var pnl = exitPx - entryPrice;
+        var rMult = pnl / slDist;
+        // Spread cost (stocks: spread piccolo, applichiamo solo come % del prezzo)
+        if (spread > 0) {
+          rMult -= (spread / entryPrice) * (entryPrice / slDist);
+        }
+        trades.push({
+          symbol: symbol,
+          dir: 'BUY',
+          entryTime: candlesW1[entryIdx].time,
+          entryPrice: entryPrice,
+          exitTime: bar.time,
+          exitPrice: exitPx,
+          rMult: rMult,
+          weeksHeld: i - entryIdx,
+          exitReason: exitReason
+        });
+        inPosition = false;
+        // Cooldown 4 settimane dopo exit
+        cooldownUntilIdx = i + 4;
+      }
+      continue;
+    }
+
+    // ─── Cooldown attivo? ───
+    if (i < cooldownUntilIdx) continue;
+
+    // ─── Logica ENTRY (6 filtri) ───
+    // Filtro 1: trend (close > EMA50 > EMA200)
+    if (!(bar.close > ema50 && ema50 > ema200)) continue;
+    // Filtro 2: pullback RSI 40-55
+    if (rsi < 40 || rsi > 55) continue;
+    // Filtro 3: reversal (verde dopo rosso)
+    var lastGreen = bar.close > bar.open;
+    var prevBar = candlesW1[i - 1];
+    var prevRed = prevBar.close < prevBar.open;
+    if (!lastGreen || !prevRed) continue;
+    // Filtro 4: forza relativa 13 settimane
+    if (i < 14) continue;
+    var px13w = candlesW1[i - 13].close;
+    if (bar.close <= px13w) continue;
+    // Filtro 5: ADX >= 18
+    if (adx < 18) continue;
+    // Filtro 6: volume sopra media 10w (skip se vol non disponibile)
+    if (bar.vol > 0) {
+      var volSum = 0, volCount = 0;
+      for (var v = Math.max(0, i - 10); v < i; v++) {
+        if (candlesW1[v].vol > 0) { volSum += candlesW1[v].vol; volCount++; }
+      }
+      var volAvg = volCount > 0 ? volSum / volCount : 0;
+      if (volAvg > 0 && bar.vol < volAvg) continue;
+    }
+
+    // ─── ENTRY confermato ───
+    inPosition = true;
+    entryPrice = bar.close + (spread / 2 || 0);
+    entrySL = bar.low - 0.5 * atr;
+    entryTP = entryPrice + (entryPrice - entrySL) * 3;  // R:R 1:3
+    entryIdx = i;
+  }
+
+  return trades;
+}
+
+
 function btComputeMetrics(trades) {
   if (!trades.length) return {
     count: 0, wins: 0, losses: 0, winRate: 0,
@@ -3228,13 +3345,14 @@ async function btRun() {
   bt.error = null;
 
   try {
-    // Simboli per i 2 bot operativi (MTF rimosso definitivamente: PF 0.37 in backtest)
+    // Simboli per i 3 bot operativi (MTF rimosso definitivamente: PF 0.37 in backtest)
     var paSymbols = (typeof PA_SYMBOLS !== 'undefined') ? PA_SYMBOLS.slice() : [];
     var orbSymbols = (typeof ORB_SYMBOLS !== 'undefined') ? ORB_SYMBOLS.slice() : [];
-    var totalSymbols = paSymbols.length + orbSymbols.length;
+    var stocksSymbols = (typeof STOCKS_SYMBOLS !== 'undefined') ? STOCKS_SYMBOLS.slice() : [];
+    var totalSymbols = paSymbols.length + orbSymbols.length + stocksSymbols.length;
     var done = 0;
 
-    var historyData = {}; // sym -> { '15min', '1h', '4h', '1day' }
+    var historyData = {}; // sym -> { '15min', '1h', '4h', '1day', '1week' }
 
     // Fetch PA symbols (D1 + H4)
     for (var p = 0; p < paSymbols.length; p++) {
@@ -3296,17 +3414,30 @@ async function btRun() {
       await new Promise(function(r) { setTimeout(r, 1000); });
     }
 
+    // Fetch Stocks symbols (W1) — Yahoo only (Capital.com non offre dati storici stocks)
+    for (var s = 0; s < stocksSymbols.length; s++) {
+      var ssym = stocksSymbols[s];
+      bt.message = 'Fetch storico ' + ssym + ' (Stocks W1)...';
+      historyData[ssym] = historyData[ssym] || {};
+      historyData[ssym]['1week'] = await btFetchYahooHistory(ssym, '1week');
+      console.log('[BT STOCKS] ' + ssym + ' Yahoo W1: ' +
+                  (historyData[ssym]['1week'] ? historyData[ssym]['1week'].length + ' candele' : 'FAIL'));
+      done++;
+      bt.progress = Math.round(done / totalSymbols * 50);
+      await new Promise(function(r) { setTimeout(r, 1000); });
+    }
+
     bt.status = 'simulating';
     bt.message = 'Simulazione strategie in corso...';
 
-    // Esegui simulazioni (solo ORB + PA, MTF rimosso definitivamente)
+    // Esegui simulazioni (ORB + PA + STOCKS, MTF rimosso definitivamente)
     var results = {
-      clean: { ORB: {}, PA: {} },
-      costs: { ORB: {}, PA: {} }
+      clean: { ORB: {}, PA: {}, STOCKS: {} },
+      costs: { ORB: {}, PA: {}, STOCKS: {} }
     };
 
     var simStep = 0;
-    var totalSims = paSymbols.length * 2 + orbSymbols.length * 2;
+    var totalSims = paSymbols.length * 2 + orbSymbols.length * 2 + stocksSymbols.length * 2;
 
     // ORB
     for (var oi = 0; oi < orbSymbols.length; oi++) {
@@ -3338,6 +3469,25 @@ async function btRun() {
       if (global.gc) global.gc();
     }
 
+    // STOCKS
+    for (var si = 0; si < stocksSymbols.length; si++) {
+      var ss = stocksSymbols[si];
+      var hsd = historyData[ss];
+      if (!hsd || !hsd['1week']) continue;
+      bt.message = 'Simulazione STOCKS ' + ss + '...';
+      // Spread stocks: ~0.05% del prezzo (modesto, US blue chips)
+      var sspread = (hsd['1week'].length ?
+                     hsd['1week'][hsd['1week'].length-1].close : 100) * 0.0005;
+      results.clean.STOCKS[ss] = btSimulateStocks(ss, hsd['1week'], 0);
+      results.costs.STOCKS[ss] = btSimulateStocks(ss, hsd['1week'], sspread);
+      console.log('[BT STOCKS] ' + ss + ': clean=' + results.clean.STOCKS[ss].length +
+                  ' costs=' + results.costs.STOCKS[ss].length);
+      simStep += 2;
+      bt.progress = 50 + Math.round(simStep / totalSims * 50);
+      await new Promise(function(r) { setTimeout(r, 100); });
+      if (global.gc) global.gc();
+    }
+
     // Aggrega metriche
     var summary = {
       generated: new Date().toISOString(),
@@ -3347,7 +3497,7 @@ async function btRun() {
       total: {}
     };
 
-    var allBots = ['ORB', 'PA'];
+    var allBots = ['ORB', 'PA', 'STOCKS'];
     var allClean = [], allCosts = [];
 
     allBots.forEach(function(b) {
@@ -3395,7 +3545,8 @@ async function btRun() {
 
     var orbVerdict = classifyBot('ORB', summary.perBot && summary.perBot.ORB && summary.perBot.ORB.costs);
     var paVerdict  = classifyBot('PA',  summary.perBot && summary.perBot.PA  && summary.perBot.PA.costs);
-    var bots = [orbVerdict, paVerdict].filter(function(v){ return v !== null; });
+    var stkVerdict = classifyBot('STOCKS', summary.perBot && summary.perBot.STOCKS && summary.perBot.STOCKS.costs);
+    var bots = [orbVerdict, paVerdict, stkVerdict].filter(function(v){ return v !== null; });
 
     // Verdict aggregato basato sulla combinazione dei bot, non solo PF aggregato
     var verdict = '';
