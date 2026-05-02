@@ -2437,6 +2437,70 @@ function checkStocksSignal(sym) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// HELPER: EMA series — ritorna array EMA per ogni bar, calcolato in O(N) totale
+// ──────────────────────────────────────────────────────────────────────────────
+function calcEMASeries(c, period) {
+  if (c.length < period) return new Array(c.length).fill(NaN);
+  var k = 2 / (period + 1);
+  var ema = new Array(c.length).fill(NaN);
+  // Seed: SMA dei primi `period` valori
+  var seed = 0;
+  for (var i = 0; i < period; i++) seed += c[i].close;
+  ema[period - 1] = seed / period;
+  // Recursion EMA
+  for (var j = period; j < c.length; j++) {
+    ema[j] = c[j].close * k + ema[j-1] * (1 - k);
+  }
+  return ema;
+}
+
+// HELPER: RSI series — Wilder smoothing per ogni bar, O(N) totale
+function calcRSISeries(c, period) {
+  period = period || 14;
+  if (c.length < period + 1) return new Array(c.length).fill(50);
+  var rsi = new Array(c.length).fill(50);
+  var gains = 0, losses = 0;
+  for (var i = 1; i <= period; i++) {
+    var d = c[i].close - c[i-1].close;
+    if (d > 0) gains += d; else losses += Math.abs(d);
+  }
+  var avgG = gains / period, avgL = losses / period;
+  rsi[period] = avgL === 0 ? 100 : 100 - (100 / (1 + avgG / avgL));
+  for (var j = period + 1; j < c.length; j++) {
+    var diff = c[j].close - c[j-1].close;
+    var g = diff > 0 ? diff : 0;
+    var l = diff < 0 ? Math.abs(diff) : 0;
+    avgG = (avgG * (period - 1) + g) / period;
+    avgL = (avgL * (period - 1) + l) / period;
+    rsi[j] = avgL === 0 ? 100 : 100 - (100 / (1 + avgG / avgL));
+  }
+  return rsi;
+}
+
+// HELPER: ATR series — Wilder smoothing per ogni bar, O(N) totale
+function calcATRSeries(c, period) {
+  period = period || 14;
+  if (c.length < period + 1) return new Array(c.length).fill(NaN);
+  var atr = new Array(c.length).fill(NaN);
+  var tr = new Array(c.length);
+  tr[0] = c[0].high - c[0].low;
+  for (var i = 1; i < c.length; i++) {
+    tr[i] = Math.max(
+      c[i].high - c[i].low,
+      Math.abs(c[i].high - c[i-1].close),
+      Math.abs(c[i].low - c[i-1].close)
+    );
+  }
+  var seed = 0;
+  for (var k = 0; k < period; k++) seed += tr[k];
+  atr[period - 1] = seed / period;
+  for (var j = period; j < c.length; j++) {
+    atr[j] = (atr[j-1] * (period - 1) + tr[j]) / period;
+  }
+  return atr;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // HELPER: ADX series (per stocks needs to return array, non solo last value)
 // ──────────────────────────────────────────────────────────────────────────────
 function calcADXSeries(c, p) {
@@ -2862,25 +2926,21 @@ function btSimulateMTF(symbol, candles15, candlesH1, candlesH4, candlesD1, sprea
   }
 
   // Pre-calcolo serie complete una volta sola
-  var d1Closes = candlesD1.map(function(c) { return c.close; });
-  var d1E50Arr = []; var d1E200Arr = []; var d1RsiArr = [];
-  for (var i = 0; i < candlesD1.length; i++) {
-    d1E50Arr.push(calcEMA(candlesD1.slice(0, i + 1), 50));
-    d1E200Arr.push(calcEMA(candlesD1.slice(0, i + 1), 200));
-    d1RsiArr.push(calcRSI(candlesD1.slice(0, i + 1), 14));
-  }
+  // Pre-calcolo HTF series in O(N) totale (era O(N^2) prima — causava OOM crash)
+  var d1E50Arr = calcEMASeries(candlesD1, 50);
+  var d1E200Arr = calcEMASeries(candlesD1, 200);
+  var d1RsiArr = calcRSISeries(candlesD1, 14);
 
-  var h4E20Arr = [];
-  for (var j = 0; j < candlesH4.length; j++) {
-    h4E20Arr.push(calcEMA(candlesH4.slice(0, j + 1), 20));
-  }
+  var h4E20Arr = calcEMASeries(candlesH4, 20);
 
-  var h1E20Arr = []; var h1E50Arr = []; var h1AdxArr = [];
-  for (var k = 0; k < candlesH1.length; k++) {
-    h1E20Arr.push(calcEMA(candlesH1.slice(0, k + 1), 20));
-    h1E50Arr.push(calcEMA(candlesH1.slice(0, k + 1), 50));
-    h1AdxArr.push(calcADX(candlesH1.slice(0, k + 1), 14));
-  }
+  var h1E20Arr = calcEMASeries(candlesH1, 20);
+  var h1E50Arr = calcEMASeries(candlesH1, 50);
+  var h1AdxArr = calcADXSeries(candlesH1, 14);
+
+  // M15 series pre-calcolate (era calcolato a ogni iterazione → memory leak)
+  var m15Ema20Arr = calcEMASeries(candles15, 20);
+  var m15RsiArr = calcRSISeries(candles15, 14);
+  var m15AtrArr = calcATRSeries(candles15, 14);
 
   var trades = [];
   var lastSignalTime = 0;
@@ -2937,15 +2997,24 @@ function btSimulateMTF(symbol, candles15, candlesH1, candlesH4, candlesD1, sprea
     var h1E50 = h1E50Arr[h1Idx];
     if ((bias === 'BUY' && h1E20 <= h1E50) || (bias === 'SELL' && h1E20 >= h1E50)) { diag.skipL3Ema++; continue; }
 
-    // Layer 4 - M15
-    var slice15 = candles15.slice(0, i + 1);
-    var atrArr = calcATR(slice15, 14);
-    var atr = atrArr[atrArr.length - 1];
-    var ema20M15 = calcEMA(slice15, 20);
-    var rsiM15 = calcRSI(slice15, 14);
-    var rsiM15Prev = calcRSI(slice15.slice(0, -1), 14);
+    // Layer 4 - M15 (lookup O(1) sulle series pre-calcolate)
+    var atr = m15AtrArr[i];
+    var ema20M15Now = m15Ema20Arr[i];
+    var rsiM15 = m15RsiArr[i];
+    var rsiM15Prev = i > 0 ? m15RsiArr[i - 1] : 50;
+    if (isNaN(atr) || isNaN(ema20M15Now) || isNaN(rsiM15)) { diag.skipL4Pullback++; continue; }
 
-    if (!hadRecentPullback(slice15, ema20M15, atr, 8, bias === 'BUY')) { diag.skipL4Pullback++; continue; }
+    // Pullback check inline: nelle ultime 8 candele il prezzo ha toccato EMA20 ± buffer
+    var hadPullback = false;
+    var pbBuf = atr * 0.3;
+    var pbStart = Math.max(0, i - 7);
+    for (var pb = pbStart; pb <= i; pb++) {
+      var emaPb = m15Ema20Arr[pb];
+      if (isNaN(emaPb)) continue;
+      if (bias === 'BUY' && candles15[pb].low <= emaPb + pbBuf) { hadPullback = true; break; }
+      if (bias === 'SELL' && candles15[pb].high >= emaPb - pbBuf) { hadPullback = true; break; }
+    }
+    if (!hadPullback) { diag.skipL4Pullback++; continue; }
     // RIMOSSO: detectReversal era il vero killer (taglia 80%+ dei trade post-L3).
     // I 5 layer D1 trend + H4 align + H1 ADX + pullback + RSI sono gia' confluenti.
 
@@ -2953,13 +3022,18 @@ function btSimulateMTF(symbol, candles15, candlesH1, candlesH4, candlesD1, sprea
       (rsiM15 > rsiM15Prev && rsiM15 >= 35 && rsiM15 <= 65) :
       (rsiM15 < rsiM15Prev && rsiM15 >= 35 && rsiM15 <= 65);
     if (!rsiOk) { diag.skipL4Rsi++; continue; }
-    // RIMOSSO: dirRepeat (era "if bias === lastDir continue") - tagliava trade
-    // legittimi consecutivi nello stesso trend
     diag.passed++;
 
     // ENTRY
     var entryPrice = candles15[i].close + (bias === 'BUY' ? spread / 2 : -spread / 2);
-    var swing = findSwing(slice15, 10, bias === 'BUY');
+
+    // Swing inline: min/max ultimi 10 bar M15
+    var swingStart = Math.max(0, i - 9);
+    var swing = bias === 'BUY' ? Infinity : -Infinity;
+    for (var sw = swingStart; sw <= i; sw++) {
+      if (bias === 'BUY' && candles15[sw].low < swing) swing = candles15[sw].low;
+      if (bias === 'SELL' && candles15[sw].high > swing) swing = candles15[sw].high;
+    }
     var buf = atr * 0.3;
     var sl = bias === 'BUY' ? swing - buf : swing + buf;
     var slDist = Math.abs(entryPrice - sl);
@@ -3056,15 +3130,9 @@ function btSimulateORB(symbol, candles15, candlesH1, spread) {
   var sess = BT_ORB_SESSIONS[symbol];
   if (!sess) return [];
 
-  var h1AdxArr = [];
-  for (var k = 0; k < candlesH1.length; k++) {
-    h1AdxArr.push(calcADX(candlesH1.slice(0, k + 1), 14));
-  }
-
-  var ema20Arr = [];
-  for (var j = 0; j < candles15.length; j++) {
-    ema20Arr.push(calcEMA(candles15.slice(0, j + 1), 20));
-  }
+  // Pre-calcolo O(N) (era O(N^2) → causava OOM con H1 >5000 bars)
+  var h1AdxArr = calcADXSeries(candlesH1, 14);
+  var ema20Arr = calcEMASeries(candles15, 20);
 
   // Raggruppa per giornata locale
   var dayMap = {};
@@ -3186,9 +3254,9 @@ function btDetectPADayPattern(c, idx) {
 function btSimulatePA(symbol, candlesD1, candlesH4, spread) {
   if (!candlesD1 || candlesD1.length < 60 || !candlesH4 || candlesH4.length < 30) return [];
 
-  var d1E50Arr = [], h4E50Arr = [];
-  for (var i = 0; i < candlesD1.length; i++) d1E50Arr.push(calcEMA(candlesD1.slice(0, i + 1), 50));
-  for (var j = 0; j < candlesH4.length; j++) h4E50Arr.push(calcEMA(candlesH4.slice(0, j + 1), 50));
+  // Pre-calcolo O(N) (era O(N^2))
+  var d1E50Arr = calcEMASeries(candlesD1, 50);
+  var h4E50Arr = calcEMASeries(candlesH4, 50);
 
   var trades = [];
   var lastSigIdx = -100;
@@ -3425,6 +3493,9 @@ async function btRun() {
                   ' D1=' + (hd['1day']||[]).length + ')');
       simStep += 2;
       bt.progress = 50 + Math.round(simStep / totalSims * 50);
+      // Yield event loop + dai GC tempo di liberare le series temporanee
+      await new Promise(function(r) { setTimeout(r, 100); });
+      if (global.gc) global.gc();
     }
 
     // ORB
@@ -3438,6 +3509,8 @@ async function btRun() {
       results.costs.ORB[os] = btSimulateORB(os, hod['15min'], hod['1h'], ospread);
       simStep += 2;
       bt.progress = 50 + Math.round(simStep / totalSims * 50);
+      await new Promise(function(r) { setTimeout(r, 100); });
+      if (global.gc) global.gc();
     }
 
     // PA
@@ -3451,6 +3524,8 @@ async function btRun() {
       results.costs.PA[ps] = btSimulatePA(ps, hpd['1day'], hpd['4h'], pspread);
       simStep += 2;
       bt.progress = 50 + Math.round(simStep / totalSims * 50);
+      await new Promise(function(r) { setTimeout(r, 100); });
+      if (global.gc) global.gc();
     }
 
     // Aggrega metriche
