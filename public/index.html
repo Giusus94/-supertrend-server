@@ -2086,6 +2086,8 @@ body::before {
       <nav class="side-nav">
         <div class="side-link is-active" data-page="orb">orb<span class="side-link-tag">indices</span></div>
         <div class="side-link" data-page="pa">pa bot<span class="side-link-tag">d1</span></div>
+        <div class="side-link" data-page="crypto">crypto<span class="side-link-tag">h4</span></div>
+        <div class="side-link" data-page="mtf">mtf<span class="side-link-tag">m15</span></div>
         <div class="side-link" data-page="stocks">stocks<span class="side-link-tag">w1</span></div>
       </nav>
     </div>
@@ -2129,9 +2131,10 @@ body::before {
         </div>
       </div>
       <div class="top-pills">
-        <div class="tp" id="pillTrend"><span class="dt off"></span>Trend</div>
-        <div class="tp" id="pillPa"><span class="dt off"></span>PA</div>
         <div class="tp" id="pillOrb"><span class="dt off"></span>ORB</div>
+        <div class="tp" id="pillPa"><span class="dt off"></span>PA</div>
+        <div class="tp" id="pillCrypto"><span class="dt off"></span>Crypto</div>
+        <div class="tp" id="pillMtf"><span class="dt off"></span>MTF</div>
         <div class="tp" id="pillStocks"><span class="dt off"></span>Stocks</div>
       </div>
     </div>
@@ -2325,6 +2328,93 @@ body::before {
               <div class="pa-pat-row"><span>Pin Bar Bear</span><span class="pa-pat-strength">strength 3/4</span></div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════════════
+           PAGE: CRYPTO BOT (EMA crossover H4)
+           ═══════════════════════════════════════════════════════════════ -->
+      <div class="page" id="page-crypto">
+        <div class="page-head">
+          <div class="page-title-block">
+            <div class="page-eyebrow">EMA20/50 crossover · H4</div>
+            <div class="page-title">crypto bot</div>
+            <div class="page-sub">btcusd · ethusd · solusd — H4 crossover + ADX 22 + D1 trend filter</div>
+          </div>
+          <div class="bd bd-cu" id="cryptoBadge">offline</div>
+        </div>
+
+        <!-- HERO ROW: 3 crypto symbols -->
+        <div class="panel" style="padding:0">
+          <div class="orb-hero" id="cryptoHero">
+            <div class="orb-hero-cell"><div class="orb-hero-sym">BTCUSD</div><div class="orb-hero-name">Bitcoin</div><div class="orb-hero-state dead">connecting…</div></div>
+            <div class="orb-hero-cell"><div class="orb-hero-sym">ETHUSD</div><div class="orb-hero-name">Ethereum</div><div class="orb-hero-state dead">connecting…</div></div>
+            <div class="orb-hero-cell"><div class="orb-hero-sym">SOLUSD</div><div class="orb-hero-name">Solana</div><div class="orb-hero-state dead">connecting…</div></div>
+          </div>
+        </div>
+
+        <!-- SELECTED CRYPTO DETAIL -->
+        <div id="cryptoDetail">
+          <div class="panel">
+            <div class="empty">Select a crypto above to view EMA crossover state</div>
+          </div>
+        </div>
+
+        <!-- CRYPTO SIGNAL LOG -->
+        <div class="panel">
+          <div class="panel-head">
+            <div class="panel-head-title">
+              <div class="panel-eyebrow">history</div>
+              <div class="panel-name">crypto signal log</div>
+            </div>
+            <span class="bd bd-cu" id="cryptoLogCount">0</span>
+          </div>
+          <div class="panel-body-flush" id="cryptoLogList"><div class="empty">No CRYPTO signals yet</div></div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════════════
+           PAGE: MTF BOT (Trend Continuation D1+H1+M15)
+           ═══════════════════════════════════════════════════════════════ -->
+      <div class="page" id="page-mtf">
+        <div class="page-head">
+          <div class="page-title-block">
+            <div class="page-eyebrow">trend continuation · D1+H1+M15 sync</div>
+            <div class="page-title">mtf bot</div>
+            <div class="page-sub">forex/metals — D1 ADX rising + H1 momentum + M15 continuation</div>
+          </div>
+          <div class="bd bd-cu" id="mtfBadge">offline</div>
+        </div>
+
+        <!-- HERO ROW: forex/metals symbols -->
+        <div class="panel" style="padding:0">
+          <div class="orb-hero" id="mtfHero">
+            <div class="orb-hero-cell"><div class="orb-hero-sym">EURUSD</div><div class="orb-hero-name">EUR/USD</div><div class="orb-hero-state dead">connecting…</div></div>
+            <div class="orb-hero-cell"><div class="orb-hero-sym">GBPUSD</div><div class="orb-hero-name">GBP/USD</div><div class="orb-hero-state dead">connecting…</div></div>
+            <div class="orb-hero-cell"><div class="orb-hero-sym">XAUUSD</div><div class="orb-hero-name">Gold</div><div class="orb-hero-state dead">connecting…</div></div>
+            <div class="orb-hero-cell"><div class="orb-hero-sym">XAGUSD</div><div class="orb-hero-name">Silver</div><div class="orb-hero-state dead">connecting…</div></div>
+            <div class="orb-hero-cell"><div class="orb-hero-sym">GBPJPY</div><div class="orb-hero-name">GBP/JPY</div><div class="orb-hero-state dead">connecting…</div></div>
+            <div class="orb-hero-cell"><div class="orb-hero-sym">BTCUSD</div><div class="orb-hero-name">Bitcoin</div><div class="orb-hero-state dead">connecting…</div></div>
+          </div>
+        </div>
+
+        <!-- SELECTED SYMBOL DETAIL -->
+        <div id="mtfDetail">
+          <div class="panel">
+            <div class="empty">Select a symbol above to view momentum sync state</div>
+          </div>
+        </div>
+
+        <!-- MTF SIGNAL LOG -->
+        <div class="panel">
+          <div class="panel-head">
+            <div class="panel-head-title">
+              <div class="panel-eyebrow">history</div>
+              <div class="panel-name">mtf signal log</div>
+            </div>
+            <span class="bd bd-cu" id="mtfLogCount">0</span>
+          </div>
+          <div class="panel-body-flush" id="mtfLogList"><div class="empty">No MTF signals yet</div></div>
         </div>
       </div>
 
@@ -2608,6 +2698,8 @@ body::before {
     <nav class="mob-nav">
       <div class="mob-link is-active" data-page="orb">orb</div>
       <div class="mob-link" data-page="pa">pa</div>
+      <div class="mob-link" data-page="crypto">crypto</div>
+      <div class="mob-link" data-page="mtf">mtf</div>
       <div class="mob-link" data-page="stocks">stocks</div>
       <div class="mob-link" data-page="signals">signals</div>
       <div class="mob-link" data-page="backtest">backtest</div>
@@ -3607,19 +3699,21 @@ function btRenderResults(data) {
   html += btMetricCard('max drawdown', (t.maxDdR || 0) + 'R', 'cu');
   html += '</div>';
 
-  // Per-bot detail (ORB + PA + STOCKS + CRYPTO)
-  ['ORB', 'PA', 'STOCKS', 'CRYPTO'].forEach(function(bot) {
+  // Per-bot detail (ORB + PA + STOCKS + CRYPTO + MTF)
+  ['ORB', 'PA', 'STOCKS', 'CRYPTO', 'MTF'].forEach(function(bot) {
     var bm = data.perBot[bot];
     if (!bm || (bm.costs.count === 0 && bm.clean.count === 0)) return;
 
     var botName = bot === 'ORB'    ? 'orb indices' :
                   bot === 'PA'     ? 'pa bot d1'   :
                   bot === 'STOCKS' ? 'stocks w1'   :
-                  'crypto d1+h4';
+                  bot === 'CRYPTO' ? 'crypto h4'   :
+                  'mtf trend continuation';
     var botTag = bot === 'ORB'    ? 'opening range breakout' :
                  bot === 'PA'     ? 'candlestick patterns' :
                  bot === 'STOCKS' ? 'momentum + pullback weekly' :
-                 'crypto patterns 24/7';
+                 bot === 'CRYPTO' ? 'EMA20/50 crossover + ADX' :
+                 'D1+H1+M15 momentum sync';
 
     html += '<div class="bt-bot-panel">';
     html += '<div class="bt-bot-head">' +
@@ -3748,7 +3842,7 @@ async function pollAll() {
     S.statusData = d;  // Salvo per uso da updateAnalysis (MTF layers state)
     setSidebarStatus(d.dataConnected, d.tgConnected);
 
-    var pillT = document.getElementById('pillTrend');
+    var pillT = document.getElementById('pillMtf');
     if (pillT) {
       pillT.querySelector('.dt').className = 'dt ' + (d.isRunning ? 'on' : 'off');
       pillT.classList.toggle('live', d.isRunning);
@@ -3915,6 +4009,27 @@ async function pollAll() {
     if (pillStk) {
       pillStk.querySelector('.dt').className = 'dt ' + (dStk.stocksRunning ? 'on' : 'off');
       pillStk.classList.toggle('live', dStk.stocksRunning);
+    }
+
+    // Crypto bot: pill + badge (placeholder, bot live non ancora implementato)
+    // Quando server espone /api/crypto-status si attiva. Per ora resta offline.
+    var pillCrp = document.getElementById('pillCrypto');
+    if (pillCrp) {
+      pillCrp.querySelector('.dt').className = 'dt off';
+      pillCrp.classList.remove('live');
+    }
+    var crpBadge = document.getElementById('cryptoBadge');
+    if (crpBadge) {
+      crpBadge.textContent = 'offline';
+      crpBadge.className = 'bd bd-cu';
+    }
+
+    // MTF bot: pill + badge gi\u00e0 gestiti via pillMtf sopra (linkato a /api/status isRunning).
+    // Sincronizzo anche mtfBadge:
+    var mtfBadge = document.getElementById('mtfBadge');
+    if (mtfBadge) {
+      mtfBadge.textContent = (S.statusData && S.statusData.isRunning) ? 'live' : 'offline';
+      mtfBadge.className = 'bd ' + ((S.statusData && S.statusData.isRunning) ? 'bd-up' : 'bd-cu');
     }
     var ctlStk = document.getElementById('ctrlStocksStatus');
     if (ctlStk) {
