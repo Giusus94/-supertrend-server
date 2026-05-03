@@ -81,7 +81,10 @@ const TD_MAP = {
   GBPJPY:'GBP/JPY', AUDUSD:'AUD/USD', USDCAD:'USD/CAD',
   USDCHF:'USD/CHF', NZDUSD:'NZD/USD',
   XAUUSD:'XAU/USD', XAGUSD:'XAG/USD',
-  USOIL:'WTI/USD', UKOIL:'BRENT/USD', WTIUSD:'WTI/USD', BRNUSD:'BRENT/USD'
+  USOIL:'WTI/USD', UKOIL:'BRENT/USD', WTIUSD:'WTI/USD', BRNUSD:'BRENT/USD',
+  // Crypto on TD (Grow plan supports crypto pairs)
+  BTCUSD:'BTC/USD', ETHUSD:'ETH/USD', SOLUSD:'SOL/USD',
+  XRPUSD:'XRP/USD', BNBUSD:'BNB/USD'
 };
 
 const PRICE_RANGES = {
@@ -2798,10 +2801,15 @@ async function btFetchHistory(symbol, interval) {
   var tdSym = (typeof ORB_TD_MAP !== 'undefined' && ORB_TD_MAP[symbol]) ||
               (typeof TD_MAP !== 'undefined' && TD_MAP[symbol]) ||
               symbol;
+  // Grow plan: outputsize 50000. Per timeframe brevi (M15) abbiamo finestre molto pi\u00f9 lunghe.
+  // M15: 50000 bars = ~520 days trading = ~2 anni
+  // H1:  50000 bars = ~5.7 anni
+  // H4:  50000 bars = oltre 22 anni (limite reale: dati TD)
+  // D1:  50000 bars = oltre 130 anni
   var url = 'https://api.twelvedata.com/time_series?symbol=' +
             encodeURIComponent(tdSym) +
             '&interval=' + interval +
-            '&outputsize=5000&order=ASC&apikey=' + TD_KEY;
+            '&outputsize=50000&order=ASC&apikey=' + TD_KEY;
   try {
     var r = await fetch(url, { headers: { 'User-Agent': 'ST-EA-Backtest/1.0' }});
     if (!r.ok) {
@@ -2851,7 +2859,7 @@ async function btFetchYahooHistory(symbol, interval) {
   };
   var yhSym = yhMap[symbol] || symbol;
   var yhInterval = {'15min':'15m','1h':'1h','4h':'1h','1day':'1d','1week':'1wk'}[interval] || '1d';
-  var yhRange = {'15min':'60d','1h':'730d','4h':'730d','1day':'2y','1week':'5y'}[interval] || '6mo';
+  var yhRange = {'15min':'60d','1h':'730d','4h':'730d','1day':'2y','1week':'10y'}[interval] || '6mo';
   var url = 'https://query2.finance.yahoo.com/v8/finance/chart/' + yhSym +
             '?interval=' + yhInterval + '&range=' + yhRange;
   try {
@@ -3653,41 +3661,80 @@ async function btRun() {
       await new Promise(function(r) { setTimeout(r, 1000); });
     }
 
-    // Fetch ORB symbols (M15 + H1) — usa Yahoo direttamente perche' TwelveData
-    // ritorna prezzi non-index (ratio/yield) per cash indices con piano standard.
-    // Yahoo ha dati cash indices puliti su tutti gli indici principali.
+    // Fetch ORB symbols (M15 + H1)
+    // STRATEGIA: prova TwelveData prima (Grow plan: 50000 outputsize, ~2 anni M15).
+    // Se TD ritorna prezzi fuori range plausibile (vecchio bug "ratio/yield"
+    // su cash indices) o fallisce, fallback a Yahoo (60d M15, 730d H1).
     for (var o = 0; o < orbSymbols.length; o++) {
       var osym = orbSymbols[o];
       bt.message = 'Fetch storico ' + osym + ' (ORB)...';
       historyData[osym] = historyData[osym] || {};
 
-      // Yahoo direttamente (skip TD per indici)
-      var yhRes15 = await btFetchYahooHistory(osym, '15min');
-      console.log('[BT ORB] ' + osym + ' Yahoo M15: ' + (yhRes15 ? yhRes15.length + ' candele' : 'FAIL'));
-      // Sanity check prezzo: scarta se fuori range plausibile per quell'indice
-      if (yhRes15 && yhRes15.length && ORB_PRICE_RANGES[osym]) {
-        var lastP = yhRes15[yhRes15.length - 1].close;
-        var range = ORB_PRICE_RANGES[osym];
-        if (lastP < range[0] || lastP > range[1]) {
-          console.log('[BT ORB] ' + osym + ' Yahoo M15 prezzo ' + lastP +
-                      ' fuori range [' + range[0] + ',' + range[1] + '], SCARTATO');
-          yhRes15 = null;
+      // ─── M15: prova TD, fallback Yahoo ───
+      var tdRes15 = await btFetchHistory(osym, '15min');
+      var tdValid15 = tdRes15 && tdRes15.length > 0;
+      if (tdValid15 && ORB_PRICE_RANGES[osym]) {
+        var tdLast15 = tdRes15[tdRes15.length - 1].close;
+        var rg15 = ORB_PRICE_RANGES[osym];
+        if (tdLast15 < rg15[0] || tdLast15 > rg15[1]) {
+          console.log('[BT ORB] ' + osym + ' TD M15 prezzo ' + tdLast15 +
+                      ' fuori range [' + rg15[0] + ',' + rg15[1] + '], fallback Yahoo');
+          tdValid15 = false;
         }
       }
-      historyData[osym]['15min'] = yhRes15;
+      var res15;
+      if (tdValid15) {
+        res15 = tdRes15;
+        console.log('[BT ORB] ' + osym + ' TD M15: ' + res15.length + ' candele');
+      } else {
+        var yhRes15 = await btFetchYahooHistory(osym, '15min');
+        if (yhRes15 && yhRes15.length && ORB_PRICE_RANGES[osym]) {
+          var lastP = yhRes15[yhRes15.length - 1].close;
+          var range = ORB_PRICE_RANGES[osym];
+          if (lastP < range[0] || lastP > range[1]) {
+            console.log('[BT ORB] ' + osym + ' Yahoo M15 prezzo ' + lastP +
+                        ' fuori range [' + range[0] + ',' + range[1] + '], SCARTATO');
+            yhRes15 = null;
+          }
+        }
+        res15 = yhRes15;
+        console.log('[BT ORB] ' + osym + ' Yahoo M15: ' + (res15 ? res15.length + ' candele' : 'FAIL'));
+      }
+      historyData[osym]['15min'] = res15;
+      await new Promise(function(r) { setTimeout(r, 4500); });  // rate limit safety 12-15 req/min
 
-      var yhRes1h = await btFetchYahooHistory(osym, '1h');
-      console.log('[BT ORB] ' + osym + ' Yahoo H1: ' + (yhRes1h ? yhRes1h.length + ' candele' : 'FAIL'));
-      if (yhRes1h && yhRes1h.length && ORB_PRICE_RANGES[osym]) {
-        var lastP1 = yhRes1h[yhRes1h.length - 1].close;
-        var range1 = ORB_PRICE_RANGES[osym];
-        if (lastP1 < range1[0] || lastP1 > range1[1]) {
-          console.log('[BT ORB] ' + osym + ' Yahoo H1 prezzo ' + lastP1 +
-                      ' fuori range [' + range1[0] + ',' + range1[1] + '], SCARTATO');
-          yhRes1h = null;
+      // ─── H1: prova TD, fallback Yahoo ───
+      var tdRes1h = await btFetchHistory(osym, '1h');
+      var tdValid1h = tdRes1h && tdRes1h.length > 0;
+      if (tdValid1h && ORB_PRICE_RANGES[osym]) {
+        var tdLast1h = tdRes1h[tdRes1h.length - 1].close;
+        var rg1h = ORB_PRICE_RANGES[osym];
+        if (tdLast1h < rg1h[0] || tdLast1h > rg1h[1]) {
+          console.log('[BT ORB] ' + osym + ' TD H1 prezzo ' + tdLast1h +
+                      ' fuori range [' + rg1h[0] + ',' + rg1h[1] + '], fallback Yahoo');
+          tdValid1h = false;
         }
       }
-      historyData[osym]['1h'] = yhRes1h;
+      var res1h;
+      if (tdValid1h) {
+        res1h = tdRes1h;
+        console.log('[BT ORB] ' + osym + ' TD H1: ' + res1h.length + ' candele');
+      } else {
+        var yhRes1h = await btFetchYahooHistory(osym, '1h');
+        if (yhRes1h && yhRes1h.length && ORB_PRICE_RANGES[osym]) {
+          var lastP1 = yhRes1h[yhRes1h.length - 1].close;
+          var range1 = ORB_PRICE_RANGES[osym];
+          if (lastP1 < range1[0] || lastP1 > range1[1]) {
+            console.log('[BT ORB] ' + osym + ' Yahoo H1 prezzo ' + lastP1 +
+                        ' fuori range [' + range1[0] + ',' + range1[1] + '], SCARTATO');
+            yhRes1h = null;
+          }
+        }
+        res1h = yhRes1h;
+        console.log('[BT ORB] ' + osym + ' Yahoo H1: ' + (res1h ? res1h.length + ' candele' : 'FAIL'));
+      }
+      historyData[osym]['1h'] = res1h;
+      await new Promise(function(r) { setTimeout(r, 4500); });  // rate limit safety
 
       // Riepilogo
       var n15 = historyData[osym]['15min'] ? historyData[osym]['15min'].length : 0;
@@ -3724,9 +3771,30 @@ async function btRun() {
       }
       bt.message = 'Fetch storico ' + crsym + ' (Crypto D1+H4)...';
       historyData[crsym] = historyData[crsym] || {};
-      // Crypto sempre Yahoo (BTCUSD=X, ETH-USD ecc.)
-      if (!historyData[crsym]['1day']) historyData[crsym]['1day'] = await btFetchYahooHistory(crsym, '1day');
-      if (!historyData[crsym]['4h']) historyData[crsym]['4h'] = await btFetchYahooHistory(crsym, '4h');
+      // STRATEGIA: prova TD (Grow plan supporta BTC/USD, ETH/USD, SOL/USD, XRP/USD, BNB/USD).
+      // Fallback Yahoo se TD fallisce. TD ha pi\u00f9 storia con outputsize 50000.
+      if (!historyData[crsym]['1day']) {
+        var crTd1d = await btFetchHistory(crsym, '1day');
+        await new Promise(function(r) { setTimeout(r, 4500); });
+        if (crTd1d && crTd1d.length > 0) {
+          historyData[crsym]['1day'] = crTd1d;
+          console.log('[BT CRYPTO] ' + crsym + ' TD D1: ' + crTd1d.length);
+        } else {
+          historyData[crsym]['1day'] = await btFetchYahooHistory(crsym, '1day');
+          console.log('[BT CRYPTO] ' + crsym + ' Yahoo D1 fallback: ' + (historyData[crsym]['1day']||[]).length);
+        }
+      }
+      if (!historyData[crsym]['4h']) {
+        var crTd4h = await btFetchHistory(crsym, '4h');
+        await new Promise(function(r) { setTimeout(r, 4500); });
+        if (crTd4h && crTd4h.length > 0) {
+          historyData[crsym]['4h'] = crTd4h;
+          console.log('[BT CRYPTO] ' + crsym + ' TD H4: ' + crTd4h.length);
+        } else {
+          historyData[crsym]['4h'] = await btFetchYahooHistory(crsym, '4h');
+          console.log('[BT CRYPTO] ' + crsym + ' Yahoo H4 fallback: ' + (historyData[crsym]['4h']||[]).length);
+        }
+      }
       console.log('[BT CRYPTO FETCH] ' + crsym + ' D1=' + (historyData[crsym]['1day']||[]).length +
                   ' H4=' + (historyData[crsym]['4h']||[]).length);
       done++;
