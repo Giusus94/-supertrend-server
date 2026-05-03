@@ -3188,6 +3188,254 @@ function btSimulatePA(symbol, candlesD1, candlesH4, spread) {
 
 // ─── Backtest Bot 3: Stocks W1 (momentum + pullback) ──────────────────────────
 // Replica esatta della logica live in checkStocksSignal()
+// ═══════════════════════════════════════════════════════════════════════════
+// btSimulateMTF v2 — Trend Continuation Sincrono (D1 + H1 + M15)
+// ═══════════════════════════════════════════════════════════════════════════
+// La vecchia logica MTF (trend D1 + pullback M15 + reversal candle) era PF 0.37.
+// Nuova logica: aspetta che TUTTI e 3 i timeframe siano in momentum sincrono.
+//
+// Filtri ENTRY:
+//   1. D1 ADX > 25 E ADX in salita ultimi 3 giorni (trend forte e accelerando)
+//   2. D1 RSI > 55 (long) o < 45 (short) → bias direzionale
+//   3. H1 ADX > 20 E EMA20 > EMA50 (long) o < (short) → momentum H1
+//   4. M15 close > EMA20 E close > open last bar (continuation green)
+//
+// Entry: alla chiusura M15 con tutte condizioni vere
+// SL: 1.5 × ATR M15 dal close
+// TP: R:R 2.0
+// Cooldown: 4 ore tra trade
+// Max 3 trade/giorno per simbolo
+// ═══════════════════════════════════════════════════════════════════════════
+function btSimulateMTF(symbol, candles15, candlesH1, candlesD1, spread) {
+  if (!candles15 || candles15.length < 100 || !candlesH1 || candlesH1.length < 50 ||
+      !candlesD1 || candlesD1.length < 50) return [];
+
+  var m15Ema20 = calcEMASeries(candles15, 20);
+  var m15Atr   = calcATRSeries(candles15, 14);
+  var h1Ema20  = calcEMASeries(candlesH1, 20);
+  var h1Ema50  = calcEMASeries(candlesH1, 50);
+  var h1Adx    = calcADXSeries(candlesH1, 14);
+  var d1Adx    = calcADXSeries(candlesD1, 14);
+  var d1Rsi    = calcRSISeries(candlesD1, 14);
+
+  var trades = [];
+  var lastSignalTime = 0;
+  var dailyCount = {};
+  var cooldownMs = 4 * 60 * 60 * 1000;
+
+  var diag = {
+    bars: 0, cooldown: 0, daily: 0, htfData: 0,
+    skipD1Adx: 0, skipD1AdxFlat: 0, skipD1Rsi: 0,
+    skipH1Adx: 0, skipH1Ema: 0,
+    skipM15Trend: 0, skipM15Continuation: 0,
+    skipAtr: 0, passed: 0
+  };
+
+  for (var i = 50; i < candles15.length; i++) {
+    diag.bars++;
+    var ts = candles15[i].time;
+    if (ts - lastSignalTime < cooldownMs) { diag.cooldown++; continue; }
+    var dateKey = new Date(ts).toISOString().slice(0, 10);
+    if ((dailyCount[dateKey] || 0) >= 3) { diag.daily++; continue; }
+
+    var d1Idx = btFindHtfIdx(candlesD1, ts);
+    var h1Idx = btFindHtfIdx(candlesH1, ts);
+    if (d1Idx < 14 || h1Idx < 50) { diag.htfData++; continue; }
+
+    var adxD1Now = d1Adx[d1Idx];
+    if (isNaN(adxD1Now) || adxD1Now < 25) { diag.skipD1Adx++; continue; }
+    if (d1Idx < 3) { diag.skipD1Adx++; continue; }
+    var adxD1_3 = d1Adx[d1Idx - 3];
+    if (isNaN(adxD1_3) || adxD1Now <= adxD1_3) { diag.skipD1AdxFlat++; continue; }
+
+    var rsiD1 = d1Rsi[d1Idx];
+    var bias = rsiD1 > 55 ? 'BUY' : (rsiD1 < 45 ? 'SELL' : null);
+    if (!bias) { diag.skipD1Rsi++; continue; }
+
+    var adxH1 = h1Adx[h1Idx];
+    if (isNaN(adxH1) || adxH1 < 20) { diag.skipH1Adx++; continue; }
+    var h1E20 = h1Ema20[h1Idx];
+    var h1E50 = h1Ema50[h1Idx];
+    if (isNaN(h1E20) || isNaN(h1E50)) { diag.htfData++; continue; }
+    if (bias === 'BUY' && h1E20 <= h1E50) { diag.skipH1Ema++; continue; }
+    if (bias === 'SELL' && h1E20 >= h1E50) { diag.skipH1Ema++; continue; }
+
+    var m15E20 = m15Ema20[i];
+    var atr = m15Atr[i];
+    if (isNaN(m15E20) || isNaN(atr)) { diag.skipAtr++; continue; }
+    var bar = candles15[i];
+
+    if (bias === 'BUY') {
+      if (bar.close <= m15E20) { diag.skipM15Trend++; continue; }
+      if (bar.close <= bar.open) { diag.skipM15Continuation++; continue; }
+    } else {
+      if (bar.close >= m15E20) { diag.skipM15Trend++; continue; }
+      if (bar.close >= bar.open) { diag.skipM15Continuation++; continue; }
+    }
+    diag.passed++;
+
+    var entry = bar.close + (bias === 'BUY' ? spread / 2 : -spread / 2);
+    var sl = bias === 'BUY' ? entry - 1.5 * atr : entry + 1.5 * atr;
+    var slDist = Math.abs(entry - sl);
+    if (slDist <= 0) continue;
+    var tp = bias === 'BUY' ? entry + slDist * 2.0 : entry - slDist * 2.0;
+
+    var endIdx = Math.min(i + 1 + 96, candles15.length - 1);
+    var exitInfo = null;
+    for (var x = i + 1; x <= endIdx; x++) {
+      var cur = candles15[x];
+      if (bias === 'BUY') {
+        if (cur.low <= sl) { exitInfo = { idx: x, p: sl, r: 'SL' }; break; }
+        if (cur.high >= tp) { exitInfo = { idx: x, p: tp, r: 'TP' }; break; }
+      } else {
+        if (cur.high >= sl) { exitInfo = { idx: x, p: sl, r: 'SL' }; break; }
+        if (cur.low <= tp) { exitInfo = { idx: x, p: tp, r: 'TP' }; break; }
+      }
+    }
+    if (!exitInfo) {
+      exitInfo = { idx: endIdx, p: candles15[endIdx].close, r: 'TIMEOUT' };
+    }
+    var exitPx = exitInfo.p + (bias === 'BUY' ? -spread / 2 : spread / 2);
+    var pnl = bias === 'BUY' ? (exitPx - entry) : (entry - exitPx);
+    var rMult = pnl / slDist;
+
+    trades.push({
+      symbol: symbol, bot: 'MTF', dir: bias,
+      entryTime: ts, entryPrice: entry, sl: sl, tp: tp,
+      exitTime: candles15[exitInfo.idx].time, exitPrice: exitPx,
+      exitReason: exitInfo.r, barsHeld: exitInfo.idx - i,
+      rMult: rMult
+    });
+
+    lastSignalTime = ts;
+    dailyCount[dateKey] = (dailyCount[dateKey] || 0) + 1;
+  }
+
+  console.log('[BT MTF DIAG ' + symbol + '] bars=' + diag.bars +
+              ' cooldown=' + diag.cooldown +
+              ' daily=' + diag.daily +
+              ' htfData=' + diag.htfData +
+              ' D1adx<25=' + diag.skipD1Adx +
+              ' D1adxFlat=' + diag.skipD1AdxFlat +
+              ' D1rsi=' + diag.skipD1Rsi +
+              ' H1adx<20=' + diag.skipH1Adx +
+              ' H1ema=' + diag.skipH1Ema +
+              ' M15trend=' + diag.skipM15Trend +
+              ' M15cont=' + diag.skipM15Continuation +
+              ' atr=' + diag.skipAtr +
+              ' PASSED=' + diag.passed);
+
+  return trades;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// btSimulateCrypto v2 — EMA20/50 Crossover H4 + ADX filter
+// ═══════════════════════════════════════════════════════════════════════════
+function btSimulateCrypto(symbol, candlesD1, candlesH4, spread) {
+  if (!candlesD1 || candlesD1.length < 60 || !candlesH4 || candlesH4.length < 100) return [];
+
+  var d1E50  = calcEMASeries(candlesD1, 50);
+  var h4E20  = calcEMASeries(candlesH4, 20);
+  var h4E50  = calcEMASeries(candlesH4, 50);
+  var h4Atr  = calcATRSeries(candlesH4, 14);
+  var h4Adx  = calcADXSeries(candlesH4, 14);
+
+  var trades = [];
+  var lastSignalIdx = -100;
+  var cooldownBars = 12;
+
+  var diag = {
+    bars: 0, cooldown: 0, htfData: 0, noCross: 0,
+    skipAdx: 0, skipVol: 0, skipD1Trend: 0, skipAtr: 0, passed: 0
+  };
+
+  for (var i = 50; i < candlesH4.length; i++) {
+    diag.bars++;
+    if (i - lastSignalIdx < cooldownBars) { diag.cooldown++; continue; }
+
+    var e20 = h4E20[i], e50 = h4E50[i];
+    var e20Prev = h4E20[i-1], e50Prev = h4E50[i-1];
+    if (isNaN(e20) || isNaN(e50) || isNaN(e20Prev) || isNaN(e50Prev)) { diag.htfData++; continue; }
+
+    var crossUp = e20Prev <= e50Prev && e20 > e50;
+    var crossDown = e20Prev >= e50Prev && e20 < e50;
+    if (!crossUp && !crossDown) { diag.noCross++; continue; }
+    var bias = crossUp ? 'BUY' : 'SELL';
+
+    var adx = h4Adx[i];
+    if (isNaN(adx) || adx < 22) { diag.skipAdx++; continue; }
+
+    if (candlesH4[i].vol > 0) {
+      var volSum = 0, volCount = 0;
+      for (var v = Math.max(0, i - 20); v < i; v++) {
+        if (candlesH4[v].vol > 0) { volSum += candlesH4[v].vol; volCount++; }
+      }
+      var volAvg = volCount > 0 ? volSum / volCount : 0;
+      if (volAvg > 0 && candlesH4[i].vol < volAvg) { diag.skipVol++; continue; }
+    }
+
+    var ts = candlesH4[i].time;
+    var d1Idx = btFindHtfIdx(candlesD1, ts);
+    if (d1Idx < 50) { diag.htfData++; continue; }
+    var d1Close = candlesD1[d1Idx].close;
+    var d1Ema = d1E50[d1Idx];
+    if (isNaN(d1Ema)) { diag.htfData++; continue; }
+    if (bias === 'BUY' && d1Close <= d1Ema) { diag.skipD1Trend++; continue; }
+    if (bias === 'SELL' && d1Close >= d1Ema) { diag.skipD1Trend++; continue; }
+
+    var atr = h4Atr[i];
+    if (isNaN(atr)) { diag.skipAtr++; continue; }
+    diag.passed++;
+
+    var entry = candlesH4[i].close + (bias === 'BUY' ? spread / 2 : -spread / 2);
+    var sl = bias === 'BUY' ? entry - 1.5 * atr : entry + 1.5 * atr;
+    var slDist = Math.abs(entry - sl);
+    if (slDist <= 0) continue;
+    var tp = bias === 'BUY' ? entry + slDist * 2.5 : entry - slDist * 2.5;
+
+    var endIdx = Math.min(i + 1 + 60, candlesH4.length - 1);
+    var exitInfo = null;
+    for (var x = i + 1; x <= endIdx; x++) {
+      var cur = candlesH4[x];
+      if (bias === 'BUY') {
+        if (cur.low <= sl) { exitInfo = { idx: x, p: sl, r: 'SL' }; break; }
+        if (cur.high >= tp) { exitInfo = { idx: x, p: tp, r: 'TP' }; break; }
+      } else {
+        if (cur.high >= sl) { exitInfo = { idx: x, p: sl, r: 'SL' }; break; }
+        if (cur.low <= tp) { exitInfo = { idx: x, p: tp, r: 'TP' }; break; }
+      }
+    }
+    if (!exitInfo) {
+      exitInfo = { idx: endIdx, p: candlesH4[endIdx].close, r: 'TIMEOUT' };
+    }
+    var exitPx = exitInfo.p + (bias === 'BUY' ? -spread / 2 : spread / 2);
+    var pnl = bias === 'BUY' ? (exitPx - entry) : (entry - exitPx);
+    var rMult = pnl / slDist;
+
+    trades.push({
+      symbol: symbol, bot: 'CRYPTO', dir: bias,
+      entryTime: ts, entryPrice: entry, sl: sl, tp: tp,
+      exitTime: candlesH4[exitInfo.idx].time, exitPrice: exitPx,
+      exitReason: exitInfo.r, barsHeld: exitInfo.idx - i,
+      rMult: rMult
+    });
+
+    lastSignalIdx = i;
+  }
+
+  console.log('[BT CRYPTO DIAG ' + symbol + '] bars=' + diag.bars +
+              ' cooldown=' + diag.cooldown +
+              ' htfData=' + diag.htfData +
+              ' noCross=' + diag.noCross +
+              ' adx<22=' + diag.skipAdx +
+              ' vol=' + diag.skipVol +
+              ' d1Trend=' + diag.skipD1Trend +
+              ' atr=' + diag.skipAtr +
+              ' PASSED=' + diag.passed);
+
+  return trades;
+}
+
 function btSimulateStocks(symbol, candlesW1, spread) {
   if (!candlesW1 || candlesW1.length < 60) return [];
 
@@ -3358,15 +3606,37 @@ async function btRun() {
   bt.error = null;
 
   try {
-    // Simboli per i 4 bot operativi (MTF rimosso definitivamente: PF 0.37 in backtest)
+    // Simboli per i 5 bot
     var paSymbols = (typeof PA_SYMBOLS !== 'undefined') ? PA_SYMBOLS.slice() : [];
     var orbSymbols = (typeof ORB_SYMBOLS !== 'undefined') ? ORB_SYMBOLS.slice() : [];
     var stocksSymbols = (typeof STOCKS_SYMBOLS !== 'undefined') ? STOCKS_SYMBOLS.slice() : [];
     var cryptoSymbols = (typeof CRYPTO_SYMBOLS !== 'undefined' && BACKTEST_CRYPTO) ? CRYPTO_SYMBOLS.slice() : [];
-    var totalSymbols = paSymbols.length + orbSymbols.length + stocksSymbols.length + cryptoSymbols.length;
+    // MTF v2 (Trend Continuation Sincrono): default ON (BACKTEST_MTF=false per disabilitare)
+    var BACKTEST_MTF = process.env.BACKTEST_MTF !== 'false';
+    var mtfSymbols = (typeof DEFAULT_SYMBOLS !== 'undefined' && BACKTEST_MTF) ? DEFAULT_SYMBOLS.slice() : [];
+    var totalSymbols = paSymbols.length + orbSymbols.length + stocksSymbols.length +
+                       cryptoSymbols.length + mtfSymbols.length;
     var done = 0;
 
     var historyData = {}; // sym -> { '15min', '1h', '4h', '1day', '1week' }
+
+    // Fetch MTF symbols (M15 + H1 + D1) - prima perche' usa pi\u00f9 timeframe
+    for (var m = 0; m < mtfSymbols.length; m++) {
+      var msym = mtfSymbols[m];
+      bt.message = 'Fetch storico ' + msym + ' (MTF M15+H1+D1)...';
+      if (!historyData[msym]) historyData[msym] = {};
+      var isMtfCrypto = CRYPTO.indexOf(msym) !== -1;
+      var mfetcher = isMtfCrypto ? btFetchYahooHistory : btFetchHistory;
+      historyData[msym]['15min'] = await mfetcher(msym, '15min');
+      historyData[msym]['1h'] = await mfetcher(msym, '1h');
+      historyData[msym]['1day'] = await mfetcher(msym, '1day');
+      console.log('[BT MTF FETCH] ' + msym + ' M15=' + (historyData[msym]['15min']||[]).length +
+                  ' H1=' + (historyData[msym]['1h']||[]).length +
+                  ' D1=' + (historyData[msym]['1day']||[]).length);
+      done++;
+      bt.progress = Math.round(done / totalSymbols * 50);
+      await new Promise(function(r) { setTimeout(r, 1000); });
+    }
 
     // Fetch PA symbols (D1 + H4)
     for (var p = 0; p < paSymbols.length; p++) {
@@ -3466,15 +3736,16 @@ async function btRun() {
     bt.status = 'simulating';
     bt.message = 'Simulazione strategie in corso...';
 
-    // Esegui simulazioni (ORB + PA + STOCKS + CRYPTO)
+    // Esegui simulazioni (ORB + PA + STOCKS + CRYPTO + MTF)
     var results = {
-      clean: { ORB: {}, PA: {}, STOCKS: {}, CRYPTO: {} },
-      costs: { ORB: {}, PA: {}, STOCKS: {}, CRYPTO: {} }
+      clean: { ORB: {}, PA: {}, STOCKS: {}, CRYPTO: {}, MTF: {} },
+      costs: { ORB: {}, PA: {}, STOCKS: {}, CRYPTO: {}, MTF: {} }
     };
 
     var simStep = 0;
     var totalSims = paSymbols.length * 2 + orbSymbols.length * 2 +
-                    stocksSymbols.length * 2 + cryptoSymbols.length * 2;
+                    stocksSymbols.length * 2 + cryptoSymbols.length * 2 +
+                    mtfSymbols.length * 2;
 
     // ORB
     for (var oi = 0; oi < orbSymbols.length; oi++) {
@@ -3545,6 +3816,23 @@ async function btRun() {
       if (global.gc) global.gc();
     }
 
+    // MTF v2 (Trend Continuation Sincrono D1+H1+M15)
+    for (var mfi = 0; mfi < mtfSymbols.length; mfi++) {
+      var mfs = mtfSymbols[mfi];
+      var hmd = historyData[mfs];
+      if (!hmd || !hmd['15min'] || !hmd['1h'] || !hmd['1day']) continue;
+      bt.message = 'Simulazione MTF ' + mfs + '...';
+      var mfspread = BT_SPREADS[mfs] || 0;
+      results.clean.MTF[mfs] = btSimulateMTF(mfs, hmd['15min'], hmd['1h'], hmd['1day'], 0);
+      results.costs.MTF[mfs] = btSimulateMTF(mfs, hmd['15min'], hmd['1h'], hmd['1day'], mfspread);
+      console.log('[BT MTF] ' + mfs + ': clean=' + results.clean.MTF[mfs].length +
+                  ' costs=' + results.costs.MTF[mfs].length);
+      simStep += 2;
+      bt.progress = 50 + Math.round(simStep / totalSims * 50);
+      await new Promise(function(r) { setTimeout(r, 100); });
+      if (global.gc) global.gc();
+    }
+
     // Aggrega metriche
     var summary = {
       generated: new Date().toISOString(),
@@ -3554,7 +3842,7 @@ async function btRun() {
       total: {}
     };
 
-    var allBots = ['ORB', 'PA', 'STOCKS', 'CRYPTO'];
+    var allBots = ['ORB', 'PA', 'STOCKS', 'CRYPTO', 'MTF'];
     var allClean = [], allCosts = [];
 
     allBots.forEach(function(b) {
@@ -3604,7 +3892,8 @@ async function btRun() {
     var paVerdict  = classifyBot('PA',  summary.perBot && summary.perBot.PA  && summary.perBot.PA.costs);
     var stkVerdict = classifyBot('STOCKS', summary.perBot && summary.perBot.STOCKS && summary.perBot.STOCKS.costs);
     var crpVerdict = classifyBot('CRYPTO', summary.perBot && summary.perBot.CRYPTO && summary.perBot.CRYPTO.costs);
-    var bots = [orbVerdict, paVerdict, stkVerdict, crpVerdict].filter(function(v){ return v !== null; });
+    var mtfVerdict = classifyBot('MTF', summary.perBot && summary.perBot.MTF && summary.perBot.MTF.costs);
+    var bots = [orbVerdict, paVerdict, stkVerdict, crpVerdict, mtfVerdict].filter(function(v){ return v !== null; });
 
     // Verdict aggregato basato sulla combinazione dei bot, non solo PF aggregato
     var verdict = '';
