@@ -3195,7 +3195,8 @@ function btSimulatePA(symbol, candlesD1, candlesH4, spread) {
 // Nuova logica: aspetta che TUTTI e 3 i timeframe siano in momentum sincrono.
 //
 // Filtri ENTRY:
-//   1. D1 ADX > 25 E ADX in salita ultimi 3 giorni (trend forte e accelerando)
+//   1. D1 ADX > 20 E ADX in salita ultimi 3 giorni (trend forte e accelerando)
+//      [ROUND 2 fix: era 25, ridotto a 20 perch\u00e9 25 bloccava 94%+ bars su forex]
 //   2. D1 RSI > 55 (long) o < 45 (short) → bias direzionale
 //   3. H1 ADX > 20 E EMA20 > EMA50 (long) o < (short) → momentum H1
 //   4. M15 close > EMA20 E close > open last bar (continuation green)
@@ -3243,7 +3244,7 @@ function btSimulateMTF(symbol, candles15, candlesH1, candlesD1, spread) {
     if (d1Idx < 14 || h1Idx < 50) { diag.htfData++; continue; }
 
     var adxD1Now = d1Adx[d1Idx];
-    if (isNaN(adxD1Now) || adxD1Now < 25) { diag.skipD1Adx++; continue; }
+    if (isNaN(adxD1Now) || adxD1Now < 20) { diag.skipD1Adx++; continue; }
     if (d1Idx < 3) { diag.skipD1Adx++; continue; }
     var adxD1_3 = d1Adx[d1Idx - 3];
     if (isNaN(adxD1_3) || adxD1Now <= adxD1_3) { diag.skipD1AdxFlat++; continue; }
@@ -3315,7 +3316,7 @@ function btSimulateMTF(symbol, candles15, candlesH1, candlesD1, spread) {
               ' cooldown=' + diag.cooldown +
               ' daily=' + diag.daily +
               ' htfData=' + diag.htfData +
-              ' D1adx<25=' + diag.skipD1Adx +
+              ' D1adx<20=' + diag.skipD1Adx +
               ' D1adxFlat=' + diag.skipD1AdxFlat +
               ' D1rsi=' + diag.skipD1Rsi +
               ' H1adx<20=' + diag.skipH1Adx +
