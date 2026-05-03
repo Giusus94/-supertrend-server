@@ -3842,11 +3842,9 @@ async function pollAll() {
     S.statusData = d;  // Salvo per uso da updateAnalysis (MTF layers state)
     setSidebarStatus(d.dataConnected, d.tgConnected);
 
-    var pillT = document.getElementById('pillMtf');
-    if (pillT) {
-      pillT.querySelector('.dt').className = 'dt ' + (d.isRunning ? 'on' : 'off');
-      pillT.classList.toggle('live', d.isRunning);
-    }
+    // NOTE: pillMtf NON e' piu' gestito qui — ora e' linkato a MTF v2 (/api/mtf2-status)
+    // gestito pi\u00f9 sotto. Il vecchio Trend M15 e' deprecato.
+
     var cs = document.getElementById('ctrlStatus');
     if (cs) {
       cs.textContent = d.isRunning ? 'running' : 'stopped';
@@ -4011,26 +4009,47 @@ async function pollAll() {
       pillStk.classList.toggle('live', dStk.stocksRunning);
     }
 
-    // Crypto bot: pill + badge (placeholder, bot live non ancora implementato)
-    // Quando server espone /api/crypto-status si attiva. Per ora resta offline.
-    var pillCrp = document.getElementById('pillCrypto');
-    if (pillCrp) {
-      pillCrp.querySelector('.dt').className = 'dt off';
-      pillCrp.classList.remove('live');
-    }
-    var crpBadge = document.getElementById('cryptoBadge');
-    if (crpBadge) {
-      crpBadge.textContent = 'offline';
-      crpBadge.className = 'bd bd-cu';
+    // Crypto bot: chiama /api/crypto-status per stato live
+    try {
+      var rCrp = await fetch('/api/crypto-status');
+      var dCrp = await rCrp.json();
+      S.cryptoData = dCrp;
+      var pillCrp = document.getElementById('pillCrypto');
+      if (pillCrp) {
+        pillCrp.querySelector('.dt').className = 'dt ' + (dCrp.cryptoRunning ? 'on' : 'off');
+        pillCrp.classList.toggle('live', dCrp.cryptoRunning);
+      }
+      var crpBadge = document.getElementById('cryptoBadge');
+      if (crpBadge) {
+        crpBadge.textContent = dCrp.cryptoRunning ? 'live' : 'offline';
+        crpBadge.className = 'bd ' + (dCrp.cryptoRunning ? 'bd-up' : 'bd-cu');
+      }
+    } catch(e) {
+      // Endpoint non disponibile (server vecchio): badge resta offline
+      var pillCrpOff = document.getElementById('pillCrypto');
+      if (pillCrpOff) pillCrpOff.querySelector('.dt').className = 'dt off';
     }
 
-    // MTF bot: pill + badge gi\u00e0 gestiti via pillMtf sopra (linkato a /api/status isRunning).
-    // Sincronizzo anche mtfBadge:
-    var mtfBadge = document.getElementById('mtfBadge');
-    if (mtfBadge) {
-      mtfBadge.textContent = (S.statusData && S.statusData.isRunning) ? 'live' : 'offline';
-      mtfBadge.className = 'bd ' + ((S.statusData && S.statusData.isRunning) ? 'bd-up' : 'bd-cu');
+    // MTF v2 bot: chiama /api/mtf2-status per stato live
+    try {
+      var rMtf = await fetch('/api/mtf2-status');
+      var dMtf = await rMtf.json();
+      S.mtf2Data = dMtf;
+      var pillMtfNew = document.getElementById('pillMtf');
+      if (pillMtfNew) {
+        pillMtfNew.querySelector('.dt').className = 'dt ' + (dMtf.mtf2Running ? 'on' : 'off');
+        pillMtfNew.classList.toggle('live', dMtf.mtf2Running);
+      }
+      var mtfBadge = document.getElementById('mtfBadge');
+      if (mtfBadge) {
+        mtfBadge.textContent = dMtf.mtf2Running ? 'live' : 'offline';
+        mtfBadge.className = 'bd ' + (dMtf.mtf2Running ? 'bd-up' : 'bd-cu');
+      }
+    } catch(e) {
+      var pillMtfOff = document.getElementById('pillMtf');
+      if (pillMtfOff) pillMtfOff.querySelector('.dt').className = 'dt off';
     }
+
     var ctlStk = document.getElementById('ctrlStocksStatus');
     if (ctlStk) {
       ctlStk.textContent = dStk.stocksRunning ? 'running' : 'stopped';
