@@ -1505,6 +1505,16 @@ app.post('/api/pa-stop', async function(req, res) {
   res.json({ ok: true });
 });
 
+// ─── Crypto Bot config (v2 promosso live dopo backtest 54 trade PF 1.62) ───
+// Backtest 5y: SOLUSD PF 1.99 (26t), ETHUSD 1.36 (22t), BTCUSD 1.22 (6t).
+// Per attivare in live: CRYPTO_AUTOSTART=true
+// Per includere nel backtest report: BACKTEST_CRYPTO=true
+var CRYPTO_SYMBOLS = (process.env.CRYPTO_SYMBOLS ||
+  'BTCUSD,ETHUSD,SOLUSD').split(',').map(function(s){ return s.trim(); }).filter(function(s){ return s.length; });
+var CRYPTO_RISK_PCT = parseFloat(process.env.CRYPTO_RISK_PCT) || 1.0;
+var CRYPTO_AUTOSTART = process.env.CRYPTO_AUTOSTART === 'true';
+var BACKTEST_CRYPTO = process.env.BACKTEST_CRYPTO === 'true';
+
 // ══════════════════════════════════════════════════════════════════════════════
 // ██████████████████████████████████████████████████████████████████████████████
 // CRYPTO BOT v2 -- EMA20/50 Crossover H4 + ADX filter
@@ -2130,19 +2140,6 @@ var ORB_REFRESH_SEC = parseInt(process.env.ORB_REFRESH_SEC) || 300;
 //   - WR 52% e DD basso (2.77R) permettono risk piu' alto di PA
 //   - Override: ORB_RISK_PCT=2.0 (aggressivo) o 1.0 (conservativo)
 var ORB_RISK_PCT = parseFloat(process.env.ORB_RISK_PCT) || 1.5;
-
-// ─── Crypto Bot config — DISABILITATO dopo backtest definitivo ───
-// Risultato backtest 5y: PF 0.81 con costi su 249 trade, -32R aggregato.
-//   ETHUSD PF 0.89, BTCUSD PF 0.89, SOLUSD PF 0.66 — tutti perdenti.
-// Il PA generico copre gia' BTCUSD con PF 1.10 (logica migliore: cooldown 5g, R:R 2.5).
-// I pattern candlestick D1 NON hanno edge su crypto — strategia da rivedere se mai vorrai testarla.
-// Per riabilitare nel backtest: BACKTEST_CRYPTO=true
-// Per riabilitare in live (sconsigliato): CRYPTO_AUTOSTART=true
-var CRYPTO_SYMBOLS = (process.env.CRYPTO_SYMBOLS ||
-  'BTCUSD,ETHUSD,SOLUSD').split(',').map(function(s){ return s.trim(); }).filter(function(s){ return s.length; });
-var CRYPTO_RISK_PCT = parseFloat(process.env.CRYPTO_RISK_PCT) || 1.0;
-var CRYPTO_AUTOSTART = process.env.CRYPTO_AUTOSTART === 'true';  // default OFF
-var BACKTEST_CRYPTO = process.env.BACKTEST_CRYPTO === 'true';     // default OFF (non incluso nel verdict)
 
 var orbState = {};
 var orbRunning = false;
