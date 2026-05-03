@@ -2801,15 +2801,12 @@ async function btFetchHistory(symbol, interval) {
   var tdSym = (typeof ORB_TD_MAP !== 'undefined' && ORB_TD_MAP[symbol]) ||
               (typeof TD_MAP !== 'undefined' && TD_MAP[symbol]) ||
               symbol;
-  // Grow plan: outputsize 50000. Per timeframe brevi (M15) abbiamo finestre molto pi\u00f9 lunghe.
-  // M15: 50000 bars = ~520 days trading = ~2 anni
-  // H1:  50000 bars = ~5.7 anni
-  // H4:  50000 bars = oltre 22 anni (limite reale: dati TD)
-  // D1:  50000 bars = oltre 130 anni
+  // outputsize=5000 standard (PA / Crypto / ORB validato funzionante con 5000)
+  // Per MTF che vuole pi\u00f9 storia M15 esiste btFetchHistoryLarge (50000)
   var url = 'https://api.twelvedata.com/time_series?symbol=' +
             encodeURIComponent(tdSym) +
             '&interval=' + interval +
-            '&outputsize=50000&order=ASC&apikey=' + TD_KEY;
+            '&outputsize=5000&order=ASC&apikey=' + TD_KEY;
   try {
     var r = await fetch(url, { headers: { 'User-Agent': 'ST-EA-Backtest/1.0' }});
     if (!r.ok) {
@@ -2841,6 +2838,52 @@ async function btFetchHistory(symbol, interval) {
 }
 
 // Variant Yahoo per crypto e fallback
+// Versione "Large" per MTF: outputsize 50000 (Grow plan).
+// Se TD fallisce o ritorna meno di 5000 bars, return null e il chiamante usa fallback Yahoo.
+async function btFetchHistoryLarge(symbol, interval) {
+  if (!TD_KEY) {
+    console.log('[BT TD-L] ' + symbol + ' ' + interval + ': NO TD_KEY');
+    return null;
+  }
+  var tdSym = (typeof ORB_TD_MAP !== 'undefined' && ORB_TD_MAP[symbol]) ||
+              (typeof TD_MAP !== 'undefined' && TD_MAP[symbol]) ||
+              symbol;
+  var url = 'https://api.twelvedata.com/time_series?symbol=' +
+            encodeURIComponent(tdSym) +
+            '&interval=' + interval +
+            '&outputsize=50000&order=ASC&apikey=' + TD_KEY;
+  try {
+    var r = await fetch(url, { headers: { 'User-Agent': 'ST-EA-Backtest/1.0' }});
+    if (!r.ok) {
+      console.log('[BT TD-L] ' + symbol + ' ' + interval + ' (' + tdSym + '): HTTP ' + r.status);
+      return null;
+    }
+    var data = await r.json();
+    if (data.status === 'error' || !data.values) {
+      console.log('[BT TD-L] ' + symbol + ' ' + interval + ' (' + tdSym + '): ' +
+                  (data.message || data.status || 'no values'));
+      return null;
+    }
+    var values = data.values.map(function(v) {
+      return {
+        time: new Date(v.datetime + 'Z').getTime(),
+        open: parseFloat(v.open),
+        high: parseFloat(v.high),
+        low: parseFloat(v.low),
+        close: parseFloat(v.close),
+        vol: parseFloat(v.volume) || 0
+      };
+    }).filter(function(c) {
+      return !isNaN(c.open) && !isNaN(c.high) && !isNaN(c.low) && !isNaN(c.close);
+    });
+    console.log('[BT TD-L] ' + symbol + ' ' + interval + ' (' + tdSym + '): ' + values.length + ' bars');
+    return values;
+  } catch(e) {
+    console.error('[BT TD-L] ' + symbol + ' ' + interval + ': ' + e.message);
+    return null;
+  }
+}
+
 async function btFetchYahooHistory(symbol, interval) {
   // Yahoo symbol mapping (riusa pattern fetchYahoo esistente)
   var yhMap = {
@@ -3629,16 +3672,36 @@ async function btRun() {
 
     var historyData = {}; // sym -> { '15min', '1h', '4h', '1day', '1week' }
 
-    // Fetch MTF symbols (M15 + H1 + D1) - prima perche' usa pi\u00f9 timeframe
+    // Fetch MTF symbols (M15 + H1 + D1) - prima perche' usa piu' timeframe
+    // STRATEGIA: prova TwelveData LARGE (50000 bars) per avere ~2 anni M15.
+    // Se TD fallisce (rate limit, simbolo non supportato, etc.) → fallback Yahoo.
     for (var m = 0; m < mtfSymbols.length; m++) {
       var msym = mtfSymbols[m];
       bt.message = 'Fetch storico ' + msym + ' (MTF M15+H1+D1)...';
       if (!historyData[msym]) historyData[msym] = {};
       var isMtfCrypto = CRYPTO.indexOf(msym) !== -1;
-      var mfetcher = isMtfCrypto ? btFetchYahooHistory : btFetchHistory;
-      historyData[msym]['15min'] = await mfetcher(msym, '15min');
-      historyData[msym]['1h'] = await mfetcher(msym, '1h');
-      historyData[msym]['1day'] = await mfetcher(msym, '1day');
+
+      // Helper inline: prova TD-Large, fallback Yahoo
+      var tfList = ['15min', '1h', '1day'];
+      for (var tf = 0; tf < tfList.length; tf++) {
+        var iv = tfList[tf];
+        if (historyData[msym][iv] && historyData[msym][iv].length > 0) continue;
+        var tdResult = null;
+        if (!isMtfCrypto) {
+          tdResult = await btFetchHistoryLarge(msym, iv);
+          await new Promise(function(r) { setTimeout(r, 4500); });  // rate limit safety
+        }
+        if (tdResult && tdResult.length > 0) {
+          historyData[msym][iv] = tdResult;
+        } else {
+          // Fallback Yahoo
+          var yhResult = await btFetchYahooHistory(msym, iv);
+          historyData[msym][iv] = yhResult;
+          if (yhResult && yhResult.length > 0) {
+            console.log('[BT MTF FALLBACK] ' + msym + ' ' + iv + ' Yahoo: ' + yhResult.length + ' bars');
+          }
+        }
+      }
       console.log('[BT MTF FETCH] ' + msym + ' M15=' + (historyData[msym]['15min']||[]).length +
                   ' H1=' + (historyData[msym]['1h']||[]).length +
                   ' D1=' + (historyData[msym]['1day']||[]).length);
