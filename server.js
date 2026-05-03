@@ -1573,6 +1573,17 @@ var ORB_REFRESH_SEC = parseInt(process.env.ORB_REFRESH_SEC) || 300;
 //   - Override: ORB_RISK_PCT=2.0 (aggressivo) o 1.0 (conservativo)
 var ORB_RISK_PCT = parseFloat(process.env.ORB_RISK_PCT) || 1.5;
 
+// ─── Crypto Bot config (DA VALIDARE: bot dedicato 24/7 BTC/ETH/SOL) ───
+// Logica: replica PA D1+H4 con adattamenti crypto-specifici.
+// - R:R 2.0 invece di 2.5 (crypto vola velocemente)
+// - Filtro weekend liquidity (skip alert weekend se volume basso)
+// - Cooldown 3 giorni vs 5 PA standard
+// Status: deve essere validato in backtest. Default disabilitato.
+var CRYPTO_SYMBOLS = (process.env.CRYPTO_SYMBOLS ||
+  'BTCUSD,ETHUSD,SOLUSD').split(',').map(function(s){ return s.trim(); }).filter(function(s){ return s.length; });
+var CRYPTO_RISK_PCT = parseFloat(process.env.CRYPTO_RISK_PCT) || 1.0;
+var CRYPTO_AUTOSTART = process.env.CRYPTO_AUTOSTART === 'true';  // default OFF
+
 var orbState = {};
 var orbRunning = false;
 var orbTimer = null;
@@ -3175,6 +3186,112 @@ function btSimulatePA(symbol, candlesD1, candlesH4, spread) {
 
 // ─── Backtest Bot 3: Stocks W1 (momentum + pullback) ──────────────────────────
 // Replica esatta della logica live in checkStocksSignal()
+// ─── Backtest Bot 4: Crypto Bot dedicato (BTCUSD/ETHUSD/SOLUSD D1+H4 24/7) ───
+// Differenze vs btSimulatePA generico:
+//   - Spread crypto-specifici (pi\u00f9 alti del forex)
+//   - R:R ridotto a 2.0 (crypto vola velocemente, prendi profitti prima)
+//   - Filtro weekend liquidity: skip se vol < media 7 giorni
+//   - Cooldown ridotto a 3 giorni (vs 5 PA standard) per catturare trend rapidi crypto
+function btSimulateCrypto(symbol, candlesD1, candlesH4, spread) {
+  if (!candlesD1 || candlesD1.length < 60 || !candlesH4 || candlesH4.length < 30) return [];
+
+  var d1E50Arr = calcEMASeries(candlesD1, 50);
+  var h4E50Arr = calcEMASeries(candlesH4, 50);
+
+  var trades = [];
+  var lastSigIdx = -100;
+
+  // ─── COUNTER DIAGNOSTICI ───
+  var diag = {
+    bars: 0, cooldown: 0, noPattern: 0,
+    h4Insufficient: 0, lowScore: 0, lowVolWeekend: 0, slZero: 0, passed: 0
+  };
+
+  for (var k = 50; k < candlesD1.length - 1; k++) {
+    diag.bars++;
+    if (k - lastSigIdx < 3) { diag.cooldown++; continue; }  // cooldown 3 giorni vs 5 PA
+
+    var pat = btDetectPADayPattern(candlesD1, k);
+    if (!pat.dir) { diag.noPattern++; continue; }
+
+    var d1Bull = candlesD1[k].close > d1E50Arr[k];
+    var h4Idx = btFindHtfIdx(candlesH4, candlesD1[k].time);
+    if (h4Idx < 50) { diag.h4Insufficient++; continue; }
+    var h4Bull = candlesH4[h4Idx].close > h4E50Arr[h4Idx];
+
+    var trendBull = d1Bull && h4Bull;
+    var trendBear = !d1Bull && !h4Bull;
+    var finalScore = pat.dir === 'BUY' ?
+      pat.score + (trendBull ? 1 : (trendBear ? -1 : 0)) :
+      pat.score + (trendBear ? 1 : (trendBull ? -1 : 0));
+    if (finalScore < 3) { diag.lowScore++; continue; }
+
+    // Filtro weekend liquidity: se sabato/domenica, richiede volume sopra media 7g
+    var dayOfWeek = new Date(candlesD1[k].time).getUTCDay(); // 0=dom, 6=sab
+    var isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+    if (isWeekend && candlesD1[k].vol > 0) {
+      var volSum = 0, volCount = 0;
+      for (var v = Math.max(0, k - 7); v < k; v++) {
+        if (candlesD1[v].vol > 0) { volSum += candlesD1[v].vol; volCount++; }
+      }
+      var volAvg = volCount > 0 ? volSum / volCount : 0;
+      if (volAvg > 0 && candlesD1[k].vol < volAvg * 0.7) {
+        diag.lowVolWeekend++; continue; // weekend a bassa liquidit\u00e0 = skip
+      }
+    }
+
+    var entry = candlesD1[k+1].open + (pat.dir === 'BUY' ? spread / 2 : -spread / 2);
+    var sl = pat.dir === 'BUY' ?
+      Math.min(candlesD1[k].low, candlesD1[k-1].low) :
+      Math.max(candlesD1[k].high, candlesD1[k-1].high);
+    var slDist = Math.abs(entry - sl);
+    if (slDist <= 0) { diag.slZero++; continue; }
+    var tp = pat.dir === 'BUY' ? entry + slDist * 2.0 : entry - slDist * 2.0;  // R:R 2.0 vs 2.5 PA
+
+    var endIdx = Math.min(k + 1 + 30, candlesD1.length - 1);
+    var exitInfo = null;
+    for (var x = k + 1; x <= endIdx; x++) {
+      var bar = candlesD1[x];
+      if (pat.dir === 'BUY') {
+        if (bar.low <= sl) { exitInfo = { idx: x, p: sl, r: 'SL' }; break; }
+        if (bar.high >= tp) { exitInfo = { idx: x, p: tp, r: 'TP' }; break; }
+      } else {
+        if (bar.high >= sl) { exitInfo = { idx: x, p: sl, r: 'SL' }; break; }
+        if (bar.low <= tp) { exitInfo = { idx: x, p: tp, r: 'TP' }; break; }
+      }
+    }
+    if (!exitInfo) {
+      exitInfo = { idx: endIdx, p: candlesD1[endIdx].close, r: 'TIMEOUT' };
+    }
+    var exitPrice = exitInfo.p + (pat.dir === 'BUY' ? -spread / 2 : spread / 2);
+    var pnl = pat.dir === 'BUY' ? (exitPrice - entry) : (entry - exitPrice);
+    var rMult = pnl / slDist;
+    var pnlPct = (pnl / entry) * 100;
+
+    trades.push({
+      symbol: symbol, bot: 'CRYPTO', dir: pat.dir,
+      entryTime: candlesD1[k+1].time, entryPrice: entry, sl: sl, tp: tp,
+      exitTime: candlesD1[exitInfo.idx].time, exitPrice: exitPrice,
+      exitReason: exitInfo.r, barsHeld: exitInfo.idx - k - 1,
+      pnlPct: pnlPct, rMult: rMult, pattern: pat.name,
+      isWeekendEntry: isWeekend
+    });
+    diag.passed++;
+    lastSigIdx = k;
+  }
+
+  console.log('[BT CRYPTO DIAG ' + symbol + '] bars=' + diag.bars +
+              ' cooldown=' + diag.cooldown +
+              ' noPattern=' + diag.noPattern +
+              ' h4Insuff=' + diag.h4Insufficient +
+              ' lowScore=' + diag.lowScore +
+              ' weekendLowVol=' + diag.lowVolWeekend +
+              ' slZero=' + diag.slZero +
+              ' PASSED=' + diag.passed);
+
+  return trades;
+}
+
 function btSimulateStocks(symbol, candlesW1, spread) {
   if (!candlesW1 || candlesW1.length < 60) return [];
 
@@ -3345,11 +3462,12 @@ async function btRun() {
   bt.error = null;
 
   try {
-    // Simboli per i 3 bot operativi (MTF rimosso definitivamente: PF 0.37 in backtest)
+    // Simboli per i 4 bot operativi (MTF rimosso definitivamente: PF 0.37 in backtest)
     var paSymbols = (typeof PA_SYMBOLS !== 'undefined') ? PA_SYMBOLS.slice() : [];
     var orbSymbols = (typeof ORB_SYMBOLS !== 'undefined') ? ORB_SYMBOLS.slice() : [];
     var stocksSymbols = (typeof STOCKS_SYMBOLS !== 'undefined') ? STOCKS_SYMBOLS.slice() : [];
-    var totalSymbols = paSymbols.length + orbSymbols.length + stocksSymbols.length;
+    var cryptoSymbols = (typeof CRYPTO_SYMBOLS !== 'undefined') ? CRYPTO_SYMBOLS.slice() : [];
+    var totalSymbols = paSymbols.length + orbSymbols.length + stocksSymbols.length + cryptoSymbols.length;
     var done = 0;
 
     var historyData = {}; // sym -> { '15min', '1h', '4h', '1day', '1week' }
@@ -3427,17 +3545,40 @@ async function btRun() {
       await new Promise(function(r) { setTimeout(r, 1000); });
     }
 
+    // Fetch Crypto symbols (D1 + H4) per crypto-bot dedicato
+    // Skip se gi\u00e0 fetched dal PA (BTCUSD potrebbe essere in entrambi)
+    for (var cr = 0; cr < cryptoSymbols.length; cr++) {
+      var crsym = cryptoSymbols[cr];
+      if (historyData[crsym] && historyData[crsym]['1day'] && historyData[crsym]['4h']) {
+        // Gi\u00e0 fetched (probabilmente nel loop PA), skip
+        done++;
+        bt.progress = Math.round(done / totalSymbols * 50);
+        continue;
+      }
+      bt.message = 'Fetch storico ' + crsym + ' (Crypto D1+H4)...';
+      historyData[crsym] = historyData[crsym] || {};
+      // Crypto sempre Yahoo (BTCUSD=X, ETH-USD ecc.)
+      if (!historyData[crsym]['1day']) historyData[crsym]['1day'] = await btFetchYahooHistory(crsym, '1day');
+      if (!historyData[crsym]['4h']) historyData[crsym]['4h'] = await btFetchYahooHistory(crsym, '4h');
+      console.log('[BT CRYPTO FETCH] ' + crsym + ' D1=' + (historyData[crsym]['1day']||[]).length +
+                  ' H4=' + (historyData[crsym]['4h']||[]).length);
+      done++;
+      bt.progress = Math.round(done / totalSymbols * 50);
+      await new Promise(function(r) { setTimeout(r, 1000); });
+    }
+
     bt.status = 'simulating';
     bt.message = 'Simulazione strategie in corso...';
 
-    // Esegui simulazioni (ORB + PA + STOCKS, MTF rimosso definitivamente)
+    // Esegui simulazioni (ORB + PA + STOCKS + CRYPTO)
     var results = {
-      clean: { ORB: {}, PA: {}, STOCKS: {} },
-      costs: { ORB: {}, PA: {}, STOCKS: {} }
+      clean: { ORB: {}, PA: {}, STOCKS: {}, CRYPTO: {} },
+      costs: { ORB: {}, PA: {}, STOCKS: {}, CRYPTO: {} }
     };
 
     var simStep = 0;
-    var totalSims = paSymbols.length * 2 + orbSymbols.length * 2 + stocksSymbols.length * 2;
+    var totalSims = paSymbols.length * 2 + orbSymbols.length * 2 +
+                    stocksSymbols.length * 2 + cryptoSymbols.length * 2;
 
     // ORB
     for (var oi = 0; oi < orbSymbols.length; oi++) {
@@ -3488,6 +3629,26 @@ async function btRun() {
       if (global.gc) global.gc();
     }
 
+    // CRYPTO Bot dedicato (D1+H4 con adattamenti crypto-specifici)
+    // Spreads crypto su Capital.com (approssimativi):
+    //   BTCUSD ~50 pip su 50000 = 0.1%, ETHUSD ~5 pip su 3000 = 0.17%, SOLUSD ~0.5 pip = 0.5%
+    var CRYPTO_SPREADS = { BTCUSD: 50, ETHUSD: 5, SOLUSD: 0.5 };
+    for (var ci = 0; ci < cryptoSymbols.length; ci++) {
+      var crs = cryptoSymbols[ci];
+      var hcd = historyData[crs];
+      if (!hcd || !hcd['1day'] || !hcd['4h']) continue;
+      bt.message = 'Simulazione CRYPTO ' + crs + '...';
+      var crspread = CRYPTO_SPREADS[crs] || 10;
+      results.clean.CRYPTO[crs] = btSimulateCrypto(crs, hcd['1day'], hcd['4h'], 0);
+      results.costs.CRYPTO[crs] = btSimulateCrypto(crs, hcd['1day'], hcd['4h'], crspread);
+      console.log('[BT CRYPTO] ' + crs + ': clean=' + results.clean.CRYPTO[crs].length +
+                  ' costs=' + results.costs.CRYPTO[crs].length);
+      simStep += 2;
+      bt.progress = 50 + Math.round(simStep / totalSims * 50);
+      await new Promise(function(r) { setTimeout(r, 100); });
+      if (global.gc) global.gc();
+    }
+
     // Aggrega metriche
     var summary = {
       generated: new Date().toISOString(),
@@ -3497,7 +3658,7 @@ async function btRun() {
       total: {}
     };
 
-    var allBots = ['ORB', 'PA', 'STOCKS'];
+    var allBots = ['ORB', 'PA', 'STOCKS', 'CRYPTO'];
     var allClean = [], allCosts = [];
 
     allBots.forEach(function(b) {
@@ -3546,7 +3707,8 @@ async function btRun() {
     var orbVerdict = classifyBot('ORB', summary.perBot && summary.perBot.ORB && summary.perBot.ORB.costs);
     var paVerdict  = classifyBot('PA',  summary.perBot && summary.perBot.PA  && summary.perBot.PA.costs);
     var stkVerdict = classifyBot('STOCKS', summary.perBot && summary.perBot.STOCKS && summary.perBot.STOCKS.costs);
-    var bots = [orbVerdict, paVerdict, stkVerdict].filter(function(v){ return v !== null; });
+    var crpVerdict = classifyBot('CRYPTO', summary.perBot && summary.perBot.CRYPTO && summary.perBot.CRYPTO.costs);
+    var bots = [orbVerdict, paVerdict, stkVerdict, crpVerdict].filter(function(v){ return v !== null; });
 
     // Verdict aggregato basato sulla combinazione dei bot, non solo PF aggregato
     var verdict = '';
