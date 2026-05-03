@@ -1504,6 +1504,561 @@ app.post('/api/pa-stop', async function(req, res) {
   await tgSend('PA Bot D1 fermato');
   res.json({ ok: true });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██████████████████████████████████████████████████████████████████████████████
+// CRYPTO BOT v2 -- EMA20/50 Crossover H4 + ADX filter
+// ██████████████████████████████████████████████████████████████████████████████
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// Backtest 5 anni, 54 trade: PF clean 1.72 / costi 1.62, WR 40.7%, +20.7R.
+// Per simbolo: SOLUSD PF 1.99 (26 trade), ETHUSD PF 1.36 (22 trade), BTCUSD PF 1.22 (6).
+//
+// Strategia:
+//   1. Cross EMA20/50 H4 (UP=long, DOWN=short)
+//   2. ADX H4 > 22 (filtra ranging)
+//   3. Volume H4 > media 20 bar (skip se vol assente OK)
+//   4. D1 trend filter: long solo se close D1 > EMA50 D1 (e viceversa)
+//   5. Entry: chiusura H4 sul cross con tutte condizioni
+//   6. SL: 1.5 x ATR H4, TP: R:R 2.5
+//   7. Cooldown: 12 barre H4 (2 giorni) tra segnali stesso simbolo
+// ══════════════════════════════════════════════════════════════════════════════
+
+var CRYPTO_COOLDOWN_BARS_H4 = 12;
+var CRYPTO_REFRESH_SEC = parseInt(process.env.CRYPTO_REFRESH_SEC) || 300;  // check ogni 5 minuti
+var cryptoState = {};
+var cryptoRunning = false;
+var cryptoTimer = null;
+var lastCryptoLoopTime = 0;
+
+function initCrypto(s) {
+  cryptoState[s] = {
+    candlesD1: [],
+    candlesH4: [],
+    lastDir: null,
+    lastSignalTime: 0,
+    lastSignalH4Idx: -100,
+    stats: { total: 0, buys: 0, sells: 0, lastSignal: '--', lastReason: '--', lastCheck: 0 }
+  };
+}
+CRYPTO_SYMBOLS.forEach(initCrypto);
+
+async function fetchCryptoH4(sym) {
+  var st = cryptoState[sym];
+  if (!st) return;
+  // Prova TD prima (Grow plan supporta crypto), fallback Yahoo
+  var data = null;
+  if (TD_KEY) {
+    try {
+      data = await btFetchHistory(sym, '4h');
+    } catch(e) { console.error('[CRYPTO] TD H4 ' + sym + ': ' + e.message); }
+  }
+  if (!data || !data.length) {
+    data = await btFetchYahooHistory(sym, '4h');
+  }
+  if (data && data.length) {
+    st.candlesH4 = data;
+  }
+}
+
+async function fetchCryptoD1(sym) {
+  var st = cryptoState[sym];
+  if (!st) return;
+  var data = null;
+  if (TD_KEY) {
+    try {
+      data = await btFetchHistory(sym, '1day');
+    } catch(e) { console.error('[CRYPTO] TD D1 ' + sym + ': ' + e.message); }
+  }
+  if (!data || !data.length) {
+    data = await btFetchYahooHistory(sym, '1day');
+  }
+  if (data && data.length) {
+    st.candlesD1 = data;
+  }
+}
+
+async function checkCryptoSignal(sym) {
+  try {
+    var st = cryptoState[sym];
+    if (!st || !cryptoRunning) return;
+    st.stats.lastCheck = Date.now();
+
+    if (!st.candlesH4 || st.candlesH4.length < 100 ||
+        !st.candlesD1 || st.candlesD1.length < 60) {
+      st.stats.lastReason = 'Dati insufficienti';
+      return;
+    }
+
+    var c4 = st.candlesH4;
+    var c1 = st.candlesD1;
+    var i = c4.length - 1;  // ultima barra H4 chiusa
+    if (i - st.lastSignalH4Idx < CRYPTO_COOLDOWN_BARS_H4) {
+      st.stats.lastReason = 'Cooldown';
+      return;
+    }
+
+    // Indicatori H4
+    var h4E20 = calcEMASeries(c4, 20);
+    var h4E50 = calcEMASeries(c4, 50);
+    var h4Atr = calcATRSeries(c4, 14);
+    var h4Adx = calcADXSeries(c4, 14);
+
+    var e20 = h4E20[i], e50 = h4E50[i];
+    var e20Prev = h4E20[i-1], e50Prev = h4E50[i-1];
+    if (isNaN(e20) || isNaN(e50) || isNaN(e20Prev) || isNaN(e50Prev)) {
+      st.stats.lastReason = 'Indicatori non pronti';
+      return;
+    }
+
+    // Cross detection
+    var crossUp = e20Prev <= e50Prev && e20 > e50;
+    var crossDown = e20Prev >= e50Prev && e20 < e50;
+    if (!crossUp && !crossDown) {
+      st.stats.lastReason = 'Nessun cross EMA20/50';
+      return;
+    }
+    var dir = crossUp ? 'BUY' : 'SELL';
+
+    // ADX filter
+    var adx = h4Adx[i];
+    if (isNaN(adx) || adx < 22) {
+      st.stats.lastReason = 'ADX H4 = ' + (isNaN(adx) ? 'NaN' : adx.toFixed(1)) + ' (< 22)';
+      return;
+    }
+
+    // Volume filter
+    if (c4[i].vol > 0) {
+      var volSum = 0, volCount = 0;
+      for (var v = Math.max(0, i - 20); v < i; v++) {
+        if (c4[v].vol > 0) { volSum += c4[v].vol; volCount++; }
+      }
+      var volAvg = volCount > 0 ? volSum / volCount : 0;
+      if (volAvg > 0 && c4[i].vol < volAvg) {
+        st.stats.lastReason = 'Volume sotto media';
+        return;
+      }
+    }
+
+    // D1 trend filter
+    var d1E50 = calcEMASeries(c1, 50);
+    var d1Idx = c1.length - 1;
+    var d1Close = c1[d1Idx].close;
+    var d1Ema = d1E50[d1Idx];
+    if (isNaN(d1Ema)) {
+      st.stats.lastReason = 'D1 EMA50 non pronta';
+      return;
+    }
+    if (dir === 'BUY' && d1Close <= d1Ema) {
+      st.stats.lastReason = 'D1 trend contro (close <= EMA50)';
+      return;
+    }
+    if (dir === 'SELL' && d1Close >= d1Ema) {
+      st.stats.lastReason = 'D1 trend contro (close >= EMA50)';
+      return;
+    }
+
+    // ATR per SL
+    var atr = h4Atr[i];
+    if (isNaN(atr) || atr <= 0) {
+      st.stats.lastReason = 'ATR non valido';
+      return;
+    }
+
+    // ENTRY
+    var entry = c4[i].close;
+    var sl = dir === 'BUY' ? entry - 1.5 * atr : entry + 1.5 * atr;
+    var slDist = Math.abs(entry - sl);
+    var tp = dir === 'BUY' ? entry + slDist * 2.5 : entry - slDist * 2.5;
+
+    // Decimali display
+    var dec = entry > 1000 ? 2 : entry > 10 ? 3 : 4;
+
+    // Lot size suggerito (0.5% risk default per crypto - sample piccolo)
+    var riskGBP = parseFloat(process.env.CRYPTO_RISK_GBP) || 2.5;
+    var lotSize = (riskGBP / slDist).toFixed(4);
+
+    var msg = '<b>[CRYPTO-EA] ' + dir + ' ' + sym + '</b>\n' +
+              '<i>EMA20/50 H4 cross + ADX ' + adx.toFixed(1) + '</i>\n\n' +
+              'Entry: <b>' + entry.toFixed(dec) + '</b>\n' +
+              'SL: ' + sl.toFixed(dec) + '\n' +
+              'TP: ' + tp.toFixed(dec) + ' (R:R 2.5)\n\n' +
+              'Lot suggerito (rischio £' + riskGBP + '): <b>' + lotSize + '</b>\n' +
+              '<i>Cooldown: 2 giorni</i>';
+
+    await tgSend(msg);
+
+    st.lastDir = dir;
+    st.lastSignalTime = Date.now();
+    st.lastSignalH4Idx = i;
+    st.stats.total++;
+    if (dir === 'BUY') st.stats.buys++; else st.stats.sells++;
+    st.stats.lastSignal = dir + ' @ ' + entry.toFixed(dec) + ' (' + new Date().toISOString().slice(11,16) + ')';
+    st.stats.lastReason = 'SEGNALE INVIATO';
+
+    globalLog.unshift({
+      ts: Date.now(), source: 'CRYPTO', symbol: sym, dir: dir,
+      entry: entry, sl: sl, tp: tp, reason: 'EMA20/50 cross + ADX'
+    });
+    if (globalLog.length > 200) globalLog.pop();
+
+  } catch(e) {
+    console.error('[CRYPTO] checkCryptoSignal ' + sym + ': ' + e.message);
+  }
+}
+
+async function cryptoTick() {
+  if (!cryptoRunning) return;
+  lastCryptoLoopTime = Date.now();
+  for (var i = 0; i < CRYPTO_SYMBOLS.length; i++) {
+    var sym = CRYPTO_SYMBOLS[i];
+    try {
+      await fetchCryptoH4(sym);
+      await fetchCryptoD1(sym);
+      await checkCryptoSignal(sym);
+      // Rate limit safety: 4.5s tra simboli
+      if (i < CRYPTO_SYMBOLS.length - 1) {
+        await new Promise(function(r) { setTimeout(r, 4500); });
+      }
+    } catch(e) {
+      console.error('[CRYPTO] tick ' + sym + ': ' + e.message);
+    }
+  }
+  console.log('[CRYPTO] Loop completato @ ' + new Date().toISOString().slice(11,19));
+}
+
+function startCryptoLoop() {
+  if (cryptoTimer) clearInterval(cryptoTimer);
+  cryptoTick();  // primo tick subito
+  cryptoTimer = setInterval(cryptoTick, CRYPTO_REFRESH_SEC * 1000);
+}
+
+app.get('/api/crypto-status', function(req, res) {
+  var cs = {};
+  for (var i = 0; i < CRYPTO_SYMBOLS.length; i++) {
+    var st = cryptoState[CRYPTO_SYMBOLS[i]];
+    if (st) {
+      cs[CRYPTO_SYMBOLS[i]] = {
+        stats: st.stats,
+        candlesD1Count: st.candlesD1.length,
+        candlesH4Count: st.candlesH4.length,
+        lastPrice: st.candlesH4.length ? st.candlesH4[st.candlesH4.length-1].close : 0
+      };
+    }
+  }
+  res.json({
+    cryptoRunning: cryptoRunning,
+    cryptoSymbols: CRYPTO_SYMBOLS,
+    cooldownBarsH4: CRYPTO_COOLDOWN_BARS_H4,
+    refreshSec: CRYPTO_REFRESH_SEC,
+    lastLoopTime: lastCryptoLoopTime,
+    state: cs,
+    cryptoLog: globalLog.filter(function(l){ return l.source === 'CRYPTO'; }).slice(0, 20)
+  });
+});
+
+app.post('/api/crypto-start', async function(req, res) {
+  cryptoRunning = true;
+  startCryptoLoop();
+  await tgSend('<b>Crypto Bot v2 avviato</b>\nSimboli: ' + CRYPTO_SYMBOLS.join(', ') + '\nStrategy: EMA20/50 cross H4 + ADX 22');
+  res.json({ ok: true, message: 'Crypto Bot avviato su ' + CRYPTO_SYMBOLS.join(', ') });
+});
+
+app.post('/api/crypto-stop', async function(req, res) {
+  cryptoRunning = false;
+  if (cryptoTimer) clearInterval(cryptoTimer);
+  await tgSend('Crypto Bot v2 fermato');
+  res.json({ ok: true });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██████████████████████████████████████████████████████████████████████████████
+// MTF BOT v2 -- Trend Continuation Sincrono D1+H1+M15
+// ██████████████████████████████████████████████████████████████████████████████
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// Backtest 5 anni, 30 trade: PF clean 1.16 / costi 1.02, marginal aggregato.
+// Per simbolo (filtrato): EURUSD 17 trade PF 1.23, GBPUSD 7 trade PF 2.34.
+// (BTCUSD e GBPJPY rimossi dal backtest perche' perdenti in entrambi i casi.)
+//
+// Strategia (replica btSimulateMTF):
+//   1. D1 ADX > 20 E ADX in salita 3 giorni
+//   2. D1 RSI > 55 (long) o < 45 (short)
+//   3. H1 ADX > 20 E EMA20/50 alignment
+//   4. M15 close > EMA20 E continuation green/red
+//   5. Entry: chiusura M15 con tutte condizioni
+//   6. SL: 1.5 x ATR M15, TP: R:R 2.0
+//   7. Cooldown: 4 ore tra trade, max 3/giorno per simbolo
+// ══════════════════════════════════════════════════════════════════════════════
+
+var MTF2_SYMBOLS = (process.env.MTF2_SYMBOLS ||
+  'EURUSD,GBPUSD').split(',').map(function(s){ return s.trim(); }).filter(function(s){ return s.length; });
+var MTF2_COOLDOWN_HOURS = 4;
+var MTF2_MAX_DAILY = 3;
+var MTF2_REFRESH_SEC = parseInt(process.env.MTF2_REFRESH_SEC) || 300;
+var MTF2_AUTOSTART = process.env.MTF2_AUTOSTART === 'true';
+var mtf2State = {};
+var mtf2Running = false;
+var mtf2Timer = null;
+var lastMtf2LoopTime = 0;
+
+function initMtf2(s) {
+  mtf2State[s] = {
+    candles15: [],
+    candlesH1: [],
+    candlesD1: [],
+    lastDir: null,
+    lastSignalTime: 0,
+    dailyCount: {},
+    stats: { total: 0, buys: 0, sells: 0, lastSignal: '--', lastReason: '--', lastCheck: 0 }
+  };
+}
+MTF2_SYMBOLS.forEach(initMtf2);
+
+async function fetchMtf2Tf(sym, interval, target) {
+  var st = mtf2State[sym];
+  if (!st) return;
+  var data = null;
+  if (TD_KEY) {
+    try {
+      // Per M15 prova Large, per H1/D1 standard
+      if (interval === '15min') {
+        data = await btFetchHistoryLarge(sym, interval);
+      } else {
+        data = await btFetchHistory(sym, interval);
+      }
+    } catch(e) { console.error('[MTF2] TD ' + interval + ' ' + sym + ': ' + e.message); }
+  }
+  if (!data || !data.length) {
+    data = await btFetchYahooHistory(sym, interval);
+  }
+  if (data && data.length) {
+    st[target] = data;
+  }
+}
+
+async function checkMtf2Signal(sym) {
+  try {
+    var st = mtf2State[sym];
+    if (!st || !mtf2Running) return;
+    st.stats.lastCheck = Date.now();
+
+    if (!st.candles15 || st.candles15.length < 100 ||
+        !st.candlesH1 || st.candlesH1.length < 50 ||
+        !st.candlesD1 || st.candlesD1.length < 50) {
+      st.stats.lastReason = 'Dati insufficienti';
+      return;
+    }
+
+    // Cooldown 4h
+    if (Date.now() - st.lastSignalTime < MTF2_COOLDOWN_HOURS * 60 * 60 * 1000) {
+      st.stats.lastReason = 'Cooldown 4h';
+      return;
+    }
+
+    // Daily cap
+    var dateKey = new Date().toISOString().slice(0, 10);
+    if ((st.dailyCount[dateKey] || 0) >= MTF2_MAX_DAILY) {
+      st.stats.lastReason = 'Cap giornaliero raggiunto (' + MTF2_MAX_DAILY + ')';
+      return;
+    }
+
+    var c15 = st.candles15;
+    var c1h = st.candlesH1;
+    var c1d = st.candlesD1;
+    var i = c15.length - 1;  // ultima M15
+    var d1Idx = c1d.length - 1;
+    var h1Idx = c1h.length - 1;
+
+    // Indicatori
+    var d1Adx = calcADXSeries(c1d, 14);
+    var d1Rsi = calcRSISeries(c1d, 14);
+    var h1Adx = calcADXSeries(c1h, 14);
+    var h1Ema20 = calcEMASeries(c1h, 20);
+    var h1Ema50 = calcEMASeries(c1h, 50);
+    var m15Ema20 = calcEMASeries(c15, 20);
+    var m15Atr = calcATRSeries(c15, 14);
+
+    // Filtro 1: D1 ADX > 20 e in salita 3 giorni
+    var adxD1Now = d1Adx[d1Idx];
+    if (isNaN(adxD1Now) || adxD1Now < 20) {
+      st.stats.lastReason = 'D1 ADX = ' + (isNaN(adxD1Now) ? 'NaN' : adxD1Now.toFixed(1)) + ' (< 20)';
+      return;
+    }
+    if (d1Idx < 3) { st.stats.lastReason = 'D1 storico breve'; return; }
+    var adxD1_3 = d1Adx[d1Idx - 3];
+    if (isNaN(adxD1_3) || adxD1Now <= adxD1_3) {
+      st.stats.lastReason = 'D1 ADX non in salita';
+      return;
+    }
+
+    // Filtro 2: D1 RSI direzionale
+    var rsiD1 = d1Rsi[d1Idx];
+    var bias = rsiD1 > 55 ? 'BUY' : (rsiD1 < 45 ? 'SELL' : null);
+    if (!bias) {
+      st.stats.lastReason = 'D1 RSI = ' + rsiD1.toFixed(1) + ' (zona neutra)';
+      return;
+    }
+
+    // Filtro 3: H1 ADX > 20
+    var adxH1 = h1Adx[h1Idx];
+    if (isNaN(adxH1) || adxH1 < 20) {
+      st.stats.lastReason = 'H1 ADX = ' + (isNaN(adxH1) ? 'NaN' : adxH1.toFixed(1)) + ' (< 20)';
+      return;
+    }
+
+    // Filtro 4: H1 EMA alignment
+    var h1E20 = h1Ema20[h1Idx];
+    var h1E50 = h1Ema50[h1Idx];
+    if (isNaN(h1E20) || isNaN(h1E50)) {
+      st.stats.lastReason = 'H1 EMA non pronte';
+      return;
+    }
+    if (bias === 'BUY' && h1E20 <= h1E50) {
+      st.stats.lastReason = 'H1 EMA20 sotto EMA50 (vs BUY)';
+      return;
+    }
+    if (bias === 'SELL' && h1E20 >= h1E50) {
+      st.stats.lastReason = 'H1 EMA20 sopra EMA50 (vs SELL)';
+      return;
+    }
+
+    // Filtro 5: M15 trend
+    var m15E20 = m15Ema20[i];
+    var atr = m15Atr[i];
+    if (isNaN(m15E20) || isNaN(atr)) {
+      st.stats.lastReason = 'M15 indicatori non pronti';
+      return;
+    }
+    var bar = c15[i];
+    if (bias === 'BUY' && bar.close <= m15E20) {
+      st.stats.lastReason = 'M15 close sotto EMA20';
+      return;
+    }
+    if (bias === 'SELL' && bar.close >= m15E20) {
+      st.stats.lastReason = 'M15 close sopra EMA20';
+      return;
+    }
+
+    // Filtro 6: M15 continuation
+    if (bias === 'BUY' && bar.close <= bar.open) {
+      st.stats.lastReason = 'M15 candela rossa (vs BUY)';
+      return;
+    }
+    if (bias === 'SELL' && bar.close >= bar.open) {
+      st.stats.lastReason = 'M15 candela verde (vs SELL)';
+      return;
+    }
+
+    // ENTRY
+    var entry = bar.close;
+    var sl = bias === 'BUY' ? entry - 1.5 * atr : entry + 1.5 * atr;
+    var slDist = Math.abs(entry - sl);
+    var tp = bias === 'BUY' ? entry + slDist * 2.0 : entry - slDist * 2.0;
+
+    var dec = entry > 1000 ? 2 : entry > 10 ? 3 : 5;
+
+    var riskGBP = parseFloat(process.env.MTF2_RISK_GBP) || 2.5;
+    var lotSize = (riskGBP / slDist).toFixed(4);
+
+    var msg = '<b>[MTF-EA] ' + bias + ' ' + sym + '</b>\n' +
+              '<i>Trend Continuation D1+H1+M15</i>\n\n' +
+              'Entry: <b>' + entry.toFixed(dec) + '</b>\n' +
+              'SL: ' + sl.toFixed(dec) + '\n' +
+              'TP: ' + tp.toFixed(dec) + ' (R:R 2.0)\n\n' +
+              'D1 ADX: ' + adxD1Now.toFixed(1) + ' rising | RSI: ' + rsiD1.toFixed(1) + '\n' +
+              'H1 ADX: ' + adxH1.toFixed(1) + ' | EMA aligned\n\n' +
+              'Lot suggerito (rischio £' + riskGBP + '): <b>' + lotSize + '</b>\n' +
+              '<i>Cooldown: 4h, Max 3/giorno</i>';
+
+    await tgSend(msg);
+
+    st.lastDir = bias;
+    st.lastSignalTime = Date.now();
+    st.dailyCount[dateKey] = (st.dailyCount[dateKey] || 0) + 1;
+    st.stats.total++;
+    if (bias === 'BUY') st.stats.buys++; else st.stats.sells++;
+    st.stats.lastSignal = bias + ' @ ' + entry.toFixed(dec) + ' (' + new Date().toISOString().slice(11,16) + ')';
+    st.stats.lastReason = 'SEGNALE INVIATO';
+
+    globalLog.unshift({
+      ts: Date.now(), source: 'MTF2', symbol: sym, dir: bias,
+      entry: entry, sl: sl, tp: tp, reason: 'D1+H1+M15 sync'
+    });
+    if (globalLog.length > 200) globalLog.pop();
+
+  } catch(e) {
+    console.error('[MTF2] checkMtf2Signal ' + sym + ': ' + e.message);
+  }
+}
+
+async function mtf2Tick() {
+  if (!mtf2Running) return;
+  lastMtf2LoopTime = Date.now();
+  for (var i = 0; i < MTF2_SYMBOLS.length; i++) {
+    var sym = MTF2_SYMBOLS[i];
+    try {
+      // Fetch tutti e 3 i timeframe
+      await fetchMtf2Tf(sym, '15min', 'candles15');
+      await new Promise(function(r) { setTimeout(r, 4500); });
+      await fetchMtf2Tf(sym, '1h', 'candlesH1');
+      await new Promise(function(r) { setTimeout(r, 4500); });
+      await fetchMtf2Tf(sym, '1day', 'candlesD1');
+      await new Promise(function(r) { setTimeout(r, 4500); });
+      await checkMtf2Signal(sym);
+    } catch(e) {
+      console.error('[MTF2] tick ' + sym + ': ' + e.message);
+    }
+  }
+  console.log('[MTF2] Loop completato @ ' + new Date().toISOString().slice(11,19));
+}
+
+function startMtf2Loop() {
+  if (mtf2Timer) clearInterval(mtf2Timer);
+  mtf2Tick();
+  mtf2Timer = setInterval(mtf2Tick, MTF2_REFRESH_SEC * 1000);
+}
+
+app.get('/api/mtf2-status', function(req, res) {
+  var ms = {};
+  for (var i = 0; i < MTF2_SYMBOLS.length; i++) {
+    var st = mtf2State[MTF2_SYMBOLS[i]];
+    if (st) {
+      ms[MTF2_SYMBOLS[i]] = {
+        stats: st.stats,
+        candles15Count: st.candles15.length,
+        candlesH1Count: st.candlesH1.length,
+        candlesD1Count: st.candlesD1.length,
+        lastPrice: st.candles15.length ? st.candles15[st.candles15.length-1].close : 0
+      };
+    }
+  }
+  res.json({
+    mtf2Running: mtf2Running,
+    mtf2Symbols: MTF2_SYMBOLS,
+    cooldownHours: MTF2_COOLDOWN_HOURS,
+    maxDaily: MTF2_MAX_DAILY,
+    refreshSec: MTF2_REFRESH_SEC,
+    lastLoopTime: lastMtf2LoopTime,
+    state: ms,
+    mtf2Log: globalLog.filter(function(l){ return l.source === 'MTF2'; }).slice(0, 20)
+  });
+});
+
+app.post('/api/mtf2-start', async function(req, res) {
+  mtf2Running = true;
+  startMtf2Loop();
+  await tgSend('<b>MTF Bot v2 avviato</b>\nSimboli: ' + MTF2_SYMBOLS.join(', ') + '\nStrategy: D1+H1+M15 trend continuation');
+  res.json({ ok: true, message: 'MTF Bot v2 avviato su ' + MTF2_SYMBOLS.join(', ') });
+});
+
+app.post('/api/mtf2-stop', async function(req, res) {
+  mtf2Running = false;
+  if (mtf2Timer) clearInterval(mtf2Timer);
+  await tgSend('MTF Bot v2 fermato');
+  res.json({ ok: true });
+});
+
 // ══════════════════════════════════════════════════════════════════════════════
 // ██████████████████████████████████████████████████████████████████████████████
 // ORB BOT -- Opening Range Breakout su indici
@@ -4217,10 +4772,53 @@ app.listen(PORT, function() {
     startStocksLoop();
     console.log('STOCKS Bot auto-started');
 
+    // 5. CRYPTO bot v2 (se CRYPTO_AUTOSTART=true) — fetch H4+D1 per BTC/ETH/SOL
+    if (CRYPTO_AUTOSTART) {
+      console.log('Auto-starting CRYPTO Bot v2 on: ' + CRYPTO_SYMBOLS.join(', '));
+      cryptoRunning = true;
+      for (var cy = 0; cy < CRYPTO_SYMBOLS.length; cy++) {
+        try {
+          await fetchCryptoH4(CRYPTO_SYMBOLS[cy]);
+          await fetchCryptoD1(CRYPTO_SYMBOLS[cy]);
+        } catch(e) {
+          console.error('CRYPTO init ' + CRYPTO_SYMBOLS[cy] + ': ' + e.message);
+        }
+        await new Promise(function(r) { setTimeout(r, 4500); });
+      }
+      startCryptoLoop();
+      console.log('CRYPTO Bot v2 auto-started');
+    } else {
+      console.log('CRYPTO Bot NOT auto-started (set CRYPTO_AUTOSTART=true to enable)');
+    }
+
+    // 6. MTF bot v2 (se MTF2_AUTOSTART=true) — fetch M15+H1+D1 per EUR/GBP
+    if (MTF2_AUTOSTART) {
+      console.log('Auto-starting MTF Bot v2 on: ' + MTF2_SYMBOLS.join(', '));
+      mtf2Running = true;
+      for (var mf = 0; mf < MTF2_SYMBOLS.length; mf++) {
+        try {
+          await fetchMtf2Tf(MTF2_SYMBOLS[mf], '15min', 'candles15');
+          await new Promise(function(r) { setTimeout(r, 4500); });
+          await fetchMtf2Tf(MTF2_SYMBOLS[mf], '1h', 'candlesH1');
+          await new Promise(function(r) { setTimeout(r, 4500); });
+          await fetchMtf2Tf(MTF2_SYMBOLS[mf], '1day', 'candlesD1');
+          await new Promise(function(r) { setTimeout(r, 4500); });
+        } catch(e) {
+          console.error('MTF2 init ' + MTF2_SYMBOLS[mf] + ': ' + e.message);
+        }
+      }
+      startMtf2Loop();
+      console.log('MTF Bot v2 auto-started');
+    } else {
+      console.log('MTF Bot v2 NOT auto-started (set MTF2_AUTOSTART=true to enable)');
+    }
+
     await tgSend('<b>ST-EA Online</b>' +
                  '\n<b>Trend M15:</b> ' + activeSymbols.join(', ') +
                  '\n<b>PA D1:</b> ' + PA_SYMBOLS.join(', ') +
                  '\n<b>ORB:</b> ' + ORB_SYMBOLS.join(', ') +
-                 '\n<b>STOCKS W1:</b> ' + STOCKS_SYMBOLS.join(', '));
+                 '\n<b>STOCKS W1:</b> ' + STOCKS_SYMBOLS.join(', ') +
+                 (CRYPTO_AUTOSTART ? '\n<b>CRYPTO H4:</b> ' + CRYPTO_SYMBOLS.join(', ') : '') +
+                 (MTF2_AUTOSTART ? '\n<b>MTF v2:</b> ' + MTF2_SYMBOLS.join(', ') : ''));
   }, 5000);
 });
