@@ -1573,16 +1573,18 @@ var ORB_REFRESH_SEC = parseInt(process.env.ORB_REFRESH_SEC) || 300;
 //   - Override: ORB_RISK_PCT=2.0 (aggressivo) o 1.0 (conservativo)
 var ORB_RISK_PCT = parseFloat(process.env.ORB_RISK_PCT) || 1.5;
 
-// ─── Crypto Bot config (DA VALIDARE: bot dedicato 24/7 BTC/ETH/SOL) ───
-// Logica: replica PA D1+H4 con adattamenti crypto-specifici.
-// - R:R 2.0 invece di 2.5 (crypto vola velocemente)
-// - Filtro weekend liquidity (skip alert weekend se volume basso)
-// - Cooldown 3 giorni vs 5 PA standard
-// Status: deve essere validato in backtest. Default disabilitato.
+// ─── Crypto Bot config — DISABILITATO dopo backtest definitivo ───
+// Risultato backtest 5y: PF 0.81 con costi su 249 trade, -32R aggregato.
+//   ETHUSD PF 0.89, BTCUSD PF 0.89, SOLUSD PF 0.66 — tutti perdenti.
+// Il PA generico copre gia' BTCUSD con PF 1.10 (logica migliore: cooldown 5g, R:R 2.5).
+// I pattern candlestick D1 NON hanno edge su crypto — strategia da rivedere se mai vorrai testarla.
+// Per riabilitare nel backtest: BACKTEST_CRYPTO=true
+// Per riabilitare in live (sconsigliato): CRYPTO_AUTOSTART=true
 var CRYPTO_SYMBOLS = (process.env.CRYPTO_SYMBOLS ||
   'BTCUSD,ETHUSD,SOLUSD').split(',').map(function(s){ return s.trim(); }).filter(function(s){ return s.length; });
 var CRYPTO_RISK_PCT = parseFloat(process.env.CRYPTO_RISK_PCT) || 1.0;
 var CRYPTO_AUTOSTART = process.env.CRYPTO_AUTOSTART === 'true';  // default OFF
+var BACKTEST_CRYPTO = process.env.BACKTEST_CRYPTO === 'true';     // default OFF (non incluso nel verdict)
 
 var orbState = {};
 var orbRunning = false;
@@ -3186,112 +3188,6 @@ function btSimulatePA(symbol, candlesD1, candlesH4, spread) {
 
 // ─── Backtest Bot 3: Stocks W1 (momentum + pullback) ──────────────────────────
 // Replica esatta della logica live in checkStocksSignal()
-// ─── Backtest Bot 4: Crypto Bot dedicato (BTCUSD/ETHUSD/SOLUSD D1+H4 24/7) ───
-// Differenze vs btSimulatePA generico:
-//   - Spread crypto-specifici (pi\u00f9 alti del forex)
-//   - R:R ridotto a 2.0 (crypto vola velocemente, prendi profitti prima)
-//   - Filtro weekend liquidity: skip se vol < media 7 giorni
-//   - Cooldown ridotto a 3 giorni (vs 5 PA standard) per catturare trend rapidi crypto
-function btSimulateCrypto(symbol, candlesD1, candlesH4, spread) {
-  if (!candlesD1 || candlesD1.length < 60 || !candlesH4 || candlesH4.length < 30) return [];
-
-  var d1E50Arr = calcEMASeries(candlesD1, 50);
-  var h4E50Arr = calcEMASeries(candlesH4, 50);
-
-  var trades = [];
-  var lastSigIdx = -100;
-
-  // ─── COUNTER DIAGNOSTICI ───
-  var diag = {
-    bars: 0, cooldown: 0, noPattern: 0,
-    h4Insufficient: 0, lowScore: 0, lowVolWeekend: 0, slZero: 0, passed: 0
-  };
-
-  for (var k = 50; k < candlesD1.length - 1; k++) {
-    diag.bars++;
-    if (k - lastSigIdx < 3) { diag.cooldown++; continue; }  // cooldown 3 giorni vs 5 PA
-
-    var pat = btDetectPADayPattern(candlesD1, k);
-    if (!pat.dir) { diag.noPattern++; continue; }
-
-    var d1Bull = candlesD1[k].close > d1E50Arr[k];
-    var h4Idx = btFindHtfIdx(candlesH4, candlesD1[k].time);
-    if (h4Idx < 50) { diag.h4Insufficient++; continue; }
-    var h4Bull = candlesH4[h4Idx].close > h4E50Arr[h4Idx];
-
-    var trendBull = d1Bull && h4Bull;
-    var trendBear = !d1Bull && !h4Bull;
-    var finalScore = pat.dir === 'BUY' ?
-      pat.score + (trendBull ? 1 : (trendBear ? -1 : 0)) :
-      pat.score + (trendBear ? 1 : (trendBull ? -1 : 0));
-    if (finalScore < 3) { diag.lowScore++; continue; }
-
-    // Filtro weekend liquidity: se sabato/domenica, richiede volume sopra media 7g
-    var dayOfWeek = new Date(candlesD1[k].time).getUTCDay(); // 0=dom, 6=sab
-    var isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-    if (isWeekend && candlesD1[k].vol > 0) {
-      var volSum = 0, volCount = 0;
-      for (var v = Math.max(0, k - 7); v < k; v++) {
-        if (candlesD1[v].vol > 0) { volSum += candlesD1[v].vol; volCount++; }
-      }
-      var volAvg = volCount > 0 ? volSum / volCount : 0;
-      if (volAvg > 0 && candlesD1[k].vol < volAvg * 0.7) {
-        diag.lowVolWeekend++; continue; // weekend a bassa liquidit\u00e0 = skip
-      }
-    }
-
-    var entry = candlesD1[k+1].open + (pat.dir === 'BUY' ? spread / 2 : -spread / 2);
-    var sl = pat.dir === 'BUY' ?
-      Math.min(candlesD1[k].low, candlesD1[k-1].low) :
-      Math.max(candlesD1[k].high, candlesD1[k-1].high);
-    var slDist = Math.abs(entry - sl);
-    if (slDist <= 0) { diag.slZero++; continue; }
-    var tp = pat.dir === 'BUY' ? entry + slDist * 2.0 : entry - slDist * 2.0;  // R:R 2.0 vs 2.5 PA
-
-    var endIdx = Math.min(k + 1 + 30, candlesD1.length - 1);
-    var exitInfo = null;
-    for (var x = k + 1; x <= endIdx; x++) {
-      var bar = candlesD1[x];
-      if (pat.dir === 'BUY') {
-        if (bar.low <= sl) { exitInfo = { idx: x, p: sl, r: 'SL' }; break; }
-        if (bar.high >= tp) { exitInfo = { idx: x, p: tp, r: 'TP' }; break; }
-      } else {
-        if (bar.high >= sl) { exitInfo = { idx: x, p: sl, r: 'SL' }; break; }
-        if (bar.low <= tp) { exitInfo = { idx: x, p: tp, r: 'TP' }; break; }
-      }
-    }
-    if (!exitInfo) {
-      exitInfo = { idx: endIdx, p: candlesD1[endIdx].close, r: 'TIMEOUT' };
-    }
-    var exitPrice = exitInfo.p + (pat.dir === 'BUY' ? -spread / 2 : spread / 2);
-    var pnl = pat.dir === 'BUY' ? (exitPrice - entry) : (entry - exitPrice);
-    var rMult = pnl / slDist;
-    var pnlPct = (pnl / entry) * 100;
-
-    trades.push({
-      symbol: symbol, bot: 'CRYPTO', dir: pat.dir,
-      entryTime: candlesD1[k+1].time, entryPrice: entry, sl: sl, tp: tp,
-      exitTime: candlesD1[exitInfo.idx].time, exitPrice: exitPrice,
-      exitReason: exitInfo.r, barsHeld: exitInfo.idx - k - 1,
-      pnlPct: pnlPct, rMult: rMult, pattern: pat.name,
-      isWeekendEntry: isWeekend
-    });
-    diag.passed++;
-    lastSigIdx = k;
-  }
-
-  console.log('[BT CRYPTO DIAG ' + symbol + '] bars=' + diag.bars +
-              ' cooldown=' + diag.cooldown +
-              ' noPattern=' + diag.noPattern +
-              ' h4Insuff=' + diag.h4Insufficient +
-              ' lowScore=' + diag.lowScore +
-              ' weekendLowVol=' + diag.lowVolWeekend +
-              ' slZero=' + diag.slZero +
-              ' PASSED=' + diag.passed);
-
-  return trades;
-}
-
 function btSimulateStocks(symbol, candlesW1, spread) {
   if (!candlesW1 || candlesW1.length < 60) return [];
 
@@ -3466,7 +3362,7 @@ async function btRun() {
     var paSymbols = (typeof PA_SYMBOLS !== 'undefined') ? PA_SYMBOLS.slice() : [];
     var orbSymbols = (typeof ORB_SYMBOLS !== 'undefined') ? ORB_SYMBOLS.slice() : [];
     var stocksSymbols = (typeof STOCKS_SYMBOLS !== 'undefined') ? STOCKS_SYMBOLS.slice() : [];
-    var cryptoSymbols = (typeof CRYPTO_SYMBOLS !== 'undefined') ? CRYPTO_SYMBOLS.slice() : [];
+    var cryptoSymbols = (typeof CRYPTO_SYMBOLS !== 'undefined' && BACKTEST_CRYPTO) ? CRYPTO_SYMBOLS.slice() : [];
     var totalSymbols = paSymbols.length + orbSymbols.length + stocksSymbols.length + cryptoSymbols.length;
     var done = 0;
 
