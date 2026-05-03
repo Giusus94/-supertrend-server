@@ -2391,10 +2391,6 @@ body::before {
           <div class="orb-hero" id="mtfHero">
             <div class="orb-hero-cell"><div class="orb-hero-sym">EURUSD</div><div class="orb-hero-name">EUR/USD</div><div class="orb-hero-state dead">connecting…</div></div>
             <div class="orb-hero-cell"><div class="orb-hero-sym">GBPUSD</div><div class="orb-hero-name">GBP/USD</div><div class="orb-hero-state dead">connecting…</div></div>
-            <div class="orb-hero-cell"><div class="orb-hero-sym">XAUUSD</div><div class="orb-hero-name">Gold</div><div class="orb-hero-state dead">connecting…</div></div>
-            <div class="orb-hero-cell"><div class="orb-hero-sym">XAGUSD</div><div class="orb-hero-name">Silver</div><div class="orb-hero-state dead">connecting…</div></div>
-            <div class="orb-hero-cell"><div class="orb-hero-sym">GBPJPY</div><div class="orb-hero-name">GBP/JPY</div><div class="orb-hero-state dead">connecting…</div></div>
-            <div class="orb-hero-cell"><div class="orb-hero-sym">BTCUSD</div><div class="orb-hero-name">Bitcoin</div><div class="orb-hero-state dead">connecting…</div></div>
           </div>
         </div>
 
@@ -4024,6 +4020,29 @@ async function pollAll() {
         crpBadge.textContent = dCrp.cryptoRunning ? 'live' : 'offline';
         crpBadge.className = 'bd ' + (dCrp.cryptoRunning ? 'bd-up' : 'bd-cu');
       }
+      // Update hero cards with live prices
+      var crpHero = document.getElementById('cryptoHero');
+      if (crpHero && dCrp.state) {
+        var crpCells = crpHero.querySelectorAll('.orb-hero-cell');
+        for (var ci = 0; ci < crpCells.length; ci++) {
+          var cell = crpCells[ci];
+          var symEl = cell.querySelector('.orb-hero-sym');
+          if (!symEl) continue;
+          var sym = symEl.textContent.trim();
+          var symState = dCrp.state[sym];
+          var stateEl = cell.querySelector('.orb-hero-state');
+          if (!stateEl) continue;
+          if (symState && symState.lastPrice > 0) {
+            var price = symState.lastPrice;
+            var dec = price > 1000 ? 2 : price > 10 ? 3 : 4;
+            stateEl.textContent = price.toFixed(dec);
+            stateEl.className = 'orb-hero-state alive';
+          } else {
+            stateEl.textContent = 'no data';
+            stateEl.className = 'orb-hero-state dead';
+          }
+        }
+      }
     } catch(e) {
       // Endpoint non disponibile (server vecchio): badge resta offline
       var pillCrpOff = document.getElementById('pillCrypto');
@@ -4044,6 +4063,29 @@ async function pollAll() {
       if (mtfBadge) {
         mtfBadge.textContent = dMtf.mtf2Running ? 'live' : 'offline';
         mtfBadge.className = 'bd ' + (dMtf.mtf2Running ? 'bd-up' : 'bd-cu');
+      }
+      // Update MTF hero cards with live prices
+      var mtfHeroEl = document.getElementById('mtfHero');
+      if (mtfHeroEl && dMtf.state) {
+        var mtfCells = mtfHeroEl.querySelectorAll('.orb-hero-cell');
+        for (var mi = 0; mi < mtfCells.length; mi++) {
+          var mcell = mtfCells[mi];
+          var msymEl = mcell.querySelector('.orb-hero-sym');
+          if (!msymEl) continue;
+          var msym = msymEl.textContent.trim();
+          var msymState = dMtf.state[msym];
+          var mstateEl = mcell.querySelector('.orb-hero-state');
+          if (!mstateEl) continue;
+          if (msymState && msymState.lastPrice > 0) {
+            var mprice = msymState.lastPrice;
+            var mdec = mprice > 1000 ? 2 : mprice > 10 ? 3 : 5;
+            mstateEl.textContent = mprice.toFixed(mdec);
+            mstateEl.className = 'orb-hero-state alive';
+          } else {
+            mstateEl.textContent = msymState ? 'monitored' : 'no data';
+            mstateEl.className = 'orb-hero-state ' + (msymState ? 'warn' : 'dead');
+          }
+        }
       }
     } catch(e) {
       var pillMtfOff = document.getElementById('pillMtf');
