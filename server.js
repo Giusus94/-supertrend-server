@@ -2068,7 +2068,173 @@ app.post('/api/mtf2-stop', async function(req, res) {
   await tgSend('MTF Bot v2 fermato');
   res.json({ ok: true });
 });
+// ══════════════════════════════════════════════════════════════════════════════
+// ██████████████████████████████████████████████████████████████████████████████
+// WEBHOOK TRADINGVIEW — riceve alert da Pine Script v6 e li relaya a Telegram
+// ██████████████████████████████████████████████████████████████████████████████
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// Configurazione:
+//   1. Env var Render:    TV_WEBHOOK_TOKEN=<stringa_segreta>
+//   2. Pine indicator:    impostare lo stesso token in input "Token webhook"
+//   3. Alert TradingView: Webhook URL = https://supertrend-server.onrender.com/api/webhook/tradingview
+//                         Message     = {{ alert_message }}
+//
+// Payload atteso da Pine (JSON costruito da buildJSON()):
+//   {
+//     "token": "...",       // deve combaciare con TV_WEBHOOK_TOKEN
+//     "source": "ORB",      // ORB | MTF | PA | CRYPTO | STOCKS
+//     "symbol": "EURUSD",
+//     "dir": "BUY",         // o "SELL"
+//     "entry": 1.08123,
+//     "sl": 1.07900,
+//     "tp": 1.08600,
+//     "reason": "Breakout ORH ATR-based SL/TP"
+//   }
+// ══════════════════════════════════════════════════════════════════════════════
 
+var TV_WEBHOOK_TOKEN = process.env.TV_WEBHOOK_TOKEN || '';
+
+// Tracking per dashboard (ultimi alert ricevuti via webhook)
+var pineWebhookLog = [];
+var pineWebhookStats = { received: 0, accepted: 0, rejectedAuth: 0, rejectedFormat: 0 };
+
+app.post('/api/webhook/tradingview', async function(req, res) {
+  pineWebhookStats.received++;
+
+  try {
+    // Body può arrivare come oggetto già parsato (Content-Type: application/json)
+    // oppure come stringa raw (Content-Type: text/plain) se TV non riconosce JSON
+    var payload = req.body;
+    if (typeof payload === 'string') {
+      try { payload = JSON.parse(payload); }
+      catch(e) {
+        pineWebhookStats.rejectedFormat++;
+        console.error('[PINE WEBHOOK] body non e JSON valido: ' + payload);
+        return res.status(400).json({ ok: false, error: 'invalid_json' });
+      }
+    }
+
+    // Validazione token (PRIMA cosa, prima di loggare contenuti)
+    if (!TV_WEBHOOK_TOKEN) {
+      pineWebhookStats.rejectedAuth++;
+      console.error('[PINE WEBHOOK] TV_WEBHOOK_TOKEN non configurato sul server');
+      return res.status(500).json({ ok: false, error: 'server_not_configured' });
+    }
+    if (!payload || payload.token !== TV_WEBHOOK_TOKEN) {
+      pineWebhookStats.rejectedAuth++;
+      console.error('[PINE WEBHOOK] token mismatch o assente');
+      return res.status(401).json({ ok: false, error: 'unauthorized' });
+    }
+
+    // Validazione campi minimi
+    var src = (payload.source || 'PINE').toUpperCase();
+    var sym = payload.symbol || 'UNKNOWN';
+    var dir = (payload.dir || '').toUpperCase();
+    var entry = parseFloat(payload.entry);
+    var sl = parseFloat(payload.sl);
+    var tp = parseFloat(payload.tp);
+    var reason = payload.reason || '';
+
+    if (dir !== 'BUY' && dir !== 'SELL') {
+      pineWebhookStats.rejectedFormat++;
+      console.error('[PINE WEBHOOK] dir invalida: ' + dir);
+      return res.status(400).json({ ok: false, error: 'invalid_dir' });
+    }
+    if (isNaN(entry) || isNaN(sl) || isNaN(tp)) {
+      pineWebhookStats.rejectedFormat++;
+      console.error('[PINE WEBHOOK] prezzi NaN entry=' + entry + ' sl=' + sl + ' tp=' + tp);
+      return res.status(400).json({ ok: false, error: 'invalid_prices' });
+    }
+
+    // Decimali display (stessa logica usata da altri bot)
+    var dec = entry > 1000 ? 2 : entry > 10 ? 3 : 5;
+
+    // R-multiple per il messaggio
+    var slDist = Math.abs(entry - sl);
+    var rrTarget = slDist > 0 ? (Math.abs(tp - entry) / slDist).toFixed(2) : '?';
+
+    // Lot suggeriti su balance 500 EUR (riferimento standard del sistema)
+    var lotInfo = '';
+    if (slDist > 0 && typeof calcLotSize === 'function') {
+      var lot500 = calcLotSize(sym, 500, 1.0, slDist);
+      lotInfo = '\n<b>Lot suggerito (500EUR, 1%):</b> ' + lot500;
+    }
+
+    // Costruzione messaggio Telegram con prefisso [PINE-XXX]
+    // Volutamente simile al formato dei bot autonomi per coerenza visiva
+    var time = new Date().toUTCString().slice(0, 25);
+    var name = (typeof SYMBOL_NAMES !== 'undefined' && SYMBOL_NAMES[sym]) ? SYMBOL_NAMES[sym] : sym;
+
+    var msg =
+      '<b>[PINE-' + src + '] ' + dir + ' ' + name + '</b>\n' +
+      '<i>Da TradingView via webhook</i>\n' +
+      '<b>Entry:</b> ' + entry.toFixed(dec) + '\n' +
+      '<b>SL:</b> ' + sl.toFixed(dec) + ' | <b>TP:</b> ' + tp.toFixed(dec) + '\n' +
+      '<b>R:R:</b> 1:' + rrTarget + '\n' +
+      (reason ? '<b>Setup:</b> ' + reason + '\n' : '') +
+      lotInfo +
+      '\n<i>' + time + ' UTC</i>';
+
+    var tgOk = await tgSend(msg);
+
+    if (tgOk) {
+      pineWebhookStats.accepted++;
+      // Log per dashboard
+      var record = {
+        ts: Date.now(),
+        time: time,
+        source: 'PINE-' + src,
+        symbol: sym,
+        dir: dir,
+        entry: entry.toFixed(dec),
+        sl: sl.toFixed(dec),
+        tp: tp.toFixed(dec),
+        reason: reason
+      };
+      pineWebhookLog.unshift(record);
+      if (pineWebhookLog.length > 50) pineWebhookLog.pop();
+      // Aggiungo anche al globalLog per visibilita nel feed unificato
+      globalLog.unshift({
+        dir: dir, price: entry.toFixed(dec), time: time,
+        sym: sym, source: 'PINE-' + src
+      });
+      if (globalLog.length > 100) globalLog.pop();
+      console.log('[PINE WEBHOOK] OK ' + src + ' ' + dir + ' ' + sym + ' @ ' + entry.toFixed(dec));
+      return res.json({ ok: true, relayed: true });
+    } else {
+      console.error('[PINE WEBHOOK] tgSend fallito');
+      return res.status(500).json({ ok: false, error: 'telegram_failed' });
+    }
+
+  } catch(e) {
+    console.error('[PINE WEBHOOK] eccezione: ' + e.message);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Endpoint diagnostico GET per testare che webhook URL sia raggiungibile
+app.get('/api/webhook/test', function(req, res) {
+  res.json({
+    ok: true,
+    message: 'Webhook endpoint raggiungibile',
+    tokenConfigured: !!TV_WEBHOOK_TOKEN,
+    stats: pineWebhookStats,
+    recentAlerts: pineWebhookLog.slice(0, 10)
+  });
+});
+
+// Endpoint per dashboard: ritorna tutti gli alert webhook ricevuti
+app.get('/api/webhook/log', function(req, res) {
+  res.json({
+    stats: pineWebhookStats,
+    log: pineWebhookLog
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FINE WEBHOOK TRADINGVIEW
+// ══════════════════════════════════════════════════════════════════════════════
 // ══════════════════════════════════════════════════════════════════════════════
 // ██████████████████████████████████████████████████████████████████████████████
 // ORB BOT -- Opening Range Breakout su indici
