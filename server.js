@@ -225,6 +225,17 @@ async function handlePineWebhook(req, res) {
     stats.webhook.accepted++;
     stats.totalSignals++;
 
+    // ─── Conferma di ricezione (separata dal segnale stesso) ───
+    // Il messaggio principale e' tradeable, questo e' un "ack" di system health
+    // che conferma che il flusso webhook->Telegram ha completato senza errori.
+    // Disattivabile con env var: SEND_CONFIRMATION=false
+    if (process.env.SEND_CONFIRMATION !== 'false') {
+      await tgSend(
+        '✅ <i>Segnale #' + stats.totalSignals + ' relayato</i> · ' +
+        STRATEGY_EMOJI[strategy] + ' ' + (direction === 'long' ? '🟢' : '🔴') + ' ' + instrument
+      );
+    }
+
     const ps = stats.perStrategy[strategy];
     ps.total++;
     ps[direction === 'long' ? 'longs' : 'shorts']++;
