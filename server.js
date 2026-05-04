@@ -228,8 +228,14 @@ async function handlePineWebhook(req, res) {
     // ─── Conferma di ricezione (separata dal segnale stesso) ───
     // Il messaggio principale e' tradeable, questo e' un "ack" di system health
     // che conferma che il flusso webhook->Telegram ha completato senza errori.
+    //
+    // Delay 800ms: due sendMessage consecutivi al chat dallo stesso bot vengono
+    // a volte droppati silenziosamente da Telegram (anti-flood) anche se l'API
+    // risponde 200 OK. Il delay forza la consegna ordinata del secondo.
+    //
     // Disattivabile con env var: SEND_CONFIRMATION=false
     if (process.env.SEND_CONFIRMATION !== 'false') {
+      await new Promise(r => setTimeout(r, 800));
       await tgSend(
         '✅ <i>Segnale #' + stats.totalSignals + ' relayato</i> · ' +
         STRATEGY_EMOJI[strategy] + ' ' + (direction === 'long' ? '🟢' : '🔴') + ' ' + instrument
