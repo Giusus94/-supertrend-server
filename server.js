@@ -34,8 +34,10 @@ const MIN_SCORE      = Number.isFinite(MIN_SCORE_RAW) ? MIN_SCORE_RAW : 3;
 const BLOCK_HIGH_VOL = process.env.BLOCK_HIGH_VOL === 'true';    // skip se HIGH vol
 
 // ─── Costanti ───────────────────────────────────────────────────────────────
-const SIGNAL_LOG_MAX       = 100;
-const ALLOWED_VOLATILITY   = ['LOW', 'NORMAL', 'HIGH'];
+const SIGNAL_LOG_MAX        = 100;
+const REJECTED_LOG_MAX      = 30;
+const ECHO_LOG_MAX          = 30;
+const ALLOWED_VOLATILITY    = ['LOW', 'NORMAL', 'HIGH'];
 const CONFIRMATION_DELAY_MS = 800;
 
 // ─── Mappa nomi strategie ────────────────────────────────────────────────────
@@ -50,9 +52,56 @@ const STRATEGY_EMOJI = {
   range_scalper:   '〰️'
 };
 
+// Timeframe ammessi per ogni strategia (numero in minuti).
+// Riflette la spec mostrata nella dashboard:
+//   Trend Rider     -> H1 / H4
+//   Breakout Hunter -> M15 / H1
+//   Range Scalper   -> M5 / M15
+const STRATEGY_TF = {
+  trend_rider:     [60, 240],
+  breakout_hunter: [15, 60],
+  range_scalper:   [5, 15]
+};
+
+// Alias case-insensitive per timeframe: TradingView puo' inviarlo come
+// numero ("15", "60"), come stringa di Pine ("M15", "H1"), o varianti.
+const TF_ALIASES = {
+  'm1':   1,    '1m':  1,
+  'm3':   3,    '3m':  3,
+  'm5':   5,    '5m':  5,
+  'm15':  15,   '15m': 15,
+  'm30':  30,   '30m': 30,
+  'h1':   60,   '1h':  60,
+  'h2':   120,  '2h':  120,
+  'h4':   240,  '4h':  240,
+  'd':    1440, '1d':  1440, 'd1': 1440,
+  'w':    10080,'1w':  10080
+};
+
+// Alias case-insensitive per la strategia (Pine puo' inviarla con varianti)
+const STRATEGY_ALIASES = {
+  'trend_rider':     'trend_rider',
+  'trendrider':      'trend_rider',
+  'trend-rider':     'trend_rider',
+  'trend rider':     'trend_rider',
+  'trend':           'trend_rider',
+  'breakout_hunter': 'breakout_hunter',
+  'breakouthunter':  'breakout_hunter',
+  'breakout-hunter': 'breakout_hunter',
+  'breakout hunter': 'breakout_hunter',
+  'breakout':        'breakout_hunter',
+  'range_scalper':   'range_scalper',
+  'rangescalper':    'range_scalper',
+  'range-scalper':   'range_scalper',
+  'range scalper':   'range_scalper',
+  'range':           'range_scalper'
+};
+
 // ─── Stato in-memory (no DB, sufficient per signal volume previsto) ───────────
 const startTime = Date.now();
-let signalLog = [];   // ultimi 100 segnali ricevuti
+let signalLog = [];     // ultimi 100 segnali accettati
+let rejectedLog = [];   // ultimi 30 rifiuti/filtri (diagnostica)
+let echoLog = [];       // ultimi 30 payload ricevuti su /api/webhook/echo
 const stats = {
   webhook: { received: 0, accepted: 0, filtered: 0, rejectedAuth: 0, rejectedFormat: 0, telegramFailed: 0 },
   totalSignals: 0,
@@ -125,6 +174,60 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// Normalizza nome strategia: accetta varianti di case/separatori e short form
+function normalizeStrategy(s) {
+  if (s === null || s === undefined) return null;
+  const k = String(s).toLowerCase().trim();
+  return STRATEGY_ALIASES[k] || null;
+}
+
+// Normalizza timeframe a minuti (numero). Accetta "15", "M15", "H1", ecc.
+// Ritorna null se non interpretabile.
+function normalizeTF(tf) {
+  if (tf === null || tf === undefined || tf === '') return null;
+  const k = String(tf).toLowerCase().trim();
+  if (TF_ALIASES[k] !== undefined) return TF_ALIASES[k];
+  const n = parseInt(k, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// Numero "finito" tollerante: parseFloat che ritorna null se non valido.
+// Usata per ADX/RSI/ATR cosi anche il valore 0 viene preservato.
+function finiteOrNull(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Pulisce un payload prima di salvarlo nel log: rimuove il token (sensibile)
+// e tronca le stringhe lunghe per evitare bloat.
+function sanitizePayloadForLog(p) {
+  if (p === null || p === undefined) return { _raw: null };
+  if (typeof p !== 'object') return { _raw: String(p).slice(0, 500) };
+  const out = {};
+  for (const k of Object.keys(p)) {
+    if (k === 'token') continue;
+    const v = p[k];
+    if (typeof v === 'string' && v.length > 200) out[k] = v.slice(0, 200) + '…';
+    else out[k] = v;
+  }
+  return out;
+}
+
+// Registra un rifiuto/filtro per ispezione successiva via /api/rejected
+function recordRejection(req, reason, payload, extra) {
+  const rec = {
+    ts: Date.now(),
+    time: new Date().toISOString(),
+    reason: reason,
+    ip: (req && req.ip) || null,
+    payload: sanitizePayloadForLog(payload)
+  };
+  if (extra && typeof extra === 'object') Object.assign(rec, extra);
+  rejectedLog.unshift(rec);
+  while (rejectedLog.length > REJECTED_LOG_MAX) rejectedLog.pop();
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // MAIN WEBHOOK HANDLER — POST /api/webhook/pine
 // ══════════════════════════════════════════════════════════════════════════════
@@ -141,7 +244,9 @@ async function handlePineWebhook(req, res) {
         payload = JSON.parse(payload);
       } catch(e) {
         stats.webhook.rejectedFormat++;
-        console.error('[PINE] body non e JSON valido:', payload.slice(0, 200));
+        const snippet = payload.slice(0, 200);
+        console.error('[PINE] body non e JSON valido:', snippet);
+        recordRejection(req, 'invalid_json', { _raw: snippet });
         return res.status(400).json({ ok: false, error: 'invalid_json' });
       }
     }
@@ -155,22 +260,25 @@ async function handlePineWebhook(req, res) {
     if (!payload || !safeTokenCompare(payload.token, TV_WEBHOOK_TOKEN)) {
       stats.webhook.rejectedAuth++;
       console.error('[PINE] token mismatch o assente');
+      // Non logghiamo i payload con token errato per evitare rumore da scanner
       return res.status(401).json({ ok: false, error: 'unauthorized' });
     }
 
-    // ─── Validate strategy ───
-    const strategy = payload.strategy;
-    if (!STRATEGY_NAMES[strategy]) {
+    // ─── Validate strategy (case-insensitive + alias) ───
+    const strategy = normalizeStrategy(payload.strategy);
+    if (!strategy) {
       stats.webhook.rejectedFormat++;
-      console.error('[PINE] strategy sconosciuta:', strategy);
-      return res.status(400).json({ ok: false, error: 'unknown_strategy', got: strategy });
+      console.error('[PINE] strategy sconosciuta:', payload.strategy);
+      recordRejection(req, 'unknown_strategy', payload, { got: payload.strategy });
+      return res.status(400).json({ ok: false, error: 'unknown_strategy', got: payload.strategy });
     }
 
     // ─── Validate direction ───
-    const direction = (payload.direction || '').toLowerCase();
+    const direction = (payload.direction || '').toString().toLowerCase().trim();
     if (direction !== 'long' && direction !== 'short') {
       stats.webhook.rejectedFormat++;
-      console.error('[PINE] direction invalida:', direction);
+      console.error('[PINE] direction invalida:', payload.direction);
+      recordRejection(req, 'invalid_direction', payload, { got: payload.direction });
       return res.status(400).json({ ok: false, error: 'invalid_direction' });
     }
 
@@ -178,9 +286,10 @@ async function handlePineWebhook(req, res) {
     const price = parseFloat(payload.price);
     const sl = parseFloat(payload.sl);
     const tp = parseFloat(payload.tp);
-    if (isNaN(price) || isNaN(sl) || isNaN(tp)) {
+    if (!Number.isFinite(price) || !Number.isFinite(sl) || !Number.isFinite(tp)) {
       stats.webhook.rejectedFormat++;
-      console.error('[PINE] prezzi NaN:', { price, sl, tp });
+      console.error('[PINE] prezzi non validi:', { price, sl, tp });
+      recordRejection(req, 'invalid_prices', payload, { parsed: { price, sl, tp } });
       return res.status(400).json({ ok: false, error: 'invalid_prices' });
     }
 
@@ -188,33 +297,66 @@ async function handlePineWebhook(req, res) {
     // long  -> sl < price < tp ;   short -> tp < price < sl
     if (direction === 'long' && (sl >= price || tp <= price)) {
       stats.webhook.rejectedFormat++;
-      console.error('[PINE] SL/TP incoerenti per LONG');
+      console.error('[PINE] SL/TP incoerenti per LONG', { price, sl, tp });
+      recordRejection(req, 'sl_tp_inconsistent', payload, { side: 'long', parsed: { price, sl, tp } });
       return res.status(400).json({ ok: false, error: 'sl_tp_inconsistent' });
     }
     if (direction === 'short' && (sl <= price || tp >= price)) {
       stats.webhook.rejectedFormat++;
-      console.error('[PINE] SL/TP incoerenti per SHORT');
+      console.error('[PINE] SL/TP incoerenti per SHORT', { price, sl, tp });
+      recordRejection(req, 'sl_tp_inconsistent', payload, { side: 'short', parsed: { price, sl, tp } });
       return res.status(400).json({ ok: false, error: 'sl_tp_inconsistent' });
     }
 
-    const scoreRaw = parseInt(payload.score, 10);
-    const score = Number.isFinite(scoreRaw) ? Math.max(0, Math.min(5, scoreRaw)) : 0;
-    const volatilityRaw = (payload.volatility || 'NORMAL').toUpperCase();
+    // Score: accetta sia int che float (es. 3.5 -> 4). Clamp 0-5.
+    const scoreRaw = parseFloat(payload.score);
+    const score = Number.isFinite(scoreRaw)
+      ? Math.max(0, Math.min(5, Math.round(scoreRaw)))
+      : 0;
+    const volatilityRaw = (payload.volatility || 'NORMAL').toString().toUpperCase().trim();
     const volatility = ALLOWED_VOLATILITY.includes(volatilityRaw) ? volatilityRaw : 'NORMAL';
     const instrument = normalizeInstrument(payload.instrument);
     const timeframe = payload.timeframe || '';
     const htfAligned = isTruthy(payload.htf_aligned);
+
+    // ─── Validate TF compatibile con la strategia ───
+    // Trend Rider e' H1/H4, Breakout Hunter M15/H1, Range Scalper M5/M15.
+    // Se Pine spara su un TF non previsto, lo scartiamo e logghiamo per
+    // ispezione su /api/rejected. Cosi gli alert mal-configurati su TV
+    // non finiscono su Telegram come "valid" signals.
+    const tfMinutes = normalizeTF(timeframe);
+    const allowedTFs = STRATEGY_TF[strategy] || [];
+    if (tfMinutes === null || !allowedTFs.includes(tfMinutes)) {
+      stats.webhook.rejectedFormat++;
+      console.error('[PINE] TF non compatibile:',
+        { strategy, tf: timeframe, tfMinutes, allowed: allowedTFs });
+      recordRejection(req, 'tf_strategy_mismatch', payload, {
+        strategy: strategy,
+        tf: timeframe,
+        tfMinutes: tfMinutes,
+        allowed: allowedTFs
+      });
+      return res.status(400).json({
+        ok: false,
+        error: 'tf_strategy_mismatch',
+        strategy: strategy,
+        timeframe: timeframe,
+        allowedTFs: allowedTFs
+      });
+    }
 
     // ─── Filtri server-side ───
     if (score < MIN_SCORE) {
       stats.webhook.filtered++;
       console.log('[PINE] FILTRATO score=' + score + ' < MIN_SCORE=' + MIN_SCORE +
                   ' (' + strategy + ' ' + direction + ' ' + instrument + ')');
+      recordRejection(req, 'score_below_minimum', payload, { score, minScore: MIN_SCORE });
       return res.json({ ok: true, filtered: true, reason: 'score_below_minimum' });
     }
     if (BLOCK_HIGH_VOL && volatility === 'HIGH') {
       stats.webhook.filtered++;
       console.log('[PINE] FILTRATO HIGH vol (' + strategy + ' ' + direction + ' ' + instrument + ')');
+      recordRejection(req, 'high_volatility', payload, { volatility });
       return res.json({ ok: true, filtered: true, reason: 'high_volatility' });
     }
 
@@ -228,13 +370,15 @@ async function handlePineWebhook(req, res) {
     const ts = new Date().toUTCString().slice(0, 25);
     const tfLabel = timeframe ? ' · TF ' + timeframe : '';
 
+    // ADX/RSI/ATR: usiamo finiteOrNull cosi anche valore 0 (improbabile ma
+    // possibile) viene preservato invece di essere scartato come falsy.
+    const adxN = finiteOrNull(payload.adx);
+    const rsiN = finiteOrNull(payload.rsi);
+    const atrN = finiteOrNull(payload.atr);
+
     let extras = '';
-    if (payload.adx && !isNaN(parseFloat(payload.adx))) {
-      extras += '<b>ADX:</b> ' + parseFloat(payload.adx).toFixed(1) + '  ';
-    }
-    if (payload.rsi && !isNaN(parseFloat(payload.rsi))) {
-      extras += '<b>RSI:</b> ' + parseFloat(payload.rsi).toFixed(1);
-    }
+    if (adxN !== null) extras += '<b>ADX:</b> ' + adxN.toFixed(1) + '  ';
+    if (rsiN !== null) extras += '<b>RSI:</b> ' + rsiN.toFixed(1);
     if (extras) extras += '\n';
 
     const volWarn = volatility === 'HIGH' ? '⚠️ <i>HIGH volatility — considera size ridotta</i>\n' : '';
@@ -256,6 +400,7 @@ async function handlePineWebhook(req, res) {
     if (!tgOk) {
       stats.webhook.telegramFailed++;
       console.error('[PINE] tgSend fallito');
+      recordRejection(req, 'telegram_failed', payload, { strategy, direction, instrument });
       return res.status(500).json({ ok: false, error: 'telegram_failed' });
     }
 
@@ -296,9 +441,9 @@ async function handlePineWebhook(req, res) {
       score: score,
       volatility: volatility,
       timeframe: timeframe,
-      adx: payload.adx ? parseFloat(payload.adx) : null,
-      rsi: payload.rsi ? parseFloat(payload.rsi) : null,
-      atr: payload.atr ? parseFloat(payload.atr) : null,
+      adx: adxN,
+      rsi: rsiN,
+      atr: atrN,
       htfAligned: htfAligned
     };
     signalLog.unshift(record);
@@ -334,6 +479,36 @@ async function handlePineWebhook(req, res) {
 app.post('/api/webhook/pine', handlePineWebhook);
 app.post('/api/webhook/tradingview', handlePineWebhook);
 
+// ─── Echo endpoint: nessuna validazione, solo log. Utile per vedere ESATTAMENTE
+// cosa TradingView sta inviando senza il filtro della validazione. Protetto
+// dallo stesso TV_WEBHOOK_TOKEN per evitare rumore esterno.
+function handleEcho(req, res) {
+  let payload = req.body;
+  if (typeof payload === 'string') {
+    try { payload = JSON.parse(payload); }
+    catch(e) { payload = { _raw: payload.slice(0, 500), _parseError: e.message }; }
+  }
+  if (TV_WEBHOOK_TOKEN && (!payload || !safeTokenCompare(payload.token, TV_WEBHOOK_TOKEN))) {
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
+  }
+  const clean = sanitizePayloadForLog(payload);
+  const rec = {
+    ts: Date.now(),
+    time: new Date().toISOString(),
+    ip: req.ip || null,
+    headers: {
+      'content-type': req.get('content-type') || null,
+      'user-agent':   req.get('user-agent')   || null
+    },
+    payload: clean
+  };
+  echoLog.unshift(rec);
+  while (echoLog.length > ECHO_LOG_MAX) echoLog.pop();
+  console.log('[ECHO]', JSON.stringify(clean));
+  return res.json({ ok: true, echoed: true, received: clean });
+}
+app.post('/api/webhook/echo', handleEcho);
+
 // ══════════════════════════════════════════════════════════════════════════════
 // API ENDPOINTS — diagnostica e dashboard
 // ══════════════════════════════════════════════════════════════════════════════
@@ -364,9 +539,20 @@ app.get('/api/status', (req, res) => {
     tokenConfigured: !!TV_WEBHOOK_TOKEN,
     adminProtected: !!ADMIN_TOKEN,
     filters: { MIN_SCORE, BLOCK_HIGH_VOL },
+    strategyTF: STRATEGY_TF,
     stats: stats,
     signals: signalLog.slice(0, 30)
   });
+});
+
+// Buffer dei segnali rifiutati/filtrati (per debug payload TradingView)
+app.get('/api/rejected', requireAdmin, (req, res) => {
+  res.json({ count: rejectedLog.length, rejected: rejectedLog });
+});
+
+// Buffer dei payload ricevuti su /api/webhook/echo
+app.get('/api/echoes', requireAdmin, (req, res) => {
+  res.json({ count: echoLog.length, echoes: echoLog });
 });
 
 // Signals filtrati (per esplorazione dashboard)
@@ -400,6 +586,8 @@ app.get('/api/test', requireAdmin, async (req, res) => {
 // Reset stats (protetto da ADMIN_TOKEN se configurato)
 app.post('/api/reset', requireAdmin, (req, res) => {
   signalLog = [];
+  rejectedLog = [];
+  echoLog = [];
   stats.totalSignals = 0;
   Object.keys(stats.perStrategy).forEach(k => {
     stats.perStrategy[k] = { total: 0, longs: 0, shorts: 0, lastSignal: null, lastTs: null, avgScore: 0, _scoreSum: 0 };
@@ -425,6 +613,7 @@ const server = app.listen(PORT, async () => {
   console.log(' Min score filter:      ' + MIN_SCORE + '/5');
   console.log(' Block HIGH vol:        ' + BLOCK_HIGH_VOL);
   console.log(' Strategies enabled:    trend_rider, breakout_hunter, range_scalper');
+  console.log(' Diagnostics:           /api/rejected · /api/echoes · POST /api/webhook/echo');
   console.log('═══════════════════════════════════════════════════════════');
 
   await tgSend(
