@@ -1421,21 +1421,46 @@ function setupFilters() {
 /* ══════════════════════════════════════════════════════════════════════════
    ACTIONS
    ══════════════════════════════════════════════════════════════════════════ */
+function adminHeaders() {
+  var t = localStorage.getItem('admin_token') || '';
+  return t ? { 'x-admin-token': t } : {};
+}
+
+function promptAdminToken() {
+  var t = prompt('Admin token richiesto (configura ADMIN_TOKEN sul server):');
+  if (t) localStorage.setItem('admin_token', t);
+  return !!t;
+}
+
+// Esegue una fetch; se il server risponde 401 e adminProtected e' attivo,
+// chiede il token e ritenta una volta sola.
+async function adminFetch(url, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({}, opts.headers || {}, adminHeaders());
+  var r = await fetch(url, opts);
+  if (r.status === 401) {
+    if (!promptAdminToken()) return r;
+    opts.headers = Object.assign({}, opts.headers, adminHeaders());
+    r = await fetch(url, opts);
+  }
+  return r;
+}
+
 async function testTG() {
   toast('Sending test...', '');
   try {
-    var r = await fetch('/api/test', { method: 'POST' });
+    var r = await adminFetch('/api/test', { method: 'POST' });
     var d = await r.json();
-    toast(d.ok ? 'Test sent · check Telegram' : 'Telegram error', d.ok ? 'ok' : 'err');
+    toast(d.ok ? 'Test sent · check Telegram' : (d.error || 'Telegram error'), d.ok ? 'ok' : 'err');
   } catch(e) { toast('Network error', 'err'); }
 }
 
 async function resetStats() {
   if (!confirm('Reset all stats and signal log?')) return;
   try {
-    var r = await fetch('/api/reset', { method: 'POST' });
+    var r = await adminFetch('/api/reset', { method: 'POST' });
     var d = await r.json();
-    toast(d.ok ? 'Stats reset' : 'Reset failed', d.ok ? 'ok' : 'err');
+    toast(d.ok ? 'Stats reset' : (d.error || 'Reset failed'), d.ok ? 'ok' : 'err');
     pollStatus();
   } catch(e) { toast('Network error', 'err'); }
 }
