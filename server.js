@@ -52,6 +52,32 @@ const STRATEGY_EMOJI = {
   range_scalper:   '〰️'
 };
 
+// Timeframe ammessi per ogni strategia (numero in minuti).
+// Riflette la spec mostrata nella dashboard:
+//   Trend Rider     -> H1 / H4
+//   Breakout Hunter -> M15 / H1
+//   Range Scalper   -> M5 / M15
+const STRATEGY_TF = {
+  trend_rider:     [60, 240],
+  breakout_hunter: [15, 60],
+  range_scalper:   [5, 15]
+};
+
+// Alias case-insensitive per timeframe: TradingView puo' inviarlo come
+// numero ("15", "60"), come stringa di Pine ("M15", "H1"), o varianti.
+const TF_ALIASES = {
+  'm1':   1,    '1m':  1,
+  'm3':   3,    '3m':  3,
+  'm5':   5,    '5m':  5,
+  'm15':  15,   '15m': 15,
+  'm30':  30,   '30m': 30,
+  'h1':   60,   '1h':  60,
+  'h2':   120,  '2h':  120,
+  'h4':   240,  '4h':  240,
+  'd':    1440, '1d':  1440, 'd1': 1440,
+  'w':    10080,'1w':  10080
+};
+
 // Alias case-insensitive per la strategia (Pine puo' inviarla con varianti)
 const STRATEGY_ALIASES = {
   'trend_rider':     'trend_rider',
@@ -153,6 +179,16 @@ function normalizeStrategy(s) {
   if (s === null || s === undefined) return null;
   const k = String(s).toLowerCase().trim();
   return STRATEGY_ALIASES[k] || null;
+}
+
+// Normalizza timeframe a minuti (numero). Accetta "15", "M15", "H1", ecc.
+// Ritorna null se non interpretabile.
+function normalizeTF(tf) {
+  if (tf === null || tf === undefined || tf === '') return null;
+  const k = String(tf).toLowerCase().trim();
+  if (TF_ALIASES[k] !== undefined) return TF_ALIASES[k];
+  const n = parseInt(k, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 // Numero "finito" tollerante: parseFloat che ritorna null se non valido.
@@ -282,6 +318,32 @@ async function handlePineWebhook(req, res) {
     const instrument = normalizeInstrument(payload.instrument);
     const timeframe = payload.timeframe || '';
     const htfAligned = isTruthy(payload.htf_aligned);
+
+    // ─── Validate TF compatibile con la strategia ───
+    // Trend Rider e' H1/H4, Breakout Hunter M15/H1, Range Scalper M5/M15.
+    // Se Pine spara su un TF non previsto, lo scartiamo e logghiamo per
+    // ispezione su /api/rejected. Cosi gli alert mal-configurati su TV
+    // non finiscono su Telegram come "valid" signals.
+    const tfMinutes = normalizeTF(timeframe);
+    const allowedTFs = STRATEGY_TF[strategy] || [];
+    if (tfMinutes === null || !allowedTFs.includes(tfMinutes)) {
+      stats.webhook.rejectedFormat++;
+      console.error('[PINE] TF non compatibile:',
+        { strategy, tf: timeframe, tfMinutes, allowed: allowedTFs });
+      recordRejection(req, 'tf_strategy_mismatch', payload, {
+        strategy: strategy,
+        tf: timeframe,
+        tfMinutes: tfMinutes,
+        allowed: allowedTFs
+      });
+      return res.status(400).json({
+        ok: false,
+        error: 'tf_strategy_mismatch',
+        strategy: strategy,
+        timeframe: timeframe,
+        allowedTFs: allowedTFs
+      });
+    }
 
     // ─── Filtri server-side ───
     if (score < MIN_SCORE) {
@@ -477,6 +539,7 @@ app.get('/api/status', (req, res) => {
     tokenConfigured: !!TV_WEBHOOK_TOKEN,
     adminProtected: !!ADMIN_TOKEN,
     filters: { MIN_SCORE, BLOCK_HIGH_VOL },
+    strategyTF: STRATEGY_TF,
     stats: stats,
     signals: signalLog.slice(0, 30)
   });
