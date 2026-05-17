@@ -1,5 +1,5 @@
 const express = require('express');
-const fetch = require('node-fetch');
+const crypto = require('crypto');
 
 const app = express();
 app.use(express.json({ limit: '10kb' }));
@@ -20,14 +20,23 @@ app.use(express.static('public'));
 // mantiene log + stats per la dashboard.
 // ══════════════════════════════════════════════════════════════════════════════
 
+const VERSION          = '3.0.1-pine-only';
 const PORT             = process.env.PORT             || 3000;
 const TG_TOKEN         = process.env.TG_TOKEN         || '';
 const TG_CHAT_ID       = process.env.TG_CHAT_ID       || '';
 const TV_WEBHOOK_TOKEN = process.env.TV_WEBHOOK_TOKEN || '';
+const ADMIN_TOKEN      = process.env.ADMIN_TOKEN      || '';
 
 // ─── Filtri server-side opzionali (env vars) ─────────────────────────────────
-const MIN_SCORE      = parseInt(process.env.MIN_SCORE) || 3;     // skip score < N
+// Nota: usiamo Number.isFinite per non far cadere MIN_SCORE=0 nel fallback
+const MIN_SCORE_RAW  = parseInt(process.env.MIN_SCORE, 10);
+const MIN_SCORE      = Number.isFinite(MIN_SCORE_RAW) ? MIN_SCORE_RAW : 3;
 const BLOCK_HIGH_VOL = process.env.BLOCK_HIGH_VOL === 'true';    // skip se HIGH vol
+
+// ─── Costanti ───────────────────────────────────────────────────────────────
+const SIGNAL_LOG_MAX       = 100;
+const ALLOWED_VOLATILITY   = ['LOW', 'NORMAL', 'HIGH'];
+const CONFIRMATION_DELAY_MS = 800;
 
 // ─── Mappa nomi strategie ────────────────────────────────────────────────────
 const STRATEGY_NAMES = {
@@ -90,6 +99,32 @@ function normalizeInstrument(s) {
   return s.toUpperCase();
 }
 
+// Confronto costante-tempo per token (mitiga timing attack)
+function safeTokenCompare(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || !a || !b) return false;
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ab, bb);
+}
+
+// htf_aligned puo' arrivare come boolean true, "true", 1 o "1" da TradingView
+function isTruthy(v) {
+  return v === true || v === 1 || v === '1' ||
+         (typeof v === 'string' && v.toLowerCase() === 'true');
+}
+
+// Middleware: se ADMIN_TOKEN e' configurato, richiede header x-admin-token
+function requireAdmin(req, res, next) {
+  if (!ADMIN_TOKEN) return next();
+  const provided = req.get('x-admin-token') ||
+                   (req.body && typeof req.body === 'object' && req.body.token) || '';
+  if (!safeTokenCompare(provided, ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
+  }
+  next();
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // MAIN WEBHOOK HANDLER — POST /api/webhook/pine
 // ══════════════════════════════════════════════════════════════════════════════
@@ -117,7 +152,7 @@ async function handlePineWebhook(req, res) {
       console.error('[PINE] TV_WEBHOOK_TOKEN non configurato sul server');
       return res.status(500).json({ ok: false, error: 'server_not_configured' });
     }
-    if (!payload || payload.token !== TV_WEBHOOK_TOKEN) {
+    if (!payload || !safeTokenCompare(payload.token, TV_WEBHOOK_TOKEN)) {
       stats.webhook.rejectedAuth++;
       console.error('[PINE] token mismatch o assente');
       return res.status(401).json({ ok: false, error: 'unauthorized' });
@@ -162,10 +197,13 @@ async function handlePineWebhook(req, res) {
       return res.status(400).json({ ok: false, error: 'sl_tp_inconsistent' });
     }
 
-    const score = parseInt(payload.score) || 0;
-    const volatility = (payload.volatility || 'NORMAL').toUpperCase();
+    const scoreRaw = parseInt(payload.score, 10);
+    const score = Number.isFinite(scoreRaw) ? Math.max(0, Math.min(5, scoreRaw)) : 0;
+    const volatilityRaw = (payload.volatility || 'NORMAL').toUpperCase();
+    const volatility = ALLOWED_VOLATILITY.includes(volatilityRaw) ? volatilityRaw : 'NORMAL';
     const instrument = normalizeInstrument(payload.instrument);
     const timeframe = payload.timeframe || '';
+    const htfAligned = isTruthy(payload.htf_aligned);
 
     // ─── Filtri server-side ───
     if (score < MIN_SCORE) {
@@ -200,7 +238,7 @@ async function handlePineWebhook(req, res) {
     if (extras) extras += '\n';
 
     const volWarn = volatility === 'HIGH' ? '⚠️ <i>HIGH volatility — considera size ridotta</i>\n' : '';
-    const htfBadge = payload.htf_aligned === true ? '✅ <i>HTF aligned</i>\n' : '';
+    const htfBadge = htfAligned ? '✅ <i>HTF aligned</i>\n' : '';
 
     const msg =
       '<b>' + STRATEGY_EMOJI[strategy] + ' ' + STRATEGY_NAMES[strategy] + '</b> · ' + dirArrow + '\n' +
@@ -224,23 +262,7 @@ async function handlePineWebhook(req, res) {
     // ─── Update stats ───
     stats.webhook.accepted++;
     stats.totalSignals++;
-
-    // ─── Conferma di ricezione (separata dal segnale stesso) ───
-    // Il messaggio principale e' tradeable, questo e' un "ack" di system health
-    // che conferma che il flusso webhook->Telegram ha completato senza errori.
-    //
-    // Delay 800ms: due sendMessage consecutivi al chat dallo stesso bot vengono
-    // a volte droppati silenziosamente da Telegram (anti-flood) anche se l'API
-    // risponde 200 OK. Il delay forza la consegna ordinata del secondo.
-    //
-    // Disattivabile con env var: SEND_CONFIRMATION=false
-    if (process.env.SEND_CONFIRMATION !== 'false') {
-      await new Promise(r => setTimeout(r, 800));
-      await tgSend(
-        '✅ <i>Segnale #' + stats.totalSignals + ' relayato</i> · ' +
-        STRATEGY_EMOJI[strategy] + ' ' + (direction === 'long' ? '🟢' : '🔴') + ' ' + instrument
-      );
-    }
+    const signalNum = stats.totalSignals;
 
     const ps = stats.perStrategy[strategy];
     ps.total++;
@@ -277,14 +299,30 @@ async function handlePineWebhook(req, res) {
       adx: payload.adx ? parseFloat(payload.adx) : null,
       rsi: payload.rsi ? parseFloat(payload.rsi) : null,
       atr: payload.atr ? parseFloat(payload.atr) : null,
-      htfAligned: payload.htf_aligned === true
+      htfAligned: htfAligned
     };
     signalLog.unshift(record);
-    if (signalLog.length > 100) signalLog.pop();
+    while (signalLog.length > SIGNAL_LOG_MAX) signalLog.pop();
 
     console.log('[PINE OK] ' + strategy + ' ' + direction.toUpperCase() + ' ' + instrument +
                 ' @ ' + price.toFixed(d) + ' score=' + score + ' vol=' + volatility);
-    return res.json({ ok: true, relayed: true });
+
+    // Rispondi subito al webhook: non bloccare TradingView sull'ack di sistema.
+    res.json({ ok: true, relayed: true });
+
+    // ─── Conferma di ricezione (fire-and-forget) ───
+    // Delay 800ms: due sendMessage consecutivi dallo stesso bot vengono a
+    // volte droppati silenziosamente da Telegram (anti-flood) anche con 200 OK.
+    // Disattivabile con env var: SEND_CONFIRMATION=false
+    if (process.env.SEND_CONFIRMATION !== 'false') {
+      setTimeout(() => {
+        tgSend(
+          '✅ <i>Segnale #' + signalNum + ' relayato</i> · ' +
+          STRATEGY_EMOJI[strategy] + ' ' + (direction === 'long' ? '🟢' : '🔴') + ' ' + instrument
+        ).catch(e => console.error('[TG confirm]', e.message));
+      }, CONFIRMATION_DELAY_MS);
+    }
+    return;
 
   } catch(e) {
     console.error('[PINE WEBHOOK] eccezione:', e);
@@ -299,6 +337,9 @@ app.post('/api/webhook/tradingview', handlePineWebhook);
 // ══════════════════════════════════════════════════════════════════════════════
 // API ENDPOINTS — diagnostica e dashboard
 // ══════════════════════════════════════════════════════════════════════════════
+
+// Liveness probe (uptime monitor / load balancer)
+app.get('/healthz', (req, res) => res.status(200).type('text/plain').send('ok'));
 
 // Diagnostic endpoint (browser-friendly)
 app.get('/api/webhook/test', (req, res) => {
@@ -318,9 +359,10 @@ app.get('/api/status', (req, res) => {
   res.json({
     ok: true,
     uptime: Math.floor((Date.now() - startTime) / 1000),
-    version: '3.0.0-pine-only',
+    version: VERSION,
     telegramConnected: !!(TG_TOKEN && TG_CHAT_ID),
     tokenConfigured: !!TV_WEBHOOK_TOKEN,
+    adminProtected: !!ADMIN_TOKEN,
     filters: { MIN_SCORE, BLOCK_HIGH_VOL },
     stats: stats,
     signals: signalLog.slice(0, 30)
@@ -341,8 +383,8 @@ app.get('/api/signals', (req, res) => {
   res.json({ count: filtered.length, signals: filtered });
 });
 
-// Test Telegram
-app.post('/api/test', async (req, res) => {
+// Test Telegram (protetto da ADMIN_TOKEN se configurato)
+app.post('/api/test', requireAdmin, async (req, res) => {
   const ok = await tgSend(
     '<b>🧪 ST-EA Pine Relay · Test</b>\n\n' +
     'Test message OK\n' +
@@ -350,13 +392,13 @@ app.post('/api/test', async (req, res) => {
   );
   res.json({ ok });
 });
-app.get('/api/test', async (req, res) => {
+app.get('/api/test', requireAdmin, async (req, res) => {
   const ok = await tgSend('<b>🧪 ST-EA Pine Relay · Test (GET)</b>\n\nTest OK');
   res.json({ ok });
 });
 
-// Reset stats (utile in fase test)
-app.post('/api/reset', (req, res) => {
+// Reset stats (protetto da ADMIN_TOKEN se configurato)
+app.post('/api/reset', requireAdmin, (req, res) => {
   signalLog = [];
   stats.totalSignals = 0;
   Object.keys(stats.perStrategy).forEach(k => {
@@ -372,20 +414,21 @@ app.post('/api/reset', (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════════
 // BOOT
 // ══════════════════════════════════════════════════════════════════════════════
-app.listen(PORT, async () => {
+const server = app.listen(PORT, async () => {
   console.log('═══════════════════════════════════════════════════════════');
-  console.log(' ST-EA Pine Relay v3.0  ·  Pure webhook receiver');
+  console.log(' ST-EA Pine Relay ' + VERSION + '  ·  Pure webhook receiver');
   console.log('═══════════════════════════════════════════════════════════');
   console.log(' PORT:                  ' + PORT);
   console.log(' Telegram:              ' + (TG_TOKEN && TG_CHAT_ID ? 'OK' : 'NOT CONFIGURED'));
   console.log(' Webhook token:         ' + (TV_WEBHOOK_TOKEN ? 'OK' : 'NOT CONFIGURED'));
+  console.log(' Admin token:           ' + (ADMIN_TOKEN ? 'OK (test/reset protetti)' : 'NOT SET (test/reset aperti — sconsigliato in produzione)'));
   console.log(' Min score filter:      ' + MIN_SCORE + '/5');
   console.log(' Block HIGH vol:        ' + BLOCK_HIGH_VOL);
   console.log(' Strategies enabled:    trend_rider, breakout_hunter, range_scalper');
   console.log('═══════════════════════════════════════════════════════════');
 
   await tgSend(
-    '<b>🚀 ST-EA Pine Relay v3 online</b>\n\n' +
+    '<b>🚀 ST-EA Pine Relay ' + VERSION + ' online</b>\n\n' +
     '<i>3 Pine strategies armed:</i>\n' +
     '📈 Trend Rider  (H1/H4)\n' +
     '💥 Breakout Hunter  (M15/H1)\n' +
@@ -393,3 +436,20 @@ app.listen(PORT, async () => {
     '<i>Min score: ' + MIN_SCORE + '/5  |  HIGH vol blocked: ' + (BLOCK_HIGH_VOL ? 'yes' : 'no') + '</i>'
   );
 });
+
+// Graceful shutdown: chiudi le connessioni HTTP prima di uscire (utile in
+// container orchestrator che inviano SIGTERM prima di SIGKILL)
+function shutdown(sig) {
+  console.log('[shutdown] ricevuto ' + sig + ' — chiusura server HTTP');
+  server.close(() => {
+    console.log('[shutdown] server HTTP chiuso, exit 0');
+    process.exit(0);
+  });
+  // hard timeout di sicurezza
+  setTimeout(() => {
+    console.error('[shutdown] forced exit dopo 10s');
+    process.exit(1);
+  }, 10000).unref();
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
