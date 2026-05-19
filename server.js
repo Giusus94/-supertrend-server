@@ -7,20 +7,21 @@ app.use(express.text({ limit: '10kb', type: 'text/plain' }));
 app.use(express.static('public'));
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ST-EA Pine Relay v3.0
+// ST-EA Pine Relay v3.1.0
 //
-// Pure webhook relay per le 3 strategie Pine:
-//   1. Trend Rider     (H1/H4) — trend-following EMA stack + MACD + HTF
-//   2. Breakout Hunter (M15/H1) — Donchian breakout + volume + ATR expansion
-//   3. Range Scalper   (M5/M15) — mean reversion BB + RSI in regime ADX basso
+// Pure webhook relay per le 3 strategie Pine + filtro Market Context:
+//   1. Trend Rider     (H1/H4)
+//   2. Breakout Hunter (M15/H1)
+//   3. Range Scalper   (M5/M15)
+//   + Market Context   (4/4) — invia regime/session/verdict al server
 //
-// Il server NON calcola piu' indicatori, NON fa piu' fetch dati, NON ha piu'
-// bot autonomi. TradingView (Pine) fa tutto il lavoro di analisi e invia i
-// segnali via webhook. Il server li valida, filtra, relaya su Telegram, e
-// mantiene log + stats per la dashboard.
+// Il server riceve aggiornamenti contestuali dal Market Context Pine e li usa
+// per filtrare i segnali in entrata dai 3 Pine principali. Se il contesto
+// dice BLOCK (es. London open + regime CHAOS), il segnale viene scartato
+// prima di Telegram.
 // ══════════════════════════════════════════════════════════════════════════════
 
-const VERSION          = '3.0.1-pine-only';
+const VERSION          = '3.1.0-context-filter';
 const PORT             = process.env.PORT             || 3000;
 const TG_TOKEN         = process.env.TG_TOKEN         || '';
 const TG_CHAT_ID       = process.env.TG_CHAT_ID       || '';
@@ -28,16 +29,21 @@ const TV_WEBHOOK_TOKEN = process.env.TV_WEBHOOK_TOKEN || '';
 const ADMIN_TOKEN      = process.env.ADMIN_TOKEN      || '';
 
 // ─── Filtri server-side opzionali (env vars) ─────────────────────────────────
-// Nota: usiamo Number.isFinite per non far cadere MIN_SCORE=0 nel fallback
 const MIN_SCORE_RAW  = parseInt(process.env.MIN_SCORE, 10);
 const MIN_SCORE      = Number.isFinite(MIN_SCORE_RAW) ? MIN_SCORE_RAW : 3;
-const BLOCK_HIGH_VOL = process.env.BLOCK_HIGH_VOL === 'true';    // skip se HIGH vol
+const BLOCK_HIGH_VOL = process.env.BLOCK_HIGH_VOL === 'true';
+
+// ─── Context Filter (Market Context indicator) ───────────────────────────────
+const CONTEXT_FILTER      = process.env.CONTEXT_FILTER !== 'false';      // default ON
+const CONTEXT_MAX_AGE_MIN = parseInt(process.env.CONTEXT_MAX_AGE_MIN || '30', 10);
 
 // ─── Costanti ───────────────────────────────────────────────────────────────
 const SIGNAL_LOG_MAX        = 100;
 const REJECTED_LOG_MAX      = 30;
 const ECHO_LOG_MAX          = 30;
+const CONTEXT_LOG_MAX       = 50;
 const ALLOWED_VOLATILITY    = ['LOW', 'NORMAL', 'HIGH'];
+const ALLOWED_VERDICT       = ['ALLOW', 'WARN', 'BLOCK'];
 const CONFIRMATION_DELAY_MS = 800;
 
 // ─── Mappa nomi strategie ────────────────────────────────────────────────────
@@ -52,19 +58,12 @@ const STRATEGY_EMOJI = {
   range_scalper:   '〰️'
 };
 
-// Timeframe ammessi per ogni strategia (numero in minuti).
-// Riflette la spec mostrata nella dashboard:
-//   Trend Rider     -> H1 / H4
-//   Breakout Hunter -> M15 / H1
-//   Range Scalper   -> M5 / M15
 const STRATEGY_TF = {
   trend_rider:     [60, 240],
   breakout_hunter: [15, 60],
   range_scalper:   [5, 15]
 };
 
-// Alias case-insensitive per timeframe: TradingView puo' inviarlo come
-// numero ("15", "60"), come stringa di Pine ("M15", "H1"), o varianti.
 const TF_ALIASES = {
   'm1':   1,    '1m':  1,
   'm3':   3,    '3m':  3,
@@ -78,7 +77,6 @@ const TF_ALIASES = {
   'w':    10080,'1w':  10080
 };
 
-// Alias case-insensitive per la strategia (Pine puo' inviarla con varianti)
 const STRATEGY_ALIASES = {
   'trend_rider':     'trend_rider',
   'trendrider':      'trend_rider',
@@ -97,13 +95,17 @@ const STRATEGY_ALIASES = {
   'range':           'range_scalper'
 };
 
-// ─── Stato in-memory (no DB, sufficient per signal volume previsto) ───────────
+// ─── Stato in-memory ─────────────────────────────────────────────────────────
 const startTime = Date.now();
-let signalLog = [];     // ultimi 100 segnali accettati
-let rejectedLog = [];   // ultimi 30 rifiuti/filtri (diagnostica)
-let echoLog = [];       // ultimi 30 payload ricevuti su /api/webhook/echo
+let signalLog = [];
+let rejectedLog = [];
+let echoLog = [];
+let contextLog = [];        // storia degli ultimi context update ricevuti
+let lastContext = null;     // { regime, session, verdict, ts, adx, atr, bb_width, is_chaos, timeframe }
+
 const stats = {
-  webhook: { received: 0, accepted: 0, filtered: 0, rejectedAuth: 0, rejectedFormat: 0, telegramFailed: 0 },
+  webhook: { received: 0, accepted: 0, filtered: 0, contextBlocked: 0, rejectedAuth: 0, rejectedFormat: 0, telegramFailed: 0 },
+  context: { received: 0, accepted: 0, rejectedAuth: 0, rejectedFormat: 0 },
   totalSignals: 0,
   perStrategy: {
     trend_rider:     { total: 0, longs: 0, shorts: 0, lastSignal: null, lastTs: null, avgScore: 0, _scoreSum: 0 },
@@ -143,12 +145,10 @@ function dec(price) {
 
 function normalizeInstrument(s) {
   if (!s) return 'UNKNOWN';
-  // Rimuove prefissi tipo "FX:", "OANDA:", "BINANCE:" dal ticker TradingView
   if (s.indexOf(':') !== -1) s = s.split(':').pop();
   return s.toUpperCase();
 }
 
-// Confronto costante-tempo per token (mitiga timing attack)
 function safeTokenCompare(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string' || !a || !b) return false;
   const ab = Buffer.from(a);
@@ -157,13 +157,11 @@ function safeTokenCompare(a, b) {
   return crypto.timingSafeEqual(ab, bb);
 }
 
-// htf_aligned puo' arrivare come boolean true, "true", 1 o "1" da TradingView
 function isTruthy(v) {
   return v === true || v === 1 || v === '1' ||
          (typeof v === 'string' && v.toLowerCase() === 'true');
 }
 
-// Middleware: se ADMIN_TOKEN e' configurato, richiede header x-admin-token
 function requireAdmin(req, res, next) {
   if (!ADMIN_TOKEN) return next();
   const provided = req.get('x-admin-token') ||
@@ -174,15 +172,12 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// Normalizza nome strategia: accetta varianti di case/separatori e short form
 function normalizeStrategy(s) {
   if (s === null || s === undefined) return null;
   const k = String(s).toLowerCase().trim();
   return STRATEGY_ALIASES[k] || null;
 }
 
-// Normalizza timeframe a minuti (numero). Accetta "15", "M15", "H1", ecc.
-// Ritorna null se non interpretabile.
 function normalizeTF(tf) {
   if (tf === null || tf === undefined || tf === '') return null;
   const k = String(tf).toLowerCase().trim();
@@ -191,16 +186,12 @@ function normalizeTF(tf) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-// Numero "finito" tollerante: parseFloat che ritorna null se non valido.
-// Usata per ADX/RSI/ATR cosi anche il valore 0 viene preservato.
 function finiteOrNull(v) {
   if (v === null || v === undefined || v === '') return null;
   const n = parseFloat(v);
   return Number.isFinite(n) ? n : null;
 }
 
-// Pulisce un payload prima di salvarlo nel log: rimuove il token (sensibile)
-// e tronca le stringhe lunghe per evitare bloat.
 function sanitizePayloadForLog(p) {
   if (p === null || p === undefined) return { _raw: null };
   if (typeof p !== 'object') return { _raw: String(p).slice(0, 500) };
@@ -214,7 +205,6 @@ function sanitizePayloadForLog(p) {
   return out;
 }
 
-// Registra un rifiuto/filtro per ispezione successiva via /api/rejected
 function recordRejection(req, reason, payload, extra) {
   const rec = {
     ts: Date.now(),
@@ -228,6 +218,18 @@ function recordRejection(req, reason, payload, extra) {
   while (rejectedLog.length > REJECTED_LOG_MAX) rejectedLog.pop();
 }
 
+// Stato attuale del context filter
+function contextStatus() {
+  if (!lastContext) return { active: false, stale: false, ageMin: null, context: null };
+  const ageMin = (Date.now() - lastContext.ts) / 60000;
+  return {
+    active: ageMin <= CONTEXT_MAX_AGE_MIN,
+    stale:  ageMin >  CONTEXT_MAX_AGE_MIN,
+    ageMin: Math.round(ageMin * 10) / 10,
+    context: lastContext
+  };
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // MAIN WEBHOOK HANDLER — POST /api/webhook/pine
 // ══════════════════════════════════════════════════════════════════════════════
@@ -236,8 +238,6 @@ async function handlePineWebhook(req, res) {
   stats.webhook.received++;
 
   try {
-    // Body parsing: TradingView puo' inviare con Content-Type application/json
-    // (parsato da express.json) oppure text/plain con dentro un JSON
     let payload = req.body;
     if (typeof payload === 'string') {
       try {
@@ -260,11 +260,10 @@ async function handlePineWebhook(req, res) {
     if (!payload || !safeTokenCompare(payload.token, TV_WEBHOOK_TOKEN)) {
       stats.webhook.rejectedAuth++;
       console.error('[PINE] token mismatch o assente');
-      // Non logghiamo i payload con token errato per evitare rumore da scanner
       return res.status(401).json({ ok: false, error: 'unauthorized' });
     }
 
-    // ─── Validate strategy (case-insensitive + alias) ───
+    // ─── Validate strategy ───
     const strategy = normalizeStrategy(payload.strategy);
     if (!strategy) {
       stats.webhook.rejectedFormat++;
@@ -293,8 +292,6 @@ async function handlePineWebhook(req, res) {
       return res.status(400).json({ ok: false, error: 'invalid_prices' });
     }
 
-    // ─── Sanity: SL/TP coerenti con direction ───
-    // long  -> sl < price < tp ;   short -> tp < price < sl
     if (direction === 'long' && (sl >= price || tp <= price)) {
       stats.webhook.rejectedFormat++;
       console.error('[PINE] SL/TP incoerenti per LONG', { price, sl, tp });
@@ -308,7 +305,6 @@ async function handlePineWebhook(req, res) {
       return res.status(400).json({ ok: false, error: 'sl_tp_inconsistent' });
     }
 
-    // Score: accetta sia int che float (es. 3.5 -> 4). Clamp 0-5.
     const scoreRaw = parseFloat(payload.score);
     const score = Number.isFinite(scoreRaw)
       ? Math.max(0, Math.min(5, Math.round(scoreRaw)))
@@ -320,10 +316,6 @@ async function handlePineWebhook(req, res) {
     const htfAligned = isTruthy(payload.htf_aligned);
 
     // ─── Validate TF compatibile con la strategia ───
-    // Trend Rider e' H1/H4, Breakout Hunter M15/H1, Range Scalper M5/M15.
-    // Se Pine spara su un TF non previsto, lo scartiamo e logghiamo per
-    // ispezione su /api/rejected. Cosi gli alert mal-configurati su TV
-    // non finiscono su Telegram come "valid" signals.
     const tfMinutes = normalizeTF(timeframe);
     const allowedTFs = STRATEGY_TF[strategy] || [];
     if (tfMinutes === null || !allowedTFs.includes(tfMinutes)) {
@@ -360,6 +352,31 @@ async function handlePineWebhook(req, res) {
       return res.json({ ok: true, filtered: true, reason: 'high_volatility' });
     }
 
+    // ─── Filtro Context (Market Context Pine) ───
+    // Se CONTEXT_FILTER e' attivo E abbiamo un context recente E il verdict
+    // e' BLOCK, scarta il segnale. Context piu' vecchio di CONTEXT_MAX_AGE_MIN
+    // viene ignorato (preferiamo passare un segnale invece di bloccare per
+    // context stale).
+    if (CONTEXT_FILTER && lastContext) {
+      const ctxAgeMin = (Date.now() - lastContext.ts) / 60000;
+      if (ctxAgeMin <= CONTEXT_MAX_AGE_MIN && lastContext.verdict === 'BLOCK') {
+        stats.webhook.contextBlocked++;
+        console.log('[PINE] CONTEXT BLOCKED (' + strategy + ' ' + direction + ' ' + instrument +
+                    ') regime=' + lastContext.regime + ' session=' + lastContext.session);
+        recordRejection(req, 'context_block', payload, {
+          regime: lastContext.regime,
+          session: lastContext.session,
+          ctxAgeMinutes: Math.round(ctxAgeMin)
+        });
+        return res.json({
+          ok: true,
+          filtered: true,
+          reason: 'context_block',
+          context: { regime: lastContext.regime, session: lastContext.session, verdict: lastContext.verdict }
+        });
+      }
+    }
+
     // ─── Build messaggio Telegram ───
     const dirArrow = direction === 'long' ? '🟢 LONG' : '🔴 SHORT';
     const stars = '⭐'.repeat(score) + '☆'.repeat(5 - score);
@@ -370,8 +387,6 @@ async function handlePineWebhook(req, res) {
     const ts = new Date().toUTCString().slice(0, 25);
     const tfLabel = timeframe ? ' · TF ' + timeframe : '';
 
-    // ADX/RSI/ATR: usiamo finiteOrNull cosi anche valore 0 (improbabile ma
-    // possibile) viene preservato invece di essere scartato come falsy.
     const adxN = finiteOrNull(payload.adx);
     const rsiN = finiteOrNull(payload.rsi);
     const atrN = finiteOrNull(payload.atr);
@@ -384,6 +399,16 @@ async function handlePineWebhook(req, res) {
     const volWarn = volatility === 'HIGH' ? '⚠️ <i>HIGH volatility — considera size ridotta</i>\n' : '';
     const htfBadge = htfAligned ? '✅ <i>HTF aligned</i>\n' : '';
 
+    // Aggiungi badge context al messaggio (informativo)
+    let ctxBadge = '';
+    if (lastContext) {
+      const ctxAgeMin2 = (Date.now() - lastContext.ts) / 60000;
+      if (ctxAgeMin2 <= CONTEXT_MAX_AGE_MIN) {
+        const emoji = lastContext.verdict === 'ALLOW' ? '✅' : lastContext.verdict === 'WARN' ? '⚠️' : '🛑';
+        ctxBadge = emoji + ' <i>Context: ' + lastContext.regime + ' / ' + lastContext.session + '</i>\n';
+      }
+    }
+
     const msg =
       '<b>' + STRATEGY_EMOJI[strategy] + ' ' + STRATEGY_NAMES[strategy] + '</b> · ' + dirArrow + '\n' +
       '<b>' + instrument + '</b>' + tfLabel + '  ' + stars + '\n\n' +
@@ -393,6 +418,7 @@ async function handlePineWebhook(req, res) {
       extras +
       volWarn +
       htfBadge +
+      ctxBadge +
       '\n<i>' + ts + '</i>';
 
     const tgOk = await tgSend(msg);
@@ -426,7 +452,6 @@ async function handlePineWebhook(req, res) {
     if (score >= 1 && score <= 5) stats.perScore[score]++;
     stats.perDirection[direction]++;
 
-    // ─── Log record ───
     const record = {
       ts: Date.now(),
       time: ts,
@@ -444,7 +469,12 @@ async function handlePineWebhook(req, res) {
       adx: adxN,
       rsi: rsiN,
       atr: atrN,
-      htfAligned: htfAligned
+      htfAligned: htfAligned,
+      context: lastContext ? {
+        regime: lastContext.regime,
+        session: lastContext.session,
+        verdict: lastContext.verdict
+      } : null
     };
     signalLog.unshift(record);
     while (signalLog.length > SIGNAL_LOG_MAX) signalLog.pop();
@@ -452,13 +482,8 @@ async function handlePineWebhook(req, res) {
     console.log('[PINE OK] ' + strategy + ' ' + direction.toUpperCase() + ' ' + instrument +
                 ' @ ' + price.toFixed(d) + ' score=' + score + ' vol=' + volatility);
 
-    // Rispondi subito al webhook: non bloccare TradingView sull'ack di sistema.
     res.json({ ok: true, relayed: true });
 
-    // ─── Conferma di ricezione (fire-and-forget) ───
-    // Delay 800ms: due sendMessage consecutivi dallo stesso bot vengono a
-    // volte droppati silenziosamente da Telegram (anti-flood) anche con 200 OK.
-    // Disattivabile con env var: SEND_CONFIRMATION=false
     if (process.env.SEND_CONFIRMATION !== 'false') {
       setTimeout(() => {
         tgSend(
@@ -475,13 +500,101 @@ async function handlePineWebhook(req, res) {
   }
 }
 
-// Endpoint primario + alias backward-compat
 app.post('/api/webhook/pine', handlePineWebhook);
 app.post('/api/webhook/tradingview', handlePineWebhook);
 
-// ─── Echo endpoint: nessuna validazione, solo log. Utile per vedere ESATTAMENTE
-// cosa TradingView sta inviando senza il filtro della validazione. Protetto
-// dallo stesso TV_WEBHOOK_TOKEN per evitare rumore esterno.
+// ══════════════════════════════════════════════════════════════════════════════
+// CONTEXT UPDATE HANDLER — POST /api/context/update
+// ══════════════════════════════════════════════════════════════════════════════
+// Riceve aggiornamenti dal Market Context Pine. Memorizza l'ultimo contesto
+// che verra' usato per filtrare i segnali in arrivo dai 3 Pine principali.
+
+async function handleContextUpdate(req, res) {
+  stats.context.received++;
+
+  try {
+    let payload = req.body;
+    if (typeof payload === 'string') {
+      try { payload = JSON.parse(payload); }
+      catch(e) {
+        stats.context.rejectedFormat++;
+        console.error('[CONTEXT] body non e JSON valido:', payload.slice(0, 200));
+        return res.status(400).json({ ok: false, error: 'invalid_json' });
+      }
+    }
+    if (!payload || !safeTokenCompare(payload.token, TV_WEBHOOK_TOKEN)) {
+      stats.context.rejectedAuth++;
+      console.error('[CONTEXT] token mismatch o assente');
+      return res.status(401).json({ ok: false, error: 'unauthorized' });
+    }
+    if (payload.type !== 'context_update') {
+      stats.context.rejectedFormat++;
+      return res.status(400).json({ ok: false, error: 'wrong_type', got: payload.type });
+    }
+    const regime  = String(payload.regime  || 'UNKNOWN').toUpperCase();
+    const session = String(payload.session || 'UNKNOWN').toUpperCase();
+    const verdict = String(payload.verdict || 'ALLOW').toUpperCase();
+    if (!ALLOWED_VERDICT.includes(verdict)) {
+      stats.context.rejectedFormat++;
+      return res.status(400).json({ ok: false, error: 'invalid_verdict', got: verdict });
+    }
+
+    lastContext = {
+      ts: Date.now(),
+      time: new Date().toISOString(),
+      regime:    regime,
+      session:   session,
+      verdict:   verdict,
+      adx:       finiteOrNull(payload.adx),
+      atr:       finiteOrNull(payload.atr),
+      bb_width:  finiteOrNull(payload.bb_width),
+      is_chaos:  isTruthy(payload.is_chaos),
+      timeframe: payload.timeframe || null
+    };
+    stats.context.accepted++;
+
+    contextLog.unshift({ ...lastContext });
+    while (contextLog.length > CONTEXT_LOG_MAX) contextLog.pop();
+
+    console.log('[CONTEXT] update: regime=' + regime + ' session=' + session + ' verdict=' + verdict);
+    return res.json({ ok: true, accepted: true, context: lastContext });
+  } catch(e) {
+    console.error('[CONTEXT UPDATE] eccezione:', e);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+}
+app.post('/api/context/update', handleContextUpdate);
+
+// Diagnostico context corrente
+app.get('/api/context', (req, res) => {
+  const status = contextStatus();
+  if (!status.context) {
+    return res.json({
+      ok: true,
+      hasContext: false,
+      contextFilterEnabled: CONTEXT_FILTER,
+      maxAgeMinutes: CONTEXT_MAX_AGE_MIN,
+      message: 'Nessun context update ricevuto. Market Context Pine non configurato o non attivo.'
+    });
+  }
+  res.json({
+    ok: true,
+    hasContext: true,
+    contextFilterEnabled: CONTEXT_FILTER,
+    maxAgeMinutes: CONTEXT_MAX_AGE_MIN,
+    ageMinutes: status.ageMin,
+    stale: status.stale,
+    active: status.active,
+    context: status.context
+  });
+});
+
+// Storia context update (per audit / dashboard)
+app.get('/api/context/history', requireAdmin, (req, res) => {
+  res.json({ count: contextLog.length, history: contextLog });
+});
+
+// ─── Echo endpoint ───
 function handleEcho(req, res) {
   let payload = req.body;
   if (typeof payload === 'string') {
@@ -513,23 +626,30 @@ app.post('/api/webhook/echo', handleEcho);
 // API ENDPOINTS — diagnostica e dashboard
 // ══════════════════════════════════════════════════════════════════════════════
 
-// Liveness probe (uptime monitor / load balancer)
 app.get('/healthz', (req, res) => res.status(200).type('text/plain').send('ok'));
 
-// Diagnostic endpoint (browser-friendly)
 app.get('/api/webhook/test', (req, res) => {
+  const ctx = contextStatus();
   res.json({
     ok: true,
     message: 'Webhook endpoint raggiungibile',
     tokenConfigured: !!TV_WEBHOOK_TOKEN,
     telegramConfigured: !!(TG_TOKEN && TG_CHAT_ID),
-    filters: { MIN_SCORE, BLOCK_HIGH_VOL },
+    filters: { MIN_SCORE, BLOCK_HIGH_VOL, CONTEXT_FILTER },
     stats: stats.webhook,
+    contextStatus: {
+      hasContext: !!ctx.context,
+      active:     ctx.active,
+      stale:      ctx.stale,
+      ageMinutes: ctx.ageMin,
+      verdict:    ctx.context ? ctx.context.verdict : null,
+      regime:     ctx.context ? ctx.context.regime  : null,
+      session:    ctx.context ? ctx.context.session : null
+    },
     recentSignals: signalLog.slice(0, 5)
   });
 });
 
-// Status completo per dashboard
 app.get('/api/status', (req, res) => {
   res.json({
     ok: true,
@@ -538,24 +658,23 @@ app.get('/api/status', (req, res) => {
     telegramConnected: !!(TG_TOKEN && TG_CHAT_ID),
     tokenConfigured: !!TV_WEBHOOK_TOKEN,
     adminProtected: !!ADMIN_TOKEN,
-    filters: { MIN_SCORE, BLOCK_HIGH_VOL },
+    filters: { MIN_SCORE, BLOCK_HIGH_VOL, CONTEXT_FILTER, CONTEXT_MAX_AGE_MIN },
     strategyTF: STRATEGY_TF,
+    context: lastContext,
+    contextStatus: contextStatus(),
     stats: stats,
     signals: signalLog.slice(0, 30)
   });
 });
 
-// Buffer dei segnali rifiutati/filtrati (per debug payload TradingView)
 app.get('/api/rejected', requireAdmin, (req, res) => {
   res.json({ count: rejectedLog.length, rejected: rejectedLog });
 });
 
-// Buffer dei payload ricevuti su /api/webhook/echo
 app.get('/api/echoes', requireAdmin, (req, res) => {
   res.json({ count: echoLog.length, echoes: echoLog });
 });
 
-// Signals filtrati (per esplorazione dashboard)
 app.get('/api/signals', (req, res) => {
   let filtered = signalLog.slice();
   const strategy = req.query.strategy;
@@ -569,12 +688,12 @@ app.get('/api/signals', (req, res) => {
   res.json({ count: filtered.length, signals: filtered });
 });
 
-// Test Telegram (protetto da ADMIN_TOKEN se configurato)
 app.post('/api/test', requireAdmin, async (req, res) => {
   const ok = await tgSend(
     '<b>🧪 ST-EA Pine Relay · Test</b>\n\n' +
     'Test message OK\n' +
-    'Uptime: ' + Math.floor((Date.now() - startTime) / 1000) + 's'
+    'Uptime: ' + Math.floor((Date.now() - startTime) / 1000) + 's\n' +
+    'Context filter: ' + (CONTEXT_FILTER ? 'enabled' : 'disabled')
   );
   res.json({ ok });
 });
@@ -583,11 +702,12 @@ app.get('/api/test', requireAdmin, async (req, res) => {
   res.json({ ok });
 });
 
-// Reset stats (protetto da ADMIN_TOKEN se configurato)
 app.post('/api/reset', requireAdmin, (req, res) => {
   signalLog = [];
   rejectedLog = [];
   echoLog = [];
+  contextLog = [];
+  // Non resettiamo lastContext (utile mantenere stato attuale)
   stats.totalSignals = 0;
   Object.keys(stats.perStrategy).forEach(k => {
     stats.perStrategy[k] = { total: 0, longs: 0, shorts: 0, lastSignal: null, lastTs: null, avgScore: 0, _scoreSum: 0 };
@@ -595,7 +715,8 @@ app.post('/api/reset', requireAdmin, (req, res) => {
   stats.perInstrument = {};
   stats.perScore = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
   stats.perDirection = { long: 0, short: 0 };
-  stats.webhook = { received: 0, accepted: 0, filtered: 0, rejectedAuth: 0, rejectedFormat: 0, telegramFailed: 0 };
+  stats.webhook = { received: 0, accepted: 0, filtered: 0, contextBlocked: 0, rejectedAuth: 0, rejectedFormat: 0, telegramFailed: 0 };
+  stats.context = { received: 0, accepted: 0, rejectedAuth: 0, rejectedFormat: 0 };
   res.json({ ok: true, message: 'stats reset' });
 });
 
@@ -604,7 +725,7 @@ app.post('/api/reset', requireAdmin, (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════════
 const server = app.listen(PORT, async () => {
   console.log('═══════════════════════════════════════════════════════════');
-  console.log(' ST-EA Pine Relay ' + VERSION + '  ·  Pure webhook receiver');
+  console.log(' ST-EA Pine Relay ' + VERSION + '  ·  Pine + Context Filter');
   console.log('═══════════════════════════════════════════════════════════');
   console.log(' PORT:                  ' + PORT);
   console.log(' Telegram:              ' + (TG_TOKEN && TG_CHAT_ID ? 'OK' : 'NOT CONFIGURED'));
@@ -612,8 +733,10 @@ const server = app.listen(PORT, async () => {
   console.log(' Admin token:           ' + (ADMIN_TOKEN ? 'OK (test/reset protetti)' : 'NOT SET (test/reset aperti — sconsigliato in produzione)'));
   console.log(' Min score filter:      ' + MIN_SCORE + '/5');
   console.log(' Block HIGH vol:        ' + BLOCK_HIGH_VOL);
+  console.log(' Context filter:        ' + (CONTEXT_FILTER ? 'ENABLED (max age: ' + CONTEXT_MAX_AGE_MIN + ' min)' : 'DISABLED'));
   console.log(' Strategies enabled:    trend_rider, breakout_hunter, range_scalper');
-  console.log(' Diagnostics:           /api/rejected · /api/echoes · POST /api/webhook/echo');
+  console.log(' Context source:        Market Context Pine -> POST /api/context/update');
+  console.log(' Diagnostics:           /api/rejected · /api/echoes · /api/context · /api/context/history');
   console.log('═══════════════════════════════════════════════════════════');
 
   await tgSend(
@@ -622,19 +745,20 @@ const server = app.listen(PORT, async () => {
     '📈 Trend Rider  (H1/H4)\n' +
     '💥 Breakout Hunter  (M15/H1)\n' +
     '〰️ Range Scalper  (M5/M15)\n\n' +
-    '<i>Min score: ' + MIN_SCORE + '/5  |  HIGH vol blocked: ' + (BLOCK_HIGH_VOL ? 'yes' : 'no') + '</i>'
+    '<i>Filters:</i>\n' +
+    'Min score: ' + MIN_SCORE + '/5\n' +
+    'HIGH vol blocked: ' + (BLOCK_HIGH_VOL ? 'yes' : 'no') + '\n' +
+    'Context filter: ' + (CONTEXT_FILTER ? 'enabled (max ' + CONTEXT_MAX_AGE_MIN + 'min stale)' : 'disabled')
   );
 });
 
-// Graceful shutdown: chiudi le connessioni HTTP prima di uscire (utile in
-// container orchestrator che inviano SIGTERM prima di SIGKILL)
+// Graceful shutdown
 function shutdown(sig) {
   console.log('[shutdown] ricevuto ' + sig + ' — chiusura server HTTP');
   server.close(() => {
     console.log('[shutdown] server HTTP chiuso, exit 0');
     process.exit(0);
   });
-  // hard timeout di sicurezza
   setTimeout(() => {
     console.error('[shutdown] forced exit dopo 10s');
     process.exit(1);
