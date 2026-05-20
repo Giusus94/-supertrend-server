@@ -1,1478 +1,480 @@
 <!DOCTYPE html>
 <html lang="it">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#0b0d12">
-<title>ST.EA — Pine Signals Console</title>
-
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,300;1,9..144,400&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
-
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ST-EA Relay Dashboard</title>
 <style>
-/* ══════════════════════════════════════════════════════════════════════════
-   DESIGN TOKENS — copper/dark editorial
-   ══════════════════════════════════════════════════════════════════════════ */
-:root {
-  --c-void:    #07080b;
-  --c-base:    #0b0d12;
-  --c-surface: #11141b;
-  --c-raised:  #161a23;
-  --c-elevate: #1d222d;
-
-  --c-line-1:  #1a1e28;
-  --c-line-2:  #242935;
-  --c-line-3:  #313644;
-
-  --t-ghost:   #2a3142;
-  --t-faint:   #404a5e;
-  --t-mute:    #5a657d;
-  --t-soft:    #7e8aa3;
-  --t-body:    #a4b0c8;
-  --t-strong:  #d4ddec;
-  --t-pure:    #f0f2f8;
-
-  --a-copper:    #c89878;
-  --a-copper-d:  #a87858;
-  --a-copper-l:  #e8b896;
-  --a-copper-bg: rgba(200,152,120,0.08);
-  --a-copper-bd: rgba(200,152,120,0.22);
-  --a-copper-gw: rgba(200,152,120,0.35);
-
-  --d-up:    #6dcfa6;
-  --d-up-d:  #4eb88a;
-  --d-up-bg: rgba(109,207,166,0.08);
-  --d-up-bd: rgba(109,207,166,0.20);
-
-  --d-dn:    #e07a8a;
-  --d-dn-d:  #c85a6c;
-  --d-dn-bg: rgba(224,122,138,0.08);
-  --d-dn-bd: rgba(224,122,138,0.20);
-
-  --a-steel:    #7a9bbf;
-  --a-steel-bg: rgba(122,155,191,0.08);
-  --a-steel-bd: rgba(122,155,191,0.22);
-
-  --ff-display: 'Fraunces', Georgia, serif;
-  --ff-mono:    'JetBrains Mono', 'SF Mono', monospace;
-}
-
-*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-
-html { background:var(--c-void); }
+* { box-sizing: border-box; margin: 0; padding: 0; }
 body {
-  min-height:100vh;
-  background:var(--c-base);
-  color:var(--t-body);
-  font-family:var(--ff-mono);
-  font-size:13px;
-  line-height:1.5;
-  overflow-x:hidden;
-  -webkit-font-smoothing:antialiased;
-  -moz-osx-font-smoothing:grayscale;
-  letter-spacing:-0.01em;
+  font-family: 'SF Mono', 'Consolas', 'Menlo', monospace;
+  background: #0d1117;
+  color: #c9d1d9;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 16px;
 }
+header {
+  border-bottom: 1px solid #30363d;
+  padding-bottom: 12px;
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+header h1 { font-size: 18px; font-weight: 600; color: #58a6ff; }
+header .meta { font-size: 11px; color: #8b949e; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+.dot-ok   { background: #3fb950; }
+.dot-warn { background: #d29922; }
+.dot-bad  { background: #f85149; }
 
-::-webkit-scrollbar { width:4px; height:4px; }
-::-webkit-scrollbar-track { background:transparent; }
-::-webkit-scrollbar-thumb { background:var(--c-line-2); }
-::-webkit-scrollbar-thumb:hover { background:var(--c-line-3); }
+section {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 14px;
+  margin-bottom: 16px;
+}
+section h2 {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #8b949e;
+  margin-bottom: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+section h2 .badge {
+  background: #21262d;
+  color: #c9d1d9;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.grid-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+.kv { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: #0d1117; border-radius: 4px; border: 1px solid #21262d; }
+.kv .k { color: #8b949e; font-size: 11px; }
+.kv .v { color: #c9d1d9; font-weight: 600; }
+.kv .v.on  { color: #3fb950; }
+.kv .v.off { color: #f85149; }
 
-button, input, select { font-family:inherit; font-size:inherit; color:inherit; outline:none; border:none; background:none; }
-button { cursor:pointer; }
-a { color:inherit; text-decoration:none; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th { text-align: left; padding: 8px 10px; border-bottom: 1px solid #30363d; color: #8b949e; font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+td { padding: 8px 10px; border-bottom: 1px solid #21262d; vertical-align: middle; }
+tr:hover td { background: #1c2128; }
 
-/* Film grain overlay */
-body::before {
-  content:'';
-  position:fixed; inset:0;
-  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.92' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
-  pointer-events:none;
-  z-index:1;
-  mix-blend-mode:overlay;
-}
+.tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; letter-spacing: 0.3px; }
+.tag-up      { background: #0d4429; color: #3fb950; }
+.tag-down    { background: #4d1414; color: #f85149; }
+.tag-neutral { background: #1d2731; color: #8b949e; }
+.tag-trend   { background: #1f3a5f; color: #58a6ff; }
+.tag-range   { background: #3d2c4f; color: #d2a8ff; }
+.tag-chaos   { background: #4d1414; color: #f85149; }
+.tag-allow   { background: #0d4429; color: #3fb950; }
+.tag-warn    { background: #4d3f0e; color: #d29922; }
+.tag-block   { background: #4d1414; color: #f85149; }
+.tag-long    { background: #0d4429; color: #3fb950; }
+.tag-short   { background: #4d1414; color: #f85149; }
+.tag-win     { background: #0d4429; color: #3fb950; }
+.tag-loss    { background: #4d1414; color: #f85149; }
+.tag-expired { background: #2c2c2c; color: #8b949e; }
+.tag-sweep   { background: #4d3f0e; color: #d29922; }
+.tag-clean   { background: #0d4429; color: #3fb950; }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   LAYOUT
-   ══════════════════════════════════════════════════════════════════════════ */
-.shell {
-  position:relative;
-  z-index:2;
-  max-width:1400px;
-  margin:0 auto;
-  padding:24px 24px 80px;
-}
-@media(max-width:600px) { .shell { padding:14px 12px 80px; } }
+.r-pos { color: #3fb950; font-weight: 600; }
+.r-neg { color: #f85149; font-weight: 600; }
+.muted { color: #6e7681; }
+.mono  { font-family: 'SF Mono', 'Consolas', monospace; }
+.fuel-bar { display: inline-block; width: 60px; height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; vertical-align: middle; margin: 0 4px; }
+.fuel-bar > div { height: 100%; background: linear-gradient(90deg, #58a6ff, #3fb950); }
 
-/* ──────── HEADER ──────── */
-.head {
-  display:flex;
-  align-items:flex-end;
-  justify-content:space-between;
-  gap:24px;
-  flex-wrap:wrap;
-  padding-bottom:24px;
-  margin-bottom:24px;
-  border-bottom:1px solid var(--c-line-1);
+.stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; }
+.stat-box {
+  background: #0d1117;
+  border: 1px solid #21262d;
+  border-radius: 6px;
+  padding: 12px;
+  text-align: center;
 }
-.head-brand {
-  display:flex;
-  flex-direction:column;
-  gap:4px;
-}
-.brand-mark {
-  font-family:var(--ff-display);
-  font-size:46px;
-  font-weight:400;
-  font-style:italic;
-  letter-spacing:-0.04em;
-  color:var(--t-pure);
-  line-height:0.95;
-}
-.brand-mark em {
-  color:var(--a-copper);
-  font-style:normal;
-  display:inline-block;
-  margin:0 -0.04em;
-}
-.brand-tag {
-  font-family:var(--ff-mono);
-  font-size:9px;
-  letter-spacing:0.24em;
-  color:var(--t-faint);
-  text-transform:uppercase;
-  margin-top:6px;
-}
-.head-meta {
-  display:flex;
-  align-items:flex-end;
-  gap:24px;
-  flex-wrap:wrap;
-}
-.meta-block {
-  display:flex;
-  flex-direction:column;
-  align-items:flex-end;
-  gap:2px;
-}
-.meta-lbl {
-  font-family:var(--ff-mono);
-  font-size:8px;
-  letter-spacing:0.2em;
-  text-transform:uppercase;
-  color:var(--t-faint);
-}
-.meta-val {
-  font-family:var(--ff-mono);
-  font-size:14px;
-  font-variant-numeric:tabular-nums;
-  color:var(--t-strong);
-  letter-spacing:0.02em;
-}
+.stat-box .label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+.stat-box .value { font-size: 22px; font-weight: 700; color: #c9d1d9; }
+.stat-box .value.green { color: #3fb950; }
+.stat-box .value.red   { color: #f85149; }
+.stat-box .value.blue  { color: #58a6ff; }
+.stat-box .sub { font-size: 10px; color: #6e7681; margin-top: 4px; }
 
-@media(max-width:600px) {
-  .brand-mark { font-size:34px; }
-  .head-meta { gap:14px; }
-  .meta-val { font-size:12px; }
-}
+.empty { padding: 20px; text-align: center; color: #6e7681; font-style: italic; }
 
-/* ──────── STATUS PILLS ──────── */
-.pills {
-  display:flex;
-  gap:8px;
-  flex-wrap:wrap;
-  margin-bottom:24px;
+button {
+  background: #21262d;
+  color: #c9d1d9;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
 }
-.pill {
-  display:inline-flex;
-  align-items:center;
-  gap:7px;
-  padding:6px 12px;
-  border:1px solid var(--c-line-2);
-  background:var(--c-surface);
-  font-family:var(--ff-mono);
-  font-size:10px;
-  letter-spacing:0.1em;
-  text-transform:uppercase;
-  color:var(--t-mute);
-  border-radius:999px;
-}
-.pill .dt { width:5px; height:5px; border-radius:50%; background:var(--t-ghost); }
-.pill .dt.on { background:var(--d-up); box-shadow:0 0 8px rgba(109,207,166,0.5); animation:pulse-soft 2.4s infinite; }
-.pill .dt.warn { background:var(--a-copper); }
-.pill.live { color:var(--d-up); border-color:var(--d-up-bd); }
-.pill.warn { color:var(--a-copper); border-color:var(--a-copper-bd); }
-@keyframes pulse-soft { 0%,100%{opacity:1;} 50%{opacity:0.45;} }
+button:hover { background: #30363d; border-color: #8b949e; }
+button.primary { background: #1f3a5f; border-color: #58a6ff; color: #58a6ff; }
+button.primary:hover { background: #264c7d; }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   STRATEGY HERO — 3 cards (one per Pine strategy)
-   ══════════════════════════════════════════════════════════════════════════ */
-.strats {
-  display:grid;
-  grid-template-columns:1fr;
-  gap:14px;
-  margin-bottom:32px;
-}
-@media(min-width:768px) { .strats { grid-template-columns:repeat(3,1fr); } }
-
-.strat {
-  background:var(--c-surface);
-  border:1px solid var(--c-line-1);
-  padding:20px 22px;
-  position:relative;
-  transition:border-color 0.2s, transform 0.2s;
-}
-.strat::before {
-  content:'';
-  position:absolute;
-  top:0; left:0; right:0;
-  height:2px;
-  background:var(--strat-color, var(--a-copper));
-  opacity:0.6;
-}
-.strat:hover {
-  border-color:var(--strat-color, var(--a-copper));
-}
-.strat[data-strat="trend_rider"]    { --strat-color:#6dcfa6; }
-.strat[data-strat="breakout_hunter"]{ --strat-color:#c89878; }
-.strat[data-strat="range_scalper"]  { --strat-color:#7a9bbf; }
-
-.strat-head {
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  margin-bottom:14px;
-  padding-bottom:12px;
-  border-bottom:1px solid var(--c-line-1);
-}
-.strat-id {
-  display:flex;
-  flex-direction:column;
-  gap:2px;
-}
-.strat-glyph {
-  font-family:var(--ff-display);
-  font-size:24px;
-  font-style:italic;
-  font-weight:400;
-  letter-spacing:-0.025em;
-  color:var(--t-pure);
-  line-height:1;
-  display:flex;
-  align-items:center;
-  gap:8px;
-}
-.strat-glyph::before {
-  content:'';
-  display:inline-block;
-  width:8px;
-  height:8px;
-  border-radius:50%;
-  background:var(--strat-color);
-}
-.strat-tag {
-  font-family:var(--ff-mono);
-  font-size:9px;
-  letter-spacing:0.2em;
-  color:var(--t-faint);
-  text-transform:uppercase;
-}
-.strat-total {
-  font-family:var(--ff-display);
-  font-size:38px;
-  font-weight:400;
-  font-style:italic;
-  letter-spacing:-0.04em;
-  line-height:0.95;
-  color:var(--t-pure);
-  font-variant-numeric:tabular-nums;
-}
-
-.strat-grid {
-  display:grid;
-  grid-template-columns:1fr 1fr;
-  gap:10px 14px;
-  font-family:var(--ff-mono);
-  font-size:11px;
-}
-.strat-cell {
-  display:flex;
-  flex-direction:column;
-  gap:3px;
-}
-.strat-cell-lbl {
-  font-size:8px;
-  letter-spacing:0.18em;
-  color:var(--t-faint);
-  text-transform:uppercase;
-}
-.strat-cell-val {
-  color:var(--t-strong);
-  font-weight:500;
-  font-variant-numeric:tabular-nums;
-}
-.strat-cell-val.up { color:var(--d-up); }
-.strat-cell-val.dn { color:var(--d-dn); }
-.strat-cell-val.cu { color:var(--a-copper); }
-
-.strat-last {
-  margin-top:14px;
-  padding-top:12px;
-  border-top:1px dashed var(--c-line-1);
-  font-family:var(--ff-mono);
-  font-size:10px;
-  color:var(--t-mute);
-  letter-spacing:0.04em;
-}
-.strat-last b { color:var(--t-strong); font-weight:500; }
-.strat-last.up b { color:var(--d-up); }
-.strat-last.dn b { color:var(--d-dn); }
-
-/* ══════════════════════════════════════════════════════════════════════════
-   GLOBAL STATS BAR
-   ══════════════════════════════════════════════════════════════════════════ */
-.global-stats {
-  display:grid;
-  grid-template-columns:repeat(2,1fr);
-  gap:1px;
-  background:var(--c-line-1);
-  border:1px solid var(--c-line-1);
-  margin-bottom:24px;
-}
-@media(min-width:600px) { .global-stats { grid-template-columns:repeat(4,1fr); } }
-@media(min-width:1100px) { .global-stats { grid-template-columns:repeat(6,1fr); } }
-
-.gs-cell {
-  background:var(--c-surface);
-  padding:18px 16px;
-  text-align:center;
-}
-.gs-num {
-  font-family:var(--ff-display);
-  font-style:italic;
-  font-size:32px;
-  font-weight:400;
-  letter-spacing:-0.03em;
-  line-height:1;
-  color:var(--t-pure);
-  font-variant-numeric:tabular-nums;
-  margin-bottom:6px;
-}
-.gs-num.up { color:var(--d-up); }
-.gs-num.dn { color:var(--d-dn); }
-.gs-num.cu { color:var(--a-copper); }
-.gs-num.st { color:var(--a-steel); }
-.gs-lbl {
-  font-family:var(--ff-mono);
-  font-size:9px;
-  letter-spacing:0.18em;
-  color:var(--t-faint);
-  text-transform:uppercase;
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   SECTION TITLE
-   ══════════════════════════════════════════════════════════════════════════ */
-.sect-head {
-  display:flex;
-  align-items:flex-end;
-  justify-content:space-between;
-  gap:14px;
-  margin-bottom:14px;
-  padding-bottom:10px;
-  border-bottom:1px solid var(--c-line-1);
-}
-.sect-id { display:flex; flex-direction:column; gap:2px; }
-.sect-eyebrow {
-  font-family:var(--ff-mono);
-  font-size:9px;
-  letter-spacing:0.22em;
-  text-transform:uppercase;
-  color:var(--a-copper);
-}
-.sect-title {
-  font-family:var(--ff-display);
-  font-style:italic;
-  font-size:24px;
-  letter-spacing:-0.025em;
-  color:var(--t-pure);
-  line-height:1;
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   FILTERS
-   ══════════════════════════════════════════════════════════════════════════ */
-.filters {
-  display:flex;
-  gap:14px;
-  flex-wrap:wrap;
-  align-items:flex-end;
-  margin-bottom:14px;
-  padding:14px;
-  background:var(--c-surface);
-  border:1px solid var(--c-line-1);
-}
-
-.filter-group {
-  display:flex;
-  flex-direction:column;
-  gap:6px;
-}
-.filter-lbl {
-  font-family:var(--ff-mono);
-  font-size:8px;
-  letter-spacing:0.2em;
-  color:var(--t-faint);
-  text-transform:uppercase;
-}
-.filter-buttons {
-  display:flex;
-  gap:6px;
-  flex-wrap:wrap;
-}
-.fb {
-  padding:6px 12px;
-  font-family:var(--ff-mono);
-  font-size:10px;
-  letter-spacing:0.1em;
-  text-transform:uppercase;
-  color:var(--t-mute);
-  border:1px solid var(--c-line-2);
-  background:var(--c-base);
-  transition:all 0.15s;
-}
-.fb:hover {
-  color:var(--t-strong);
-  border-color:var(--c-line-3);
-}
-.fb.is-on {
-  color:var(--a-copper);
-  border-color:var(--a-copper);
-  background:var(--a-copper-bg);
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   SIGNAL LIST
-   ══════════════════════════════════════════════════════════════════════════ */
-.signals {
-  background:var(--c-surface);
-  border:1px solid var(--c-line-1);
-  margin-bottom:32px;
-}
-
-.sig {
-  display:grid;
-  grid-template-columns:auto 1fr auto;
-  gap:18px;
-  padding:14px 18px;
-  border-bottom:1px solid var(--c-line-1);
-  align-items:start;
-  position:relative;
-  transition:background 0.15s;
-}
-.sig:last-child { border-bottom:none; }
-.sig:hover { background:var(--c-raised); }
-.sig::before {
-  content:'';
-  position:absolute;
-  left:0; top:0; bottom:0;
-  width:3px;
-  background:var(--c-line-2);
-}
-.sig.long::before  { background:var(--d-up); }
-.sig.short::before { background:var(--d-dn); }
-
-.sig-left {
-  display:flex;
-  flex-direction:column;
-  gap:4px;
-  min-width:80px;
-}
-.sig-dir-pill {
-  display:inline-flex;
-  align-items:center;
-  gap:6px;
-  padding:3px 9px;
-  font-family:var(--ff-mono);
-  font-size:9px;
-  font-weight:500;
-  letter-spacing:0.15em;
-  border:1px solid;
-  border-radius:999px;
-  width:fit-content;
-}
-.sig-dir-pill.long  { color:var(--d-up); border-color:var(--d-up-bd); background:var(--d-up-bg); }
-.sig-dir-pill.short { color:var(--d-dn); border-color:var(--d-dn-bd); background:var(--d-dn-bg); }
-
-.sig-strat {
-  font-family:var(--ff-mono);
-  font-size:9px;
-  letter-spacing:0.12em;
-  color:var(--t-mute);
-  text-transform:uppercase;
-}
-
-.sig-mid {
-  display:flex;
-  flex-direction:column;
-  gap:5px;
-  min-width:0;
-}
-.sig-sym-row {
-  display:flex;
-  align-items:baseline;
-  gap:10px;
-  flex-wrap:wrap;
-}
-.sig-sym {
-  font-family:var(--ff-display);
-  font-style:italic;
-  font-size:18px;
-  letter-spacing:-0.02em;
-  color:var(--t-pure);
-  line-height:1;
-}
-.sig-tf {
-  font-family:var(--ff-mono);
-  font-size:9px;
-  color:var(--t-faint);
-  letter-spacing:0.1em;
-  text-transform:uppercase;
-}
-.sig-stars {
-  font-family:var(--ff-mono);
-  font-size:11px;
-  letter-spacing:0.05em;
-  color:var(--a-copper);
-}
-
-.sig-prices {
-  display:flex;
-  gap:14px;
-  flex-wrap:wrap;
-  font-family:var(--ff-mono);
-  font-size:11px;
-  color:var(--t-soft);
-}
-.sig-prices b { color:var(--t-strong); font-weight:500; font-variant-numeric:tabular-nums; }
-.sig-prices .lab {
-  font-size:8px;
-  letter-spacing:0.15em;
-  color:var(--t-faint);
-  text-transform:uppercase;
-  margin-right:4px;
-}
-
-.sig-meta {
-  display:flex;
-  gap:10px;
-  flex-wrap:wrap;
-  font-family:var(--ff-mono);
-  font-size:9px;
-  color:var(--t-mute);
-  letter-spacing:0.04em;
-}
-.sig-meta .chip {
-  display:inline-flex;
-  align-items:center;
-  gap:4px;
-  padding:2px 7px;
-  border:1px solid var(--c-line-2);
-  border-radius:3px;
-  background:var(--c-base);
-}
-.sig-meta .chip.warn { color:var(--a-copper); border-color:var(--a-copper-bd); }
-.sig-meta .chip.ok   { color:var(--d-up); border-color:var(--d-up-bd); }
-
-.sig-right {
-  display:flex;
-  flex-direction:column;
-  align-items:flex-end;
-  gap:4px;
-  white-space:nowrap;
-}
-.sig-rr {
-  font-family:var(--ff-display);
-  font-style:italic;
-  font-size:18px;
-  font-weight:400;
-  letter-spacing:-0.02em;
-  color:var(--a-copper);
-  line-height:1;
-}
-.sig-rr-lbl {
-  font-family:var(--ff-mono);
-  font-size:8px;
-  letter-spacing:0.18em;
-  color:var(--t-faint);
-  text-transform:uppercase;
-}
-.sig-time {
-  font-family:var(--ff-mono);
-  font-size:9px;
-  color:var(--t-faint);
-  margin-top:6px;
-}
-
-@media(max-width:600px) {
-  .sig { grid-template-columns:1fr; gap:10px; }
-  .sig-right { align-items:flex-start; flex-direction:row; gap:10px; }
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   EMPTY STATE
-   ══════════════════════════════════════════════════════════════════════════ */
-.empty {
-  padding:60px 22px;
-  text-align:center;
-  font-family:var(--ff-display);
-  font-style:italic;
-  font-size:18px;
-  color:var(--t-faint);
-  letter-spacing:0.005em;
-}
-.empty::before {
-  content:'';
-  display:block;
-  width:32px;
-  height:1px;
-  background:var(--t-ghost);
-  margin:0 auto 14px;
-}
-.empty-sub {
-  display:block;
-  font-family:var(--ff-mono);
-  font-size:11px;
-  letter-spacing:0.1em;
-  color:var(--t-mute);
-  margin-top:8px;
-  font-style:normal;
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   SECONDARY GRIDS — instruments, scores, webhook stats
-   ══════════════════════════════════════════════════════════════════════════ */
-.two-col {
-  display:grid;
-  grid-template-columns:1fr;
-  gap:14px;
-  margin-bottom:24px;
-}
-@media(min-width:768px) { .two-col { grid-template-columns:1fr 1fr; } }
-
-.panel {
-  background:var(--c-surface);
-  border:1px solid var(--c-line-1);
-  padding:0;
-}
-.panel-head {
-  padding:14px 18px 10px;
-  border-bottom:1px solid var(--c-line-1);
-}
-.panel-eyebrow {
-  font-family:var(--ff-mono);
-  font-size:8px;
-  letter-spacing:0.2em;
-  text-transform:uppercase;
-  color:var(--t-faint);
-  margin-bottom:3px;
-}
-.panel-name {
-  font-family:var(--ff-display);
-  font-style:italic;
-  font-size:16px;
-  letter-spacing:-0.02em;
-  color:var(--t-strong);
-}
-
-.bar-row {
-  display:grid;
-  grid-template-columns:80px 1fr auto;
-  gap:14px;
-  align-items:center;
-  padding:9px 18px;
-  border-bottom:1px dashed var(--c-line-1);
-}
-.bar-row:last-child { border-bottom:none; }
-.bar-key {
-  font-family:var(--ff-mono);
-  font-size:11px;
-  font-weight:500;
-  color:var(--t-strong);
-  letter-spacing:0.05em;
-}
-.bar-track {
-  position:relative;
-  height:6px;
-  background:var(--c-base);
-  overflow:hidden;
-}
-.bar-fill {
-  position:absolute;
-  inset:0 auto 0 0;
-  background:linear-gradient(90deg, var(--a-copper-d), var(--a-copper));
-  transition:width 0.4s ease;
-}
-.bar-val {
-  font-family:var(--ff-mono);
-  font-size:10px;
-  color:var(--t-mute);
-  font-variant-numeric:tabular-nums;
-}
-
-/* Score histogram (5 bars) */
-.score-grid {
-  display:grid;
-  grid-template-columns:repeat(5,1fr);
-  gap:8px;
-  padding:18px;
-}
-.score-col {
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  gap:8px;
-}
-.score-bar {
-  width:100%;
-  height:80px;
-  position:relative;
-  background:var(--c-base);
-  border:1px solid var(--c-line-2);
-  display:flex;
-  align-items:flex-end;
-  overflow:hidden;
-}
-.score-fill {
-  width:100%;
-  background:linear-gradient(180deg, var(--a-copper), var(--a-copper-d));
-  transition:height 0.5s ease;
-}
-.score-num {
-  font-family:var(--ff-display);
-  font-style:italic;
-  font-size:14px;
-  color:var(--t-strong);
-  font-variant-numeric:tabular-nums;
-}
-.score-stars {
-  font-family:var(--ff-mono);
-  font-size:9px;
-  color:var(--a-copper);
-  letter-spacing:0.05em;
-}
-
-/* Webhook health panel */
-.health {
-  padding:18px;
-  display:grid;
-  grid-template-columns:repeat(2,1fr);
-  gap:12px;
-  font-family:var(--ff-mono);
-  font-size:11px;
-}
-@media(min-width:600px) { .health { grid-template-columns:repeat(3,1fr); } }
-.health-cell {
-  display:flex;
-  flex-direction:column;
-  gap:4px;
-}
-.health-lbl {
-  font-size:8px;
-  letter-spacing:0.18em;
-  color:var(--t-faint);
-  text-transform:uppercase;
-}
-.health-val {
-  font-family:var(--ff-display);
-  font-style:italic;
-  font-size:22px;
-  font-weight:400;
-  color:var(--t-strong);
-  font-variant-numeric:tabular-nums;
-  letter-spacing:-0.02em;
-  line-height:1;
-}
-.health-val.up { color:var(--d-up); }
-.health-val.dn { color:var(--d-dn); }
-.health-val.cu { color:var(--a-copper); }
-.health-val.mu { color:var(--t-mute); }
-
-/* ══════════════════════════════════════════════════════════════════════════
-   BUTTONS
-   ══════════════════════════════════════════════════════════════════════════ */
-.btn {
-  padding:10px 22px;
-  font-family:var(--ff-mono);
-  font-size:10px;
-  letter-spacing:0.18em;
-  text-transform:uppercase;
-  font-weight:500;
-  border:1px solid;
-  cursor:pointer;
-  background:transparent;
-  transition:all 0.18s;
-  display:inline-flex;
-  align-items:center;
-  gap:8px;
-}
-.btn-cu {
-  color:var(--a-copper);
-  border-color:var(--a-copper-bd);
-}
-.btn-cu:hover {
-  background:var(--a-copper-bg);
-  border-color:var(--a-copper);
-}
-.btn-mu {
-  color:var(--t-mute);
-  border-color:var(--c-line-2);
-}
-.btn-mu:hover {
-  color:var(--t-strong);
-  border-color:var(--c-line-3);
-}
-
-.toolbar {
-  display:flex;
-  gap:8px;
-  flex-wrap:wrap;
-  margin-bottom:14px;
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   TOAST
-   ══════════════════════════════════════════════════════════════════════════ */
-.toast {
-  position:fixed;
-  bottom:30px;
-  left:50%;
-  transform:translateX(-50%) translateY(20px);
-  background:var(--c-elevate);
-  border:1px solid var(--c-line-3);
-  padding:11px 22px;
-  font-family:var(--ff-mono);
-  font-size:11px;
-  letter-spacing:0.08em;
-  color:var(--t-strong);
-  opacity:0;
-  transition:all 0.3s;
-  z-index:1000;
-  pointer-events:none;
-  white-space:nowrap;
-  box-shadow:0 8px 32px rgba(0,0,0,0.55);
-}
-.toast.show {
-  opacity:1;
-  transform:translateX(-50%) translateY(0);
-}
-.toast.ok { border-color:var(--d-up-bd); color:var(--d-up); }
-.toast.err { border-color:var(--d-dn-bd); color:var(--d-dn); }
-
-/* ══════════════════════════════════════════════════════════════════════════
-   ANIMATIONS
-   ══════════════════════════════════════════════════════════════════════════ */
-@keyframes fadeUp {
-  from { opacity:0; transform:translateY(8px); }
-  to { opacity:1; transform:none; }
-}
-.strats > .strat {
-  animation:fadeUp 0.4s ease both;
-}
-.strats > .strat:nth-child(1) { animation-delay:0.05s; }
-.strats > .strat:nth-child(2) { animation-delay:0.12s; }
-.strats > .strat:nth-child(3) { animation-delay:0.19s; }
-
-@keyframes flash-cu {
-  0%,100% { background:var(--c-surface); }
-  50% { background:var(--a-copper-bg); }
-}
-.sig.flash { animation:flash-cu 0.8s ease; }
-
+.refresh-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 12px;
+  font-size: 10px;
+  color: #8b949e;
+}
+.refresh-pill .pulse {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #3fb950;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 </style>
 </head>
 <body>
 
-<div class="shell">
-
-  <!-- ═════════════════════════════════════════════════════════════════════
-       HEADER
-       ═════════════════════════════════════════════════════════════════════ -->
-  <header class="head">
-    <div class="head-brand">
-      <div class="brand-mark">st<em>.</em>ea</div>
-      <div class="brand-tag">Pine Signals Console · v3</div>
-    </div>
-    <div class="head-meta">
-      <div class="meta-block">
-        <div class="meta-lbl">UTC</div>
-        <div class="meta-val" id="clockUtc">—</div>
-      </div>
-      <div class="meta-block">
-        <div class="meta-lbl">Local</div>
-        <div class="meta-val" id="clockLocal">—</div>
-      </div>
-      <div class="meta-block">
-        <div class="meta-lbl">Uptime</div>
-        <div class="meta-val" id="uptime">—</div>
-      </div>
-    </div>
-  </header>
-
-  <!-- STATUS PILLS -->
-  <div class="pills">
-    <div class="pill" id="pillTg"><span class="dt"></span>Telegram</div>
-    <div class="pill" id="pillToken"><span class="dt"></span>Webhook Token</div>
-    <div class="pill" id="pillFilter"><span class="dt"></span>Filters</div>
-    <div class="pill" id="pillReceived"><span class="dt"></span>0 received</div>
-  </div>
-
-  <!-- ═════════════════════════════════════════════════════════════════════
-       3 STRATEGY HERO CARDS
-       ═════════════════════════════════════════════════════════════════════ -->
-  <section class="strats" id="strats">
-    <div class="strat" data-strat="trend_rider">
-      <div class="strat-head">
-        <div class="strat-id">
-          <div class="strat-glyph">Trend Rider</div>
-          <div class="strat-tag">EMA stack · MACD · HTF · H1/H4</div>
-        </div>
-        <div class="strat-total" id="tot-trend_rider">0</div>
-      </div>
-      <div class="strat-grid">
-        <div class="strat-cell"><div class="strat-cell-lbl">Long</div><div class="strat-cell-val up" id="long-trend_rider">0</div></div>
-        <div class="strat-cell"><div class="strat-cell-lbl">Short</div><div class="strat-cell-val dn" id="short-trend_rider">0</div></div>
-        <div class="strat-cell"><div class="strat-cell-lbl">Avg Score</div><div class="strat-cell-val cu" id="avg-trend_rider">—</div></div>
-        <div class="strat-cell"><div class="strat-cell-lbl">Last</div><div class="strat-cell-val" id="time-trend_rider">never</div></div>
-      </div>
-      <div class="strat-last" id="last-trend_rider">—</div>
-    </div>
-
-    <div class="strat" data-strat="breakout_hunter">
-      <div class="strat-head">
-        <div class="strat-id">
-          <div class="strat-glyph">Breakout Hunter</div>
-          <div class="strat-tag">Donchian · Volume · ATR · M15/H1</div>
-        </div>
-        <div class="strat-total" id="tot-breakout_hunter">0</div>
-      </div>
-      <div class="strat-grid">
-        <div class="strat-cell"><div class="strat-cell-lbl">Long</div><div class="strat-cell-val up" id="long-breakout_hunter">0</div></div>
-        <div class="strat-cell"><div class="strat-cell-lbl">Short</div><div class="strat-cell-val dn" id="short-breakout_hunter">0</div></div>
-        <div class="strat-cell"><div class="strat-cell-lbl">Avg Score</div><div class="strat-cell-val cu" id="avg-breakout_hunter">—</div></div>
-        <div class="strat-cell"><div class="strat-cell-lbl">Last</div><div class="strat-cell-val" id="time-breakout_hunter">never</div></div>
-      </div>
-      <div class="strat-last" id="last-breakout_hunter">—</div>
-    </div>
-
-    <div class="strat" data-strat="range_scalper">
-      <div class="strat-head">
-        <div class="strat-id">
-          <div class="strat-glyph">Range Scalper</div>
-          <div class="strat-tag">Bollinger · RSI · ADX low · M5/M15</div>
-        </div>
-        <div class="strat-total" id="tot-range_scalper">0</div>
-      </div>
-      <div class="strat-grid">
-        <div class="strat-cell"><div class="strat-cell-lbl">Long</div><div class="strat-cell-val up" id="long-range_scalper">0</div></div>
-        <div class="strat-cell"><div class="strat-cell-lbl">Short</div><div class="strat-cell-val dn" id="short-range_scalper">0</div></div>
-        <div class="strat-cell"><div class="strat-cell-lbl">Avg Score</div><div class="strat-cell-val cu" id="avg-range_scalper">—</div></div>
-        <div class="strat-cell"><div class="strat-cell-lbl">Last</div><div class="strat-cell-val" id="time-range_scalper">never</div></div>
-      </div>
-      <div class="strat-last" id="last-range_scalper">—</div>
-    </div>
-  </section>
-
-  <!-- ═════════════════════════════════════════════════════════════════════
-       GLOBAL STATS
-       ═════════════════════════════════════════════════════════════════════ -->
-  <section class="global-stats">
-    <div class="gs-cell"><div class="gs-num cu" id="gsTotal">0</div><div class="gs-lbl">Total Signals</div></div>
-    <div class="gs-cell"><div class="gs-num up" id="gsLongs">0</div><div class="gs-lbl">Longs</div></div>
-    <div class="gs-cell"><div class="gs-num dn" id="gsShorts">0</div><div class="gs-lbl">Shorts</div></div>
-    <div class="gs-cell"><div class="gs-num st" id="gsAccepted">0</div><div class="gs-lbl">Accepted</div></div>
-    <div class="gs-cell"><div class="gs-num" id="gsFiltered">0</div><div class="gs-lbl">Filtered</div></div>
-    <div class="gs-cell"><div class="gs-num" id="gsRejected">0</div><div class="gs-lbl">Rejected</div></div>
-  </section>
-
-  <!-- ═════════════════════════════════════════════════════════════════════
-       SIGNAL FEED
-       ═════════════════════════════════════════════════════════════════════ -->
-  <div class="sect-head">
-    <div class="sect-id">
-      <div class="sect-eyebrow">live feed</div>
-      <div class="sect-title">recent signals</div>
-    </div>
-    <div class="toolbar">
-      <button class="btn btn-cu" onclick="testTG()">test telegram</button>
-      <button class="btn btn-mu" onclick="resetStats()">reset stats</button>
+<header>
+  <div>
+    <h1>💥 ST-EA Relay Dashboard</h1>
+    <div class="meta" style="text-align:left; margin-top:4px;">
+      <span id="version" class="muted">v?</span> · <span id="uptime" class="muted">uptime ?</span> ·
+      Telegram <span id="tg-status"><span class="dot dot-warn"></span>?</span> ·
+      Token <span id="token-status"><span class="dot dot-warn"></span>?</span>
     </div>
   </div>
-
-  <!-- FILTERS -->
-  <div class="filters">
-    <div class="filter-group">
-      <div class="filter-lbl">Strategy</div>
-      <div class="filter-buttons" id="filterStrat">
-        <button class="fb is-on" data-val="">all</button>
-        <button class="fb" data-val="trend_rider">Trend</button>
-        <button class="fb" data-val="breakout_hunter">Breakout</button>
-        <button class="fb" data-val="range_scalper">Range</button>
-      </div>
-    </div>
-    <div class="filter-group">
-      <div class="filter-lbl">Direction</div>
-      <div class="filter-buttons" id="filterDir">
-        <button class="fb is-on" data-val="">all</button>
-        <button class="fb" data-val="long">Long</button>
-        <button class="fb" data-val="short">Short</button>
-      </div>
-    </div>
-    <div class="filter-group">
-      <div class="filter-lbl">Min Score</div>
-      <div class="filter-buttons" id="filterScore">
-        <button class="fb is-on" data-val="0">any</button>
-        <button class="fb" data-val="3">3+</button>
-        <button class="fb" data-val="4">4+</button>
-        <button class="fb" data-val="5">5</button>
-      </div>
-    </div>
+  <div>
+    <span class="refresh-pill"><span class="pulse"></span><span id="last-refresh">caricamento...</span></span>
+    <button onclick="loadAll()" class="primary">Refresh</button>
   </div>
+</header>
 
-  <div class="signals" id="signals">
-    <div class="empty">
-      No signals yet
-      <span class="empty-sub">in attesa che TradingView spari il primo alert</span>
-    </div>
-  </div>
+<section>
+  <h2>Filtri server <span class="badge" id="filters-summary">—</span></h2>
+  <div class="grid-filters" id="filters-grid"></div>
+</section>
 
-  <!-- ═════════════════════════════════════════════════════════════════════
-       SECONDARY GRIDS
-       ═════════════════════════════════════════════════════════════════════ -->
-  <div class="two-col">
-    <div class="panel">
-      <div class="panel-head">
-        <div class="panel-eyebrow">distribution</div>
-        <div class="panel-name">score histogram</div>
-      </div>
-      <div class="score-grid" id="scoreGrid">
-        <div class="score-col" data-score="1"><div class="score-bar"><div class="score-fill" style="height:0%"></div></div><div class="score-num">0</div><div class="score-stars">★</div></div>
-        <div class="score-col" data-score="2"><div class="score-bar"><div class="score-fill" style="height:0%"></div></div><div class="score-num">0</div><div class="score-stars">★★</div></div>
-        <div class="score-col" data-score="3"><div class="score-bar"><div class="score-fill" style="height:0%"></div></div><div class="score-num">0</div><div class="score-stars">★★★</div></div>
-        <div class="score-col" data-score="4"><div class="score-bar"><div class="score-fill" style="height:0%"></div></div><div class="score-num">0</div><div class="score-stars">★★★★</div></div>
-        <div class="score-col" data-score="5"><div class="score-bar"><div class="score-fill" style="height:0%"></div></div><div class="score-num">0</div><div class="score-stars">★★★★★</div></div>
-      </div>
-    </div>
+<section>
+  <h2>Trade tracker</h2>
+  <div class="stats-row" id="stats-trades"></div>
+</section>
 
-    <div class="panel">
-      <div class="panel-head">
-        <div class="panel-eyebrow">leaderboard</div>
-        <div class="panel-name">per instrument</div>
-      </div>
-      <div id="instrumentList">
-        <div class="empty" style="padding:30px">no data yet</div>
-      </div>
-    </div>
-  </div>
+<section>
+  <h2>Stato per simbolo <span class="badge" id="symbols-count">0 simboli</span></h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Simbolo</th>
+        <th>Context</th>
+        <th>Regime</th>
+        <th>Session</th>
+        <th>Struct H1</th>
+        <th>Struct H4</th>
+        <th>Sweep</th>
+        <th>Long fuel</th>
+        <th>Short fuel</th>
+        <th>Aggiornato</th>
+      </tr>
+    </thead>
+    <tbody id="symbols-tbody">
+      <tr><td colspan="10" class="empty">Nessun simbolo attivo</td></tr>
+    </tbody>
+  </table>
+</section>
 
-  <!-- WEBHOOK HEALTH -->
-  <div class="panel" style="margin-bottom:24px">
-    <div class="panel-head">
-      <div class="panel-eyebrow">diagnostics</div>
-      <div class="panel-name">webhook health</div>
-    </div>
-    <div class="health">
-      <div class="health-cell"><div class="health-lbl">Received</div><div class="health-val" id="whReceived">0</div></div>
-      <div class="health-cell"><div class="health-lbl">Accepted</div><div class="health-val up" id="whAccepted">0</div></div>
-      <div class="health-cell"><div class="health-lbl">Filtered</div><div class="health-val cu" id="whFiltered">0</div></div>
-      <div class="health-cell"><div class="health-lbl">Auth Rejected</div><div class="health-val dn" id="whAuth">0</div></div>
-      <div class="health-cell"><div class="health-lbl">Format Rejected</div><div class="health-val dn" id="whFormat">0</div></div>
-      <div class="health-cell"><div class="health-lbl">TG Failed</div><div class="health-val dn" id="whTg">0</div></div>
-    </div>
-  </div>
+<section>
+  <h2>Trade aperti <span class="badge" id="open-count">0</span></h2>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th><th>Simbolo</th><th>Dir</th><th>Entry</th><th>SL</th><th>TP</th>
+        <th>R:R</th><th>Score</th><th>Aperto da</th>
+      </tr>
+    </thead>
+    <tbody id="open-tbody">
+      <tr><td colspan="9" class="empty">Nessun trade aperto</td></tr>
+    </tbody>
+  </table>
+</section>
 
-</div>
+<section>
+  <h2>Trade chiusi recenti <span class="badge" id="closed-count">0</span></h2>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th><th>Simbolo</th><th>Dir</th><th>Esito</th>
+        <th>Entry</th><th>Exit</th><th>R-mult</th><th>Durata</th><th>Chiuso</th>
+      </tr>
+    </thead>
+    <tbody id="closed-tbody">
+      <tr><td colspan="9" class="empty">Nessun trade chiuso ancora</td></tr>
+    </tbody>
+  </table>
+</section>
 
-<div class="toast" id="toast"></div>
+<section>
+  <h2>Segnali recenti <span class="badge" id="signals-count">0</span></h2>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th><th>Time UTC</th><th>Simbolo</th><th>Dir</th>
+        <th>Entry</th><th>SL / TP</th><th>R:R</th><th>Score</th>
+        <th>Context</th><th>Struct</th>
+      </tr>
+    </thead>
+    <tbody id="signals-tbody">
+      <tr><td colspan="10" class="empty">Nessun segnale ricevuto ancora</td></tr>
+    </tbody>
+  </table>
+</section>
 
 <script>
-/* ══════════════════════════════════════════════════════════════════════════
-   STATE
-   ══════════════════════════════════════════════════════════════════════════ */
-var S = {
-  signals: [],
-  stats: null,
-  filter: { strategy: '', direction: '', minScore: 0 },
-  startTime: Date.now()
-};
+const REFRESH_MS = 15000;
 
-var STRAT_NAMES = {
-  trend_rider: 'Trend Rider',
-  breakout_hunter: 'Breakout Hunter',
-  range_scalper: 'Range Scalper'
-};
-
-/* ══════════════════════════════════════════════════════════════════════════
-   UTILITIES
-   ══════════════════════════════════════════════════════════════════════════ */
-function pad2(n) { return n < 10 ? '0' + n : '' + n; }
-
-function fmtTime(ms) {
-  if (!ms) return 'never';
-  var diff = Date.now() - ms;
-  if (diff < 60000) return Math.floor(diff/1000) + 's ago';
-  if (diff < 3600000) return Math.floor(diff/60000) + 'm ago';
-  if (diff < 86400000) return Math.floor(diff/3600000) + 'h ago';
-  return Math.floor(diff/86400000) + 'd ago';
+function fmtUptime(s) {
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
+  if (s < 86400) return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+  return Math.floor(s/86400) + 'g ' + Math.floor((s%86400)/3600) + 'h';
+}
+function fmtAge(ts) {
+  if (!ts) return '—';
+  const diff = (Date.now() - ts) / 1000;
+  if (diff < 60) return Math.round(diff) + 's fa';
+  if (diff < 3600) return Math.round(diff/60) + 'm fa';
+  if (diff < 86400) return Math.round(diff/3600) + 'h fa';
+  return Math.round(diff/86400) + 'g fa';
+}
+function fmtPrice(p) {
+  if (p === null || p === undefined) return '—';
+  if (p > 1000) return p.toFixed(2);
+  if (p > 10) return p.toFixed(3);
+  return p.toFixed(5);
+}
+function tag(cls, text) { return '<span class="tag tag-' + cls + '">' + text + '</span>'; }
+function regimeTag(r) {
+  if (!r) return '—';
+  const c = r === 'TREND' ? 'trend' : r === 'RANGE' ? 'range' : r === 'CHAOS' ? 'chaos' : 'neutral';
+  return tag(c, r);
+}
+function verdictTag(v) { if (!v) return '—'; return tag(v.toLowerCase(), v); }
+function biasTag(b) {
+  if (!b) return '—';
+  const c = b === 'UP' ? 'up' : b === 'DOWN' ? 'down' : 'neutral';
+  return tag(c, b);
+}
+function sweepTag(s) { if (!s || s === 'NONE') return tag('clean', 'OK'); return tag('sweep', s.replace('_', ' ')); }
+function fuelBar(pct) {
+  if (pct === null || pct === undefined) return '—';
+  const p = Math.max(0, Math.min(100, pct));
+  return '<span class="fuel-bar"><div style="width:' + p + '%"></div></span><span class="mono">' + Math.round(p) + '%</span>';
 }
 
-function fmtUptime(sec) {
-  var h = Math.floor(sec / 3600);
-  var m = Math.floor((sec % 3600) / 60);
-  var s = sec % 60;
-  return pad2(h) + ':' + pad2(m) + ':' + pad2(s);
-}
-
-function setTxt(id, v) { var e = document.getElementById(id); if (e) e.textContent = v; }
-function setHtml(id, v) { var e = document.getElementById(id); if (e) e.innerHTML = v; }
-
-function toast(msg, type) {
-  var e = document.getElementById('toast');
-  if (!e) return;
-  e.textContent = msg;
-  e.className = 'toast show ' + (type || '');
-  setTimeout(function() { e.className = 'toast'; }, 2500);
-}
-
-function stars(n) {
-  return '★'.repeat(Math.max(0, Math.min(5, n))) + '☆'.repeat(Math.max(0, Math.min(5, 5 - n)));
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   CLOCK
-   ══════════════════════════════════════════════════════════════════════════ */
-function tick() {
-  var d = new Date();
-  setTxt('clockUtc', pad2(d.getUTCHours()) + ':' + pad2(d.getUTCMinutes()) + ':' + pad2(d.getUTCSeconds()));
-  setTxt('clockLocal', pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()));
-}
-setInterval(tick, 1000);
-tick();
-
-/* ══════════════════════════════════════════════════════════════════════════
-   RENDER STRATEGY CARDS
-   ══════════════════════════════════════════════════════════════════════════ */
-function renderStrats() {
-  if (!S.stats) return;
-  var keys = ['trend_rider', 'breakout_hunter', 'range_scalper'];
-  keys.forEach(function(k) {
-    var s = S.stats.perStrategy[k];
-    if (!s) return;
-    setTxt('tot-' + k, s.total);
-    setTxt('long-' + k, s.longs);
-    setTxt('short-' + k, s.shorts);
-    setTxt('avg-' + k, s.avgScore > 0 ? s.avgScore.toFixed(1) : '—');
-    setTxt('time-' + k, fmtTime(s.lastTs));
-    var lastEl = document.getElementById('last-' + k);
-    if (lastEl) {
-      if (s.lastSignal) {
-        var dirCls = s.lastSignal.indexOf('LONG') === 0 ? 'up' : 'dn';
-        lastEl.className = 'strat-last ' + dirCls;
-        lastEl.innerHTML = 'Last: <b>' + s.lastSignal + '</b>';
-      } else {
-        lastEl.className = 'strat-last';
-        lastEl.textContent = 'No signals yet';
-      }
-    }
-  });
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   RENDER GLOBAL STATS
-   ══════════════════════════════════════════════════════════════════════════ */
-function renderGlobalStats() {
-  if (!S.stats) return;
-  setTxt('gsTotal', S.stats.totalSignals || 0);
-  setTxt('gsLongs', (S.stats.perDirection && S.stats.perDirection.long) || 0);
-  setTxt('gsShorts', (S.stats.perDirection && S.stats.perDirection.short) || 0);
-  setTxt('gsAccepted', S.stats.webhook.accepted || 0);
-  setTxt('gsFiltered', S.stats.webhook.filtered || 0);
-  var rejected = (S.stats.webhook.rejectedAuth || 0) + (S.stats.webhook.rejectedFormat || 0);
-  setTxt('gsRejected', rejected);
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   RENDER SIGNALS LIST
-   ══════════════════════════════════════════════════════════════════════════ */
-function passFilter(sig) {
-  if (S.filter.strategy && sig.strategy !== S.filter.strategy) return false;
-  if (S.filter.direction && sig.direction !== S.filter.direction) return false;
-  if (S.filter.minScore > 0 && sig.score < S.filter.minScore) return false;
-  return true;
-}
-
-function renderSignals() {
-  var el = document.getElementById('signals');
-  if (!el) return;
-  var list = (S.signals || []).filter(passFilter);
-  if (!list.length) {
-    el.innerHTML = '<div class="empty">No signals matching filter<span class="empty-sub">cambia i filtri o aspetta nuovi alert</span></div>';
-    return;
-  }
-  el.innerHTML = list.slice(0, 50).map(function(s) {
-    var dirCls = s.direction;
-    var stratLabel = STRAT_NAMES[s.strategy] || s.strategy;
-    var tfLabel = s.timeframe ? '<span class="sig-tf">TF ' + s.timeframe + '</span>' : '';
-
-    var chips = [];
-    if (s.adx) chips.push('<span class="chip">ADX ' + s.adx.toFixed(1) + '</span>');
-    if (s.rsi) chips.push('<span class="chip">RSI ' + s.rsi.toFixed(1) + '</span>');
-    if (s.volatility === 'HIGH') chips.push('<span class="chip warn">HIGH VOL</span>');
-    if (s.htfAligned) chips.push('<span class="chip ok">HTF aligned</span>');
-
-    return '<div class="sig ' + dirCls + '">' +
-      '<div class="sig-left">' +
-        '<div class="sig-dir-pill ' + dirCls + '">' + (dirCls === 'long' ? 'LONG' : 'SHORT') + '</div>' +
-        '<div class="sig-strat">' + stratLabel + '</div>' +
-      '</div>' +
-      '<div class="sig-mid">' +
-        '<div class="sig-sym-row">' +
-          '<span class="sig-sym">' + s.instrument + '</span>' +
-          tfLabel +
-          '<span class="sig-stars">' + stars(s.score) + '</span>' +
-        '</div>' +
-        '<div class="sig-prices">' +
-          '<span><span class="lab">Entry</span><b>' + s.price + '</b></span>' +
-          '<span><span class="lab">SL</span><b>' + s.sl + '</b></span>' +
-          '<span><span class="lab">TP</span><b>' + s.tp + '</b></span>' +
-        '</div>' +
-        (chips.length ? '<div class="sig-meta">' + chips.join('') + '</div>' : '') +
-      '</div>' +
-      '<div class="sig-right">' +
-        '<div class="sig-rr">1:' + (s.rr || 0).toFixed(2) + '</div>' +
-        '<div class="sig-rr-lbl">R:R</div>' +
-        '<div class="sig-time">' + fmtTime(s.ts) + '</div>' +
-      '</div>' +
-    '</div>';
-  }).join('');
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   RENDER SCORE HISTOGRAM
-   ══════════════════════════════════════════════════════════════════════════ */
-function renderScores() {
-  if (!S.stats) return;
-  var ps = S.stats.perScore || {};
-  var max = Math.max(1, ps[1]||0, ps[2]||0, ps[3]||0, ps[4]||0, ps[5]||0);
-  for (var i = 1; i <= 5; i++) {
-    var col = document.querySelector('.score-col[data-score="' + i + '"]');
-    if (!col) continue;
-    var v = ps[i] || 0;
-    var pct = (v / max) * 100;
-    col.querySelector('.score-fill').style.height = pct + '%';
-    col.querySelector('.score-num').textContent = v;
-  }
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   RENDER PER-INSTRUMENT
-   ══════════════════════════════════════════════════════════════════════════ */
-function renderInstruments() {
-  var el = document.getElementById('instrumentList');
-  if (!el || !S.stats) return;
-  var pi = S.stats.perInstrument || {};
-  var keys = Object.keys(pi);
-  if (!keys.length) {
-    el.innerHTML = '<div class="empty" style="padding:30px">no instruments yet</div>';
-    return;
-  }
-  keys.sort(function(a,b) { return (pi[b].total||0) - (pi[a].total||0); });
-  var max = Math.max.apply(null, keys.map(function(k){ return pi[k].total; }));
-  el.innerHTML = keys.slice(0, 12).map(function(k) {
-    var v = pi[k];
-    var pct = (v.total / max) * 100;
-    return '<div class="bar-row">' +
-      '<span class="bar-key">' + k + '</span>' +
-      '<div class="bar-track"><div class="bar-fill" style="width:' + pct + '%"></div></div>' +
-      '<span class="bar-val">' + v.total + ' <span style="color:var(--d-up)">↑' + v.longs + '</span> <span style="color:var(--d-dn)">↓' + v.shorts + '</span></span>' +
-    '</div>';
-  }).join('');
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   RENDER WEBHOOK HEALTH
-   ══════════════════════════════════════════════════════════════════════════ */
-function renderHealth() {
-  if (!S.stats || !S.stats.webhook) return;
-  var w = S.stats.webhook;
-  setTxt('whReceived', w.received || 0);
-  setTxt('whAccepted', w.accepted || 0);
-  setTxt('whFiltered', w.filtered || 0);
-  setTxt('whAuth', w.rejectedAuth || 0);
-  setTxt('whFormat', w.rejectedFormat || 0);
-  setTxt('whTg', w.telegramFailed || 0);
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   RENDER STATUS PILLS
-   ══════════════════════════════════════════════════════════════════════════ */
-function renderStatus(data) {
-  // Telegram
-  var pTg = document.getElementById('pillTg');
-  if (pTg) {
-    pTg.querySelector('.dt').className = 'dt ' + (data.telegramConnected ? 'on' : '');
-    pTg.classList.toggle('live', !!data.telegramConnected);
-    pTg.classList.toggle('warn', !data.telegramConnected);
-  }
-  // Token
-  var pTok = document.getElementById('pillToken');
-  if (pTok) {
-    pTok.querySelector('.dt').className = 'dt ' + (data.tokenConfigured ? 'on' : '');
-    pTok.classList.toggle('live', !!data.tokenConfigured);
-    pTok.classList.toggle('warn', !data.tokenConfigured);
-  }
-  // Filters
-  var pFil = document.getElementById('pillFilter');
-  if (pFil && data.filters) {
-    var f = data.filters;
-    var txt = 'min ' + f.MIN_SCORE + '/5';
-    if (f.BLOCK_HIGH_VOL) txt += ' · no HIGH';
-    pFil.innerHTML = '<span class="dt warn"></span>' + txt;
-    pFil.classList.add('warn');
-  }
-  // Received counter
-  var pRec = document.getElementById('pillReceived');
-  if (pRec && data.stats && data.stats.webhook) {
-    var n = data.stats.webhook.received || 0;
-    pRec.innerHTML = '<span class="dt ' + (n > 0 ? 'on' : '') + '"></span>' + n + ' received';
-    pRec.classList.toggle('live', n > 0);
-  }
-  // Uptime
-  if (data.uptime) setTxt('uptime', fmtUptime(data.uptime));
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   POLL SERVER STATUS
-   ══════════════════════════════════════════════════════════════════════════ */
-async function pollStatus() {
+async function fetchJSON(url) {
   try {
-    var r = await fetch('/api/status');
-    var d = await r.json();
-    if (!d.ok) return;
-
-    // Detect new signals (for flash effect)
-    var oldCount = S.signals.length;
-    var oldFirstTs = S.signals[0] ? S.signals[0].ts : 0;
-    S.stats = d.stats;
-    S.signals = d.signals || [];
-
-    renderStatus(d);
-    renderStrats();
-    renderGlobalStats();
-    renderSignals();
-    renderScores();
-    renderInstruments();
-    renderHealth();
-
-    // Flash on new signal
-    if (S.signals.length > 0 && S.signals[0].ts > oldFirstTs && oldFirstTs > 0) {
-      setTimeout(function() {
-        var first = document.querySelector('.signals .sig');
-        if (first) first.classList.add('flash');
-      }, 100);
-    }
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
   } catch(e) {
-    // network glitch
+    console.error('Fetch failed:', url, e);
+    return null;
   }
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   FILTERS
-   ══════════════════════════════════════════════════════════════════════════ */
-function setupFilters() {
-  document.querySelectorAll('#filterStrat .fb').forEach(function(b) {
-    b.addEventListener('click', function() {
-      document.querySelectorAll('#filterStrat .fb').forEach(function(x){ x.classList.remove('is-on'); });
-      b.classList.add('is-on');
-      S.filter.strategy = b.dataset.val;
-      renderSignals();
-    });
-  });
-  document.querySelectorAll('#filterDir .fb').forEach(function(b) {
-    b.addEventListener('click', function() {
-      document.querySelectorAll('#filterDir .fb').forEach(function(x){ x.classList.remove('is-on'); });
-      b.classList.add('is-on');
-      S.filter.direction = b.dataset.val;
-      renderSignals();
-    });
-  });
-  document.querySelectorAll('#filterScore .fb').forEach(function(b) {
-    b.addEventListener('click', function() {
-      document.querySelectorAll('#filterScore .fb').forEach(function(x){ x.classList.remove('is-on'); });
-      b.classList.add('is-on');
-      S.filter.minScore = parseInt(b.dataset.val) || 0;
-      renderSignals();
-    });
-  });
+function setIndicator(id, ok, label) {
+  const el = document.getElementById(id);
+  el.innerHTML = '<span class="dot dot-' + (ok ? 'ok' : 'bad') + '"></span>' + label;
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   ACTIONS
-   ══════════════════════════════════════════════════════════════════════════ */
-function adminHeaders() {
-  var t = localStorage.getItem('admin_token') || '';
-  return t ? { 'x-admin-token': t } : {};
+function renderFilters(filters) {
+  const grid = document.getElementById('filters-grid');
+  if (!filters) { grid.innerHTML = '<div class="empty">Filtri non disponibili</div>'; return; }
+  const items = [
+    { k: 'Min score',       v: filters.MIN_SCORE + '/5' },
+    { k: 'Block HIGH vol',  v: filters.BLOCK_HIGH_VOL ? 'ON' : 'OFF', cls: filters.BLOCK_HIGH_VOL ? 'on' : 'off' },
+    { k: 'Context filter',  v: filters.CONTEXT_FILTER ? 'ON' : 'OFF', cls: filters.CONTEXT_FILTER ? 'on' : 'off' },
+    { k: 'Structure filter',v: filters.STRUCTURE_FILTER ? 'ON' : 'OFF', cls: filters.STRUCTURE_FILTER ? 'on' : 'off' },
+    { k: 'Liquidity filter',v: filters.LIQUIDITY_FILTER ? 'ON' : 'OFF', cls: filters.LIQUIDITY_FILTER ? 'on' : 'off' },
+    { k: 'Context max age', v: filters.CONTEXT_MAX_AGE_MIN + ' min' },
+    { k: 'Trade expiry',    v: filters.TRADE_EXPIRY_HOURS + ' h' }
+  ];
+  grid.innerHTML = items.map(i =>
+    '<div class="kv"><span class="k">' + i.k + '</span>' +
+    '<span class="v ' + (i.cls || '') + '">' + i.v + '</span></div>'
+  ).join('');
+
+  const summary = 'score≥' + filters.MIN_SCORE +
+    ' · ctx=' + (filters.CONTEXT_FILTER ? 'on' : 'off') +
+    ' · str=' + (filters.STRUCTURE_FILTER ? 'on' : 'off') +
+    ' · liq=' + (filters.LIQUIDITY_FILTER ? 'on' : 'off');
+  document.getElementById('filters-summary').textContent = summary;
 }
 
-function promptAdminToken() {
-  var t = prompt('Admin token richiesto (configura ADMIN_TOKEN sul server):');
-  if (t) localStorage.setItem('admin_token', t);
-  return !!t;
+function renderStatsTrades(t) {
+  const el = document.getElementById('stats-trades');
+  if (!t) { el.innerHTML = '<div class="empty">No data</div>'; return; }
+  el.innerHTML =
+    '<div class="stat-box"><div class="label">Aperti</div><div class="value blue">' + t.openNow + '</div></div>' +
+    '<div class="stat-box"><div class="label">Win</div><div class="value green">' + t.win + '</div></div>' +
+    '<div class="stat-box"><div class="label">Loss</div><div class="value red">' + t.loss + '</div></div>' +
+    '<div class="stat-box"><div class="label">Expired</div><div class="value">' + t.expired + '</div></div>' +
+    '<div class="stat-box"><div class="label">Win rate</div><div class="value ' + (t.winRate >= 50 ? 'green' : 'red') + '">' + t.winRate + '%</div><div class="sub">su ' + (t.win + t.loss + t.expired) + ' chiusi</div></div>' +
+    '<div class="stat-box"><div class="label">Avg R</div><div class="value ' + (t.avgR >= 0 ? 'green' : 'red') + '">' + (t.avgR >= 0 ? '+' : '') + t.avgR + '</div></div>' +
+    '<div class="stat-box"><div class="label">Tot aperti</div><div class="value">' + t.totalOpened + '</div></div>';
 }
 
-// Esegue una fetch; se il server risponde 401 e adminProtected e' attivo,
-// chiede il token e ritenta una volta sola.
-async function adminFetch(url, opts) {
-  opts = opts || {};
-  opts.headers = Object.assign({}, opts.headers || {}, adminHeaders());
-  var r = await fetch(url, opts);
-  if (r.status === 401) {
-    if (!promptAdminToken()) return r;
-    opts.headers = Object.assign({}, opts.headers, adminHeaders());
-    r = await fetch(url, opts);
+function renderSymbols(symbols) {
+  const tbody = document.getElementById('symbols-tbody');
+  const keys = symbols ? Object.keys(symbols) : [];
+  document.getElementById('symbols-count').textContent = keys.length + ' simboli';
+  if (keys.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="10" class="empty">Nessun simbolo ha ancora inviato dati. Configura gli alert TradingView per iniziare.</td></tr>';
+    return;
   }
-  return r;
+  tbody.innerHTML = keys.sort().map(inst => {
+    const s = symbols[inst];
+    const ctx = s.context, str = s.structure, liq = s.liquidity;
+    const lastTs = Math.max(ctx ? ctx.ts : 0, str ? str.ts : 0, liq ? liq.ts : 0);
+    return '<tr>' +
+      '<td><strong>' + inst + '</strong></td>' +
+      '<td>' + (ctx ? verdictTag(ctx.verdict) : '—') + '</td>' +
+      '<td>' + (ctx ? regimeTag(ctx.regime) : '—') + '</td>' +
+      '<td>' + (ctx ? (ctx.session || '—') : '—') + '</td>' +
+      '<td>' + (str ? biasTag(str.bias_h1) : '—') + '</td>' +
+      '<td>' + (str ? biasTag(str.bias_h4) : '—') + '</td>' +
+      '<td>' + (liq ? sweepTag(liq.sweep) : '—') + '</td>' +
+      '<td>' + (liq ? fuelBar(liq.long_fuel_pct) : '—') + '</td>' +
+      '<td>' + (liq ? fuelBar(liq.short_fuel_pct) : '—') + '</td>' +
+      '<td class="muted">' + (lastTs ? fmtAge(lastTs) : '—') + '</td>' +
+    '</tr>';
+  }).join('');
 }
 
-async function testTG() {
-  toast('Sending test...', '');
-  try {
-    var r = await adminFetch('/api/test', { method: 'POST' });
-    var d = await r.json();
-    toast(d.ok ? 'Test sent · check Telegram' : (d.error || 'Telegram error'), d.ok ? 'ok' : 'err');
-  } catch(e) { toast('Network error', 'err'); }
+function renderOpenTrades(trades) {
+  const tbody = document.getElementById('open-tbody');
+  document.getElementById('open-count').textContent = trades.length;
+  if (trades.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" class="empty">Nessun trade aperto</td></tr>';
+    return;
+  }
+  tbody.innerHTML = trades.map(t => {
+    const rr = Math.abs(t.entry - t.sl) > 0 ? (Math.abs(t.tp - t.entry) / Math.abs(t.entry - t.sl)).toFixed(2) : '?';
+    return '<tr>' +
+      '<td>#' + t.id + '</td>' +
+      '<td><strong>' + t.instrument + '</strong></td>' +
+      '<td>' + tag(t.direction === 'long' ? 'long' : 'short', t.direction.toUpperCase()) + '</td>' +
+      '<td class="mono">' + fmtPrice(t.entry) + '</td>' +
+      '<td class="mono r-neg">' + fmtPrice(t.sl) + '</td>' +
+      '<td class="mono r-pos">' + fmtPrice(t.tp) + '</td>' +
+      '<td>1:' + rr + '</td>' +
+      '<td>' + '⭐'.repeat(t.score) + '</td>' +
+      '<td class="muted">' + fmtAge(t.openedAt) + '</td>' +
+    '</tr>';
+  }).join('');
 }
 
-async function resetStats() {
-  if (!confirm('Reset all stats and signal log?')) return;
-  try {
-    var r = await adminFetch('/api/reset', { method: 'POST' });
-    var d = await r.json();
-    toast(d.ok ? 'Stats reset' : (d.error || 'Reset failed'), d.ok ? 'ok' : 'err');
-    pollStatus();
-  } catch(e) { toast('Network error', 'err'); }
+function renderClosedTrades(trades) {
+  const tbody = document.getElementById('closed-tbody');
+  document.getElementById('closed-count').textContent = trades.length;
+  if (trades.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" class="empty">Nessun trade chiuso ancora</td></tr>';
+    return;
+  }
+  tbody.innerHTML = trades.slice(0, 20).map(t => {
+    let outcomeCls = 'expired';
+    if (t.status === 'WIN') outcomeCls = 'win';
+    else if (t.status === 'LOSS') outcomeCls = 'loss';
+    const r = t.rMultiple || 0;
+    const rCls = r > 0 ? 'r-pos' : r < 0 ? 'r-neg' : 'muted';
+    const durTxt = t.durationMin < 60
+      ? t.durationMin + 'm'
+      : (Math.round(t.durationMin / 6) / 10) + 'h';
+    return '<tr>' +
+      '<td>#' + t.id + '</td>' +
+      '<td><strong>' + t.instrument + '</strong></td>' +
+      '<td>' + tag(t.direction === 'long' ? 'long' : 'short', t.direction.toUpperCase()) + '</td>' +
+      '<td>' + tag(outcomeCls, t.status) + '</td>' +
+      '<td class="mono">' + fmtPrice(t.entry) + '</td>' +
+      '<td class="mono">' + (t.exitPrice !== null ? fmtPrice(t.exitPrice) : '—') + '</td>' +
+      '<td class="' + rCls + '">' + (r > 0 ? '+' : '') + r.toFixed(2) + 'R</td>' +
+      '<td>' + durTxt + '</td>' +
+      '<td class="muted">' + fmtAge(t.closedAt) + '</td>' +
+    '</tr>';
+  }).join('');
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   INIT
-   ══════════════════════════════════════════════════════════════════════════ */
-setupFilters();
-pollStatus();
-setInterval(pollStatus, 5000);
+function renderSignals(signals) {
+  const tbody = document.getElementById('signals-tbody');
+  document.getElementById('signals-count').textContent = signals.length;
+  if (signals.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="10" class="empty">Nessun segnale ricevuto ancora</td></tr>';
+    return;
+  }
+  tbody.innerHTML = signals.slice(0, 30).map(s => {
+    return '<tr>' +
+      '<td>#' + s.id + '</td>' +
+      '<td class="muted">' + (s.time ? s.time.slice(5, 22) : '—') + '</td>' +
+      '<td><strong>' + s.instrument + '</strong></td>' +
+      '<td>' + tag(s.direction === 'long' ? 'long' : 'short', s.direction.toUpperCase()) + '</td>' +
+      '<td class="mono">' + fmtPrice(s.price) + '</td>' +
+      '<td class="mono"><span class="r-neg">' + fmtPrice(s.sl) + '</span> / <span class="r-pos">' + fmtPrice(s.tp) + '</span></td>' +
+      '<td>1:' + s.rr + '</td>' +
+      '<td>' + '⭐'.repeat(s.score) + '</td>' +
+      '<td>' + (s.context ? regimeTag(s.context.regime) + ' ' + (s.context.session || '') : '<span class="muted">—</span>') + '</td>' +
+      '<td>' + (s.structure ? biasTag(s.structure.bias_h1) : '<span class="muted">—</span>') + '</td>' +
+    '</tr>';
+  }).join('');
+}
 
+async function loadAll() {
+  const data = await fetchJSON('/api/status');
+  if (!data || !data.ok) {
+    setIndicator('tg-status', false, 'errore');
+    setIndicator('token-status', false, 'errore');
+    document.getElementById('last-refresh').textContent = 'errore connessione';
+    return;
+  }
+  document.getElementById('version').textContent = 'v' + (data.version || '?');
+  document.getElementById('uptime').textContent = 'uptime ' + fmtUptime(data.uptime || 0);
+  setIndicator('tg-status', !!data.telegramConnected, data.telegramConnected ? 'connesso' : 'offline');
+  setIndicator('token-status', !!data.tokenConfigured, data.tokenConfigured ? 'configurato' : 'mancante');
+  renderFilters(data.filters);
+  if (data.stats && data.stats.trades) renderStatsTrades(data.stats.trades);
+  renderSymbols(data.symbols || {});
+  renderOpenTrades(data.openTrades || []);
+  renderClosedTrades(data.recentClosed || []);
+  renderSignals(data.signals || []);
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  const ss = String(now.getSeconds()).padStart(2, '0');
+  document.getElementById('last-refresh').textContent = 'aggiornato ' + hh + ':' + mm + ':' + ss;
+}
+
+loadAll();
+setInterval(loadAll, REFRESH_MS);
 </script>
-
 </body>
 </html>
