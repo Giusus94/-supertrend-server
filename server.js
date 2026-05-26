@@ -7,9 +7,19 @@ app.use(express.text({ limit: '10kb', type: 'text/plain' }));
 app.use(express.static('public'));
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ST-EA Relay v4.1 — All-in-One edition
+// ST-EA Relay v4.2 — All-in-One + Quality Score + TP multi-livello
 //
-// Architettura:
+// Novita' v4.2 (backward-compatible con Pine v4.1):
+//   - Quality Score 0-100 con grade A/B/C (sostituisce score 1-5)
+//   - TP1/TP2/TP3 con position partitioning (1/3 ognuno)
+//   - Break-even tracker (SL = entry dopo TP1 hit)
+//   - classifyClosedTrade: WIN = TP1 reached, indipendentemente da come ha chiuso
+//   - R-multiple calcolato come somma pesata 1/3 × R per ogni TP raggiunto
+//   - BE saves (sub-counter delle vittorie chiuse a break-even)
+//   - Quality breakdown nel Telegram (mostra perche' il segnale ha quel score)
+//   - Backward-compat: se Pine vecchio manda score+tp, server li accetta e mappa
+//
+// Architettura (invariata da v4.1):
 //   - 1 Pine "ST-EA All-in-One" applicato su N simboli
 //   - Ogni bar close significativo, il Pine manda 1 webhook /api/combined
 //     che contiene: context + structure + liquidity (sempre)
@@ -20,18 +30,18 @@ app.use(express.static('public'));
 //
 // Filtri pre-Telegram (in ordine):
 //   1. Auth token
-//   2. Schema (strategy=breakout_hunter, TF=M15/H1, prezzi coerenti)
-//   3. Score >= MIN_SCORE
+//   2. Schema (TF=M15/H1, prezzi coerenti)
+//   3. Quality >= MIN_QUALITY (fallback score >= MIN_SCORE se quality mancante)
 //   4. Volatility HIGH (se BLOCK_HIGH_VOL)
-//   5. Context BLOCK (regime chaos / London open)
+//   5. Context BLOCK (regime chaos / session block)
 //   6. Structure conflict (long vs bias_h1=DOWN)
 //   7. Liquidity sweep recente nella direzione del segnale
 //
-// Tracker: signal -> open trade, trade_closed -> close + Telegram + R-multiple.
+// Tracker: signal -> open trade (tp1/tp2/tp3), trade_closed -> classify + R + Telegram.
 // Trade expired automaticamente dopo TRADE_EXPIRY_HOURS.
 // ══════════════════════════════════════════════════════════════════════════════
 
-const VERSION          = '4.1.0-all-in-one';
+const VERSION          = '4.2.0-quality-tp3';
 const PORT             = process.env.PORT             || 3000;
 const TG_TOKEN         = process.env.TG_TOKEN         || '';
 const TG_CHAT_ID       = process.env.TG_CHAT_ID       || '';
@@ -39,6 +49,11 @@ const TV_WEBHOOK_TOKEN = process.env.TV_WEBHOOK_TOKEN || '';
 const ADMIN_TOKEN      = process.env.ADMIN_TOKEN      || '';
 
 // ─── Filtri ──────────────────────────────────────────────────────────────────
+// MIN_QUALITY (0-100) e' il filtro primario. MIN_SCORE (1-5) e' fallback solo
+// per payload Pine v4.1 che non mandano ancora il campo 'quality'.
+// Default 55 = grade B e A passano, grade C bloccato.
+const MIN_QUALITY_RAW     = parseInt(process.env.MIN_QUALITY, 10);
+const MIN_QUALITY         = Number.isFinite(MIN_QUALITY_RAW) ? MIN_QUALITY_RAW : 55;
 const MIN_SCORE_RAW       = parseInt(process.env.MIN_SCORE, 10);
 const MIN_SCORE           = Number.isFinite(MIN_SCORE_RAW) ? MIN_SCORE_RAW : 4;
 const BLOCK_HIGH_VOL      = process.env.BLOCK_HIGH_VOL === 'true';
@@ -58,7 +73,13 @@ const ALLOWED_VOLATILITY    = ['LOW', 'NORMAL', 'HIGH'];
 const ALLOWED_VERDICT       = ['ALLOW', 'WARN', 'BLOCK'];
 const ALLOWED_BIAS          = ['UP', 'DOWN', 'NEUTRAL'];
 const ALLOWED_SWEEP         = ['NONE', 'LONG_STOPS', 'SHORT_STOPS'];
+const ALLOWED_OUTCOMES      = ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT', 'BE_STOP_OUT', 'FLIP', 'TP_HIT'];
+const ALLOWED_GRADES        = ['A', 'B', 'C'];
 const CONFIRMATION_DELAY_MS = 800;
+
+// Quality Score thresholds (allineati a Synapse Trail Pro)
+const GRADE_A_THRESHOLD = 75;
+const GRADE_B_THRESHOLD = 55;
 
 const STRATEGY_KEY  = 'breakout_hunter';
 const STRATEGY_NAME = 'Breakout Hunter';
@@ -93,16 +114,19 @@ function getSymbolState(instrument) {
 
 const stats = {
   combined:  { received: 0, accepted: 0, rejectedAuth: 0, rejectedFormat: 0 },
-  signal:    { received: 0, accepted: 0, filteredScore: 0, filteredVol: 0,
+  signal:    { received: 0, accepted: 0, filteredScore: 0, filteredQuality: 0, filteredVol: 0,
                filteredContext: 0, filteredStructure: 0, filteredLiquidity: 0,
                rejectedFormat: 0, telegramFailed: 0 },
   tradeClose:{ received: 0, matched: 0, unmatched: 0, expired: 0 },
   totalSignals: 0,
   perInstrument: {},
   perScore: { 1:0, 2:0, 3:0, 4:0, 5:0 },
+  perGrade: { A:0, B:0, C:0 },        // NEW v4.2
   perDirection: { long: 0, short: 0 },
   trades: { totalOpened: 0, win: 0, loss: 0, expired: 0, openNow: 0,
-            winRate: 0, avgR: 0, _rSum: 0 }
+            winRate: 0, avgR: 0, _rSum: 0,
+            beSaves: 0,                // NEW v4.2: WIN chiusi a BE-stop
+            tp1Hits: 0, tp2Hits: 0, tp3Hits: 0 }   // NEW v4.2
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -217,6 +241,115 @@ function rMultiple(direction, entry, sl, exit) {
   return Math.round((move / risk) * 100) / 100;
 }
 
+// ─── Quality Score helpers ───────────────────────────────────────────────────
+
+// Mappa score 1-5 vecchio (Pine v4.1) -> quality 0-100 (Pine v4.2).
+// Per backward compatibility quando Pine vecchio manda solo score.
+function scoreToQuality(score) {
+  const s = Math.max(0, Math.min(5, score | 0));
+  // 5→90 (A), 4→70 (B alto), 3→50 (B basso), 2→30 (C), 1→10 (C basso)
+  return [0, 10, 30, 50, 70, 90][s];
+}
+
+// Calcola grade da quality.
+function gradeFromQuality(q) {
+  if (!Number.isFinite(q)) return 'C';
+  if (q >= GRADE_A_THRESHOLD) return 'A';
+  if (q >= GRADE_B_THRESHOLD) return 'B';
+  return 'C';
+}
+
+// Mappa quality -> emoji per Telegram (visual quick-read)
+function gradeEmoji(grade) {
+  return grade === 'A' ? '🥇' : grade === 'B' ? '🥈' : '🥉';
+}
+
+// ─── classifyClosedTrade ─────────────────────────────────────────────────────
+// Logica WIN/LOSS/R-multiple basata sul Pine professionista Synapse Trail Pro.
+//
+// Regola: TP1 reached = WIN (indipendentemente da come ha chiuso poi).
+//         TP1 NON reached = LOSS.
+//
+// R-multiple (partizione 1/3 ad ogni TP):
+//   r1 = (1/3) × tp1Mult se tp1_reached
+//   r2 = (1/3) × tp2Mult se tp2_reached
+//   r3 = (1/3) × tp3Mult se tp3_reached
+//   LOSS: -1R flat
+//
+// be_active=true alla chiusura SL = BE save (subset di WIN, contatore diagnostico)
+//
+// Input atteso:
+//   trade: { entry, sl, tp1, tp2, tp3, ... }
+//   closeData: { outcome, exit_price, tp1_reached, tp2_reached, tp3_reached, be_active, r_multiple? }
+//
+// Returns: { isWin, isBeSave, rMultiple, label }
+function classifyClosedTrade(trade, closeData) {
+  const tp1Reached = !!closeData.tp1_reached;
+  const tp2Reached = !!closeData.tp2_reached;
+  const tp3Reached = !!closeData.tp3_reached;
+  const beActive   = !!closeData.be_active;
+  const outcome    = String(closeData.outcome || '').toUpperCase();
+
+  // Se Pine ha gia' calcolato R-multiple, usalo (autorita' del Pine sul partitioning)
+  const rFromPine = parseFloat(closeData.r_multiple);
+  if (Number.isFinite(rFromPine)) {
+    const isWin = tp1Reached;
+    return {
+      isWin,
+      isBeSave: isWin && (outcome === 'BE_STOP_OUT' || (outcome === 'SL_HIT' && beActive)),
+      rMultiple: Math.round(rFromPine * 100) / 100,
+      label: isWin ? 'WIN' : 'LOSS'
+    };
+  }
+
+  // Altrimenti calcola server-side basandosi su tp*_reached
+  // Calcolo i moltiplicatori in R per ogni TP partendo da entry/sl
+  const risk = Math.abs(trade.entry - trade.sl);
+  if (risk === 0) {
+    return { isWin: false, isBeSave: false, rMultiple: 0, label: 'LOSS' };
+  }
+  const tp1Mult = trade.tp1 ? Math.abs(trade.tp1 - trade.entry) / risk : 0;
+  const tp2Mult = trade.tp2 ? Math.abs(trade.tp2 - trade.entry) / risk : 0;
+  const tp3Mult = trade.tp3 ? Math.abs(trade.tp3 - trade.entry) / risk : 0;
+
+  let r = 0;
+  let isWin = false;
+  if (tp1Reached) {
+    isWin = true;
+    const r1 = (1/3) * tp1Mult;
+    const r2 = tp2Reached ? (1/3) * tp2Mult : 0;
+    const r3 = tp3Reached ? (1/3) * tp3Mult : 0;
+    r = r1 + r2 + r3;
+  } else {
+    // LOSS: -1R (Pine professional convention)
+    r = -1;
+  }
+
+  return {
+    isWin,
+    isBeSave: isWin && (outcome === 'BE_STOP_OUT' || (outcome === 'SL_HIT' && beActive)),
+    rMultiple: Math.round(r * 100) / 100,
+    label: isWin ? 'WIN' : 'LOSS'
+  };
+}
+
+// Format percentuale da entry (per Telegram labels)
+function pctFromEntry(level, entry) {
+  if (!Number.isFinite(level) || !Number.isFinite(entry) || entry === 0) return '';
+  const pct = (level - entry) / entry * 100;
+  const sign = pct >= 0 ? '+' : '';
+  return ' (' + sign + pct.toFixed(2) + '%)';
+}
+
+// Format R-multiple da entry/sl per Telegram labels (es. "+1.0R")
+function rFromLevel(level, entry, sl, direction) {
+  const risk = Math.abs(entry - sl);
+  if (risk === 0 || !Number.isFinite(level)) return '';
+  const move = direction === 'long' ? (level - entry) : (entry - level);
+  const r = move / risk;
+  return (r >= 0 ? '+' : '') + r.toFixed(1) + 'R';
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // SUB-PROCESSORS — modifiche state per-symbol
 // ══════════════════════════════════════════════════════════════════════════════
@@ -290,28 +423,79 @@ async function processSignal(req, signal, instrument, timeframe) {
     return { ok: false, reason: 'invalid_direction' };
   }
 
-  // Prezzi
+  // Prezzi: entry e SL sempre richiesti
   const price = parseFloat(signal.price);
   const sl    = parseFloat(signal.sl);
-  const tp    = parseFloat(signal.tp);
-  if (!Number.isFinite(price) || !Number.isFinite(sl) || !Number.isFinite(tp)) {
+  if (!Number.isFinite(price) || !Number.isFinite(sl)) {
     stats.signal.rejectedFormat++;
-    recordRejection(req, 'invalid_prices', signal, { parsed: { price, sl, tp } });
+    recordRejection(req, 'invalid_prices', signal, { parsed: { price, sl } });
     return { ok: false, reason: 'invalid_prices' };
   }
-  if (direction === 'long' && (sl >= price || tp <= price)) {
+
+  // TP multi-livello: cerca tp1/tp2/tp3 nel payload v4.2.
+  // Fallback v4.1: se manca tp1 ma c'e' 'tp', usalo come tp1 e calcola tp2/tp3 a 2R/3R.
+  let tp1 = parseFloat(signal.tp1);
+  let tp2 = parseFloat(signal.tp2);
+  let tp3 = parseFloat(signal.tp3);
+  if (!Number.isFinite(tp1) && Number.isFinite(parseFloat(signal.tp))) {
+    // Backward compat: Pine v4.1 manda solo 'tp'
+    tp1 = parseFloat(signal.tp);
+    // Genera tp2 e tp3 a 2R e 3R (assumendo il vecchio tp era ~2R)
+    const risk = Math.abs(price - sl);
+    tp2 = direction === 'long' ? price + risk * 2 : price - risk * 2;
+    tp3 = direction === 'long' ? price + risk * 3 : price - risk * 3;
+  }
+  if (!Number.isFinite(tp1)) {
     stats.signal.rejectedFormat++;
-    recordRejection(req, 'sl_tp_inconsistent', signal, { side: 'long', parsed: { price, sl, tp } });
+    recordRejection(req, 'missing_tp', signal, { parsed: { price, sl, tp1 } });
+    return { ok: false, reason: 'missing_tp' };
+  }
+  if (!Number.isFinite(tp2)) tp2 = tp1;  // se mancano, collapse a tp1
+  if (!Number.isFinite(tp3)) tp3 = tp1;
+
+  // Coerenza prezzi
+  if (direction === 'long' && (sl >= price || tp1 <= price)) {
+    stats.signal.rejectedFormat++;
+    recordRejection(req, 'sl_tp_inconsistent', signal, { side: 'long', parsed: { price, sl, tp1 } });
     return { ok: false, reason: 'sl_tp_inconsistent' };
   }
-  if (direction === 'short' && (sl <= price || tp >= price)) {
+  if (direction === 'short' && (sl <= price || tp1 >= price)) {
     stats.signal.rejectedFormat++;
-    recordRejection(req, 'sl_tp_inconsistent', signal, { side: 'short', parsed: { price, sl, tp } });
+    recordRejection(req, 'sl_tp_inconsistent', signal, { side: 'short', parsed: { price, sl, tp1 } });
     return { ok: false, reason: 'sl_tp_inconsistent' };
   }
 
-  const scoreRaw = parseFloat(signal.score);
-  const score = Number.isFinite(scoreRaw) ? Math.max(0, Math.min(5, Math.round(scoreRaw))) : 0;
+  // ─── Quality Score (v4.2) con fallback su score 1-5 (v4.1) ──────────────────
+  const qualityRaw = parseFloat(signal.quality);
+  const scoreRaw   = parseFloat(signal.score);
+  let quality, score, grade;
+  if (Number.isFinite(qualityRaw)) {
+    // Pine v4.2: quality e' fornito
+    quality = Math.max(0, Math.min(100, Math.round(qualityRaw)));
+    score   = Math.round(quality / 20);  // mappa a 1-5 per backward compat dei log
+    if (score < 1) score = 1;
+    if (score > 5) score = 5;
+    // Grade puo' essere fornito dal Pine o ricalcolato
+    const gradeRaw = String(signal.grade || '').toUpperCase().trim();
+    grade = ALLOWED_GRADES.includes(gradeRaw) ? gradeRaw : gradeFromQuality(quality);
+  } else if (Number.isFinite(scoreRaw)) {
+    // Pine v4.1: solo score
+    score = Math.max(0, Math.min(5, Math.round(scoreRaw)));
+    quality = scoreToQuality(score);
+    grade = gradeFromQuality(quality);
+  } else {
+    score = 0;
+    quality = 0;
+    grade = 'C';
+  }
+
+  // Quality breakdown opzionale (per Telegram)
+  const breakdown = signal.quality_breakdown && typeof signal.quality_breakdown === 'object'
+    ? signal.quality_breakdown : null;
+
+  // Preset informativo
+  const preset = String(signal.preset || 'Balanced').slice(0, 32);
+
   const volatilityRaw = String(signal.volatility || 'NORMAL').toUpperCase().trim();
   const volatility = ALLOWED_VOLATILITY.includes(volatilityRaw) ? volatilityRaw : 'NORMAL';
 
@@ -323,12 +507,24 @@ async function processSignal(req, signal, instrument, timeframe) {
     return { ok: false, reason: 'tf_not_allowed' };
   }
 
-  // Score
-  if (score < MIN_SCORE) {
-    stats.signal.filteredScore++;
-    recordRejection(req, 'score_below_minimum', signal, { score, minScore: MIN_SCORE, instrument });
-    console.log('[SIGNAL] FILTRATO score=' + score + ' < ' + MIN_SCORE + ' (' + direction + ' ' + instrument + ')');
-    return { ok: true, filtered: true, reason: 'score_below_minimum' };
+  // ─── FILTRO PRIMARIO: Quality (v4.2) ────────────────────────────────────────
+  // Se Pine manda quality, usa quello. Altrimenti fallback su score (v4.1).
+  if (Number.isFinite(qualityRaw)) {
+    if (quality < MIN_QUALITY) {
+      stats.signal.filteredQuality++;
+      recordRejection(req, 'quality_below_minimum', signal, { quality, grade, minQuality: MIN_QUALITY, instrument });
+      console.log('[SIGNAL] FILTRATO quality=' + quality + ' grade=' + grade +
+                  ' < ' + MIN_QUALITY + ' (' + direction + ' ' + instrument + ')');
+      return { ok: true, filtered: true, reason: 'quality_below_minimum' };
+    }
+  } else {
+    // Fallback v4.1: filtro score 1-5
+    if (score < MIN_SCORE) {
+      stats.signal.filteredScore++;
+      recordRejection(req, 'score_below_minimum', signal, { score, minScore: MIN_SCORE, instrument });
+      console.log('[SIGNAL] FILTRATO score=' + score + ' < ' + MIN_SCORE + ' (' + direction + ' ' + instrument + ')');
+      return { ok: true, filtered: true, reason: 'score_below_minimum' };
+    }
   }
 
   // Volatility
@@ -385,15 +581,38 @@ async function processSignal(req, signal, instrument, timeframe) {
   // ═════ ACCEPTED ═════
   const tradeId = nextTradeId++;
   const d   = dec(price);
-  const rr  = Math.abs(price - sl) > 0 ? (Math.abs(tp - price) / Math.abs(price - sl)).toFixed(2) : '?';
+  // R:R massimo (TP3) per visualizzazione
+  const rrMax = Math.abs(price - sl) > 0 ? (Math.abs(tp3 - price) / Math.abs(price - sl)).toFixed(1) : '?';
+  const rrTp1 = Math.abs(price - sl) > 0 ? (Math.abs(tp1 - price) / Math.abs(price - sl)).toFixed(1) : '?';
   const ts  = new Date().toUTCString().slice(0, 25);
   const adxN = finiteOrNull(signal.adx);
   const rsiN = finiteOrNull(signal.rsi);
   const atrN = finiteOrNull(signal.atr);
   const htfAligned = isTruthy(signal.htf_aligned);
 
-  // Build Telegram
+  // Build Telegram v4.2
   const dirArrow = direction === 'long' ? '🟢 LONG' : '🔴 SHORT';
+  const grEmoji  = gradeEmoji(grade);
+
+  // Breakdown del Quality Score (se fornito dal Pine)
+  let breakdownTxt = '';
+  if (breakdown) {
+    const htfP    = Number.isFinite(parseFloat(breakdown.htf))    ? parseFloat(breakdown.htf)    : null;
+    const volP    = Number.isFinite(parseFloat(breakdown.volume)) ? parseFloat(breakdown.volume) : null;
+    const rsiP    = Number.isFinite(parseFloat(breakdown.rsi))    ? parseFloat(breakdown.rsi)    : null;
+    const regP    = Number.isFinite(parseFloat(breakdown.regime)) ? parseFloat(breakdown.regime) : null;
+    const brkP    = Number.isFinite(parseFloat(breakdown.break))  ? parseFloat(breakdown.break)  : null;
+    let bdLines = [];
+    if (htfP !== null) bdLines.push((htfP >= 25 ? '✅' : htfP >= 10 ? '🔵' : '❌') + ' HTF ' + (htfP === 30 ? 'aligned' : htfP === 0 ? 'against' : 'neutral') + '  +' + htfP.toFixed(0));
+    if (volP !== null) bdLines.push((volP >= 15 ? '✅' : '🔵') + ' Volume ' + (volP === 20 ? 'confirmed' : 'off') + '  +' + volP.toFixed(0));
+    if (rsiP !== null) bdLines.push((rsiP >= 15 ? '✅' : '❌') + ' RSI momentum  +' + rsiP.toFixed(0));
+    if (regP !== null) bdLines.push((regP >= 12 ? '✅' : '🔵') + ' Regime score  +' + regP.toFixed(1));
+    if (brkP !== null) bdLines.push((brkP >= 5  ? '✅' : '🔵') + ' Break strength  +' + brkP.toFixed(1));
+    if (bdLines.length > 0) {
+      breakdownTxt = '\n<b>Score breakdown:</b>\n' + bdLines.map(l => '<code>' + l + '</code>').join('\n') + '\n';
+    }
+  }
+
   let extras = '';
   if (adxN !== null) extras += '<b>ADX:</b> ' + adxN.toFixed(1) + '  ';
   if (rsiN !== null) extras += '<b>RSI:</b> ' + rsiN.toFixed(1);
@@ -418,13 +637,27 @@ async function processSignal(req, signal, instrument, timeframe) {
     }
   }
 
-  const msg =
-    '<b>💥 ' + STRATEGY_NAME + '</b> · ' + dirArrow + '\n' +
-    '<b>' + instrument + '</b> · TF ' + timeframe + '  ' + starsLine(score) + '\n\n' +
+  // Header
+  const headerLine = '<b>💥 ' + STRATEGY_NAME + '</b> · ' + dirArrow + ' · ' + grEmoji + ' <b>' + grade + '</b>\n';
+  const subLine = '<b>' + instrument + '</b> · M' + tfMin + ' · Quality <b>' + quality + '/100</b>\n\n';
+
+  // Prezzi con R-multiple
+  const r1Txt = rFromLevel(tp1, price, sl, direction);
+  const r2Txt = rFromLevel(tp2, price, sl, direction);
+  const r3Txt = rFromLevel(tp3, price, sl, direction);
+  const pricesBlock =
     '<b>Entry:</b> <code>' + price.toFixed(d) + '</code>\n' +
-    '<b>SL:</b> <code>' + sl.toFixed(d) + '</code>   <b>TP:</b> <code>' + tp.toFixed(d) + '</code>\n' +
-    '<b>R:R:</b> 1:' + rr + '   <b>Trade #' + tradeId + '</b>\n' +
-    extras + volWarn + htfBadge + ctxBadge + strBadge + liqBadge +
+    '<b>SL:</b> <code>' + sl.toFixed(d) + '</code>' + pctFromEntry(sl, price) + '\n' +
+    '<b>TP1:</b> <code>' + tp1.toFixed(d) + '</code> (' + r1Txt + ')\n' +
+    '<b>TP2:</b> <code>' + tp2.toFixed(d) + '</code> (' + r2Txt + ')\n' +
+    '<b>TP3:</b> <code>' + tp3.toFixed(d) + '</code> (' + r3Txt + ')\n';
+
+  const msg =
+    headerLine + subLine +
+    pricesBlock +
+    breakdownTxt +
+    '\n' + extras + volWarn + htfBadge + ctxBadge + strBadge + liqBadge +
+    '\n<b>Trade #' + tradeId + '</b> · R:R max 1:' + rrMax + ' · Preset: ' + preset +
     '\n<i>' + ts + '</i>';
 
   const tgOk = await tgSend(msg);
@@ -443,15 +676,18 @@ async function processSignal(req, signal, instrument, timeframe) {
   stats.perInstrument[instrument].total++;
   stats.perInstrument[instrument][direction === 'long' ? 'longs' : 'shorts']++;
   if (score >= 1 && score <= 5) stats.perScore[score]++;
+  if (stats.perGrade[grade] !== undefined) stats.perGrade[grade]++;
   stats.perDirection[direction]++;
 
   // Signal log
   const record = {
     id: tradeId, ts: Date.now(), time: ts,
     instrument, direction,
-    price: +price.toFixed(d), sl: +sl.toFixed(d), tp: +tp.toFixed(d),
-    rr: parseFloat(rr) || 0,
-    score, volatility, timeframe,
+    price: +price.toFixed(d), sl: +sl.toFixed(d),
+    tp1: +tp1.toFixed(d), tp2: +tp2.toFixed(d), tp3: +tp3.toFixed(d),
+    rrTp1: parseFloat(rrTp1) || 0, rrMax: parseFloat(rrMax) || 0,
+    quality, grade, score, preset,
+    volatility, timeframe,
     adx: adxN, rsi: rsiN, atr: atrN, htfAligned,
     context:   isFresh(state.context)   ? { regime: state.context.regime, session: state.context.session, verdict: state.context.verdict } : null,
     structure: isFresh(state.structure) ? { bias_h1: state.structure.bias_h1, bias_h4: state.structure.bias_h4 } : null,
@@ -460,28 +696,30 @@ async function processSignal(req, signal, instrument, timeframe) {
   signalLog.unshift(record);
   while (signalLog.length > SIGNAL_LOG_MAX) signalLog.pop();
 
-  // Tracker open trade
+  // Tracker open trade v4.2 (con tp1/tp2/tp3)
   openTrades.push({
     id: tradeId, openedAt: Date.now(), openedTime: ts,
     instrument, direction,
-    entry: +price.toFixed(d), sl: +sl.toFixed(d), tp: +tp.toFixed(d),
-    score, timeframe, status: 'OPEN'
+    entry: +price.toFixed(d), sl: +sl.toFixed(d),
+    tp1: +tp1.toFixed(d), tp2: +tp2.toFixed(d), tp3: +tp3.toFixed(d),
+    quality, grade, score, preset,
+    timeframe, status: 'OPEN'
   });
   stats.trades.openNow = openTrades.length;
   stats.trades.totalOpened++;
 
   console.log('[SIGNAL OK] #' + tradeId + ' ' + direction.toUpperCase() + ' ' + instrument +
-              ' @ ' + price.toFixed(d) + ' score=' + score);
+              ' @ ' + price.toFixed(d) + ' quality=' + quality + ' grade=' + grade);
 
   if (SEND_CONFIRMATION) {
     setTimeout(() => {
       tgSend('✅ <i>Trade #' + tradeId + ' aperto</i> · ' +
-             (direction === 'long' ? '🟢' : '🔴') + ' ' + instrument)
+             (direction === 'long' ? '🟢' : '🔴') + ' ' + instrument + ' · ' + grade)
         .catch(e => console.error('[TG confirm]', e.message));
     }, CONFIRMATION_DELAY_MS);
   }
 
-  return { ok: true, accepted: true, tradeId };
+  return { ok: true, accepted: true, tradeId, quality, grade };
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -499,8 +737,9 @@ async function processTradeClosed(tc, instrument) {
   if (!Number.isFinite(entry) || !Number.isFinite(exitPrice)) {
     return { ok: false, reason: 'invalid_prices' };
   }
-  if (!['TP_HIT', 'SL_HIT'].includes(outcome)) {
-    return { ok: false, reason: 'invalid_outcome' };
+  // v4.2: accetta tutti i nuovi outcome. Backward compat con TP_HIT/SL_HIT.
+  if (!ALLOWED_OUTCOMES.includes(outcome)) {
+    return { ok: false, reason: 'invalid_outcome', got: outcome };
   }
 
   // Match trade aperto (tolleranza 0.5% sull'entry)
@@ -517,24 +756,65 @@ async function processTradeClosed(tc, instrument) {
   }
 
   const t = openTrades[idx];
-  const r = rMultiple(direction, t.entry, t.sl, exitPrice);
-  const isWin = outcome === 'TP_HIT';
   const durationMin = Math.round((Date.now() - t.openedAt) / 60000);
   const d = dec(t.entry);
 
+  // Classify usando logica centralizzata (Pine Synapse Trail Pro pattern)
+  // Backward compat: se Pine vecchio manda TP_HIT, assume tp1_reached=true
+  const closeData = {
+    outcome,
+    exit_price: exitPrice,
+    tp1_reached: outcome === 'TP_HIT' || !!tc.tp1_reached || outcome === 'TP1_HIT' || outcome === 'TP2_HIT' || outcome === 'TP3_HIT',
+    tp2_reached: !!tc.tp2_reached || outcome === 'TP2_HIT' || outcome === 'TP3_HIT',
+    tp3_reached: !!tc.tp3_reached || outcome === 'TP3_HIT',
+    be_active:   !!tc.be_active   || outcome === 'BE_STOP_OUT',
+    r_multiple:  tc.r_multiple
+  };
+
+  // Trade in legacy format (con solo .tp): converti per classifyClosedTrade
+  const tradeForClassify = {
+    entry: t.entry,
+    sl: t.sl,
+    tp1: t.tp1 != null ? t.tp1 : t.tp,
+    tp2: t.tp2 != null ? t.tp2 : t.tp,
+    tp3: t.tp3 != null ? t.tp3 : t.tp
+  };
+
+  const cls = classifyClosedTrade(tradeForClassify, closeData);
+  const r = cls.rMultiple;
+  const isWin = cls.isWin;
+  const isBeSave = cls.isBeSave;
+
+  // Counter per-TP
+  if (closeData.tp1_reached) stats.trades.tp1Hits++;
+  if (closeData.tp2_reached) stats.trades.tp2Hits++;
+  if (closeData.tp3_reached) stats.trades.tp3Hits++;
+
   const closed = {
     ...t,
-    status: isWin ? 'WIN' : 'LOSS',
+    status: cls.label,
     closedAt: Date.now(),
     closedTime: new Date().toUTCString().slice(0, 25),
     exitPrice: +exitPrice.toFixed(d),
-    outcome, rMultiple: r, durationMin
+    outcome,
+    tp1_reached: closeData.tp1_reached,
+    tp2_reached: closeData.tp2_reached,
+    tp3_reached: closeData.tp3_reached,
+    be_active: closeData.be_active,
+    be_save: isBeSave,
+    rMultiple: r,
+    durationMin
   };
   openTrades.splice(idx, 1);
   closedTrades.unshift(closed);
   while (closedTrades.length > CLOSED_TRADES_MAX) closedTrades.pop();
 
-  if (isWin) stats.trades.win++; else stats.trades.loss++;
+  if (isWin) {
+    stats.trades.win++;
+    if (isBeSave) stats.trades.beSaves++;
+  } else {
+    stats.trades.loss++;
+  }
   stats.trades._rSum += r;
   stats.trades.openNow = openTrades.length;
   const totalClosed = stats.trades.win + stats.trades.loss + stats.trades.expired;
@@ -542,19 +822,41 @@ async function processTradeClosed(tc, instrument) {
   stats.trades.avgR    = totalClosed > 0 ? Math.round(stats.trades._rSum / totalClosed * 100) / 100 : 0;
   stats.tradeClose.matched++;
 
-  const emoji  = isWin ? '✅' : '❌';
-  const label  = isWin ? 'WIN' : 'LOSS';
+  // ─── Build Telegram message v4.2 ────────────────────────────────────────────
+  let emoji, label;
+  if (isWin) {
+    emoji = isBeSave ? '🛡️' : (closeData.tp3_reached ? '🏆' : '✅');
+    label = isBeSave ? 'BE SAVE' : (closeData.tp3_reached ? 'TP3 WIN' : closeData.tp2_reached ? 'TP2 WIN' : 'TP1 WIN');
+  } else {
+    emoji = '❌';
+    label = outcome === 'FLIP' ? 'FLIP LOSS' : 'LOSS';
+  }
   const rTxt   = (r >= 0 ? '+' : '') + r.toFixed(2) + 'R';
   const durTxt = durationMin < 60 ? durationMin + 'm' : Math.round(durationMin / 6) / 10 + 'h';
+
+  // Build "TP progress" string
+  let tpProgress = '';
+  if (isWin) {
+    const ticks = [];
+    if (closeData.tp1_reached) ticks.push('TP1 ✓');
+    if (closeData.tp2_reached) ticks.push('TP2 ✓');
+    if (closeData.tp3_reached) ticks.push('TP3 ✓');
+    tpProgress = '\n<i>' + ticks.join(' · ') + '</i>';
+  }
+
+  const gradeLine = t.grade ? ' · <b>' + t.grade + '</b>' : '';
+
   await tgSend(
     emoji + ' <b>Trade #' + t.id + ' ' + label + '</b>\n' +
-    '<b>' + instrument + '</b> · ' + (direction === 'long' ? '🟢 LONG' : '🔴 SHORT') + '\n' +
+    '<b>' + instrument + '</b> · ' + (direction === 'long' ? '🟢 LONG' : '🔴 SHORT') + gradeLine + '\n' +
     'Entry: <code>' + t.entry.toFixed(d) + '</code> → Exit: <code>' + exitPrice.toFixed(d) + '</code>\n' +
-    '<b>Result:</b> ' + rTxt + ' · <b>Durata:</b> ' + durTxt + '\n' +
-    '<i>Win rate: ' + stats.trades.winRate + '% · Avg R: ' + stats.trades.avgR + '</i>'
+    '<b>Result:</b> ' + rTxt + ' · <b>Durata:</b> ' + durTxt +
+    tpProgress +
+    '\n<i>Win rate: ' + stats.trades.winRate + '% · Avg R: ' + stats.trades.avgR +
+    (stats.trades.beSaves > 0 ? ' · BE saves: ' + stats.trades.beSaves : '') + '</i>'
   );
 
-  console.log('[TRADE-CLOSE] #' + t.id + ' ' + label + ' ' + rTxt + ' (' + durTxt + ')');
+  console.log('[TRADE-CLOSE] #' + t.id + ' ' + cls.label + ' ' + rTxt + ' (' + durTxt + ') outcome=' + outcome);
   return { ok: true, matched: true, trade: closed };
 }
 
@@ -697,7 +999,7 @@ setInterval(expireOldTrades, 15 * 60 * 1000);
 app.get('/healthz', (req, res) => res.status(200).type('text/plain').send('ok'));
 
 function filtersSummary() {
-  return { MIN_SCORE, BLOCK_HIGH_VOL, CONTEXT_FILTER, STRUCTURE_FILTER, LIQUIDITY_FILTER,
+  return { MIN_QUALITY, MIN_SCORE, BLOCK_HIGH_VOL, CONTEXT_FILTER, STRUCTURE_FILTER, LIQUIDITY_FILTER,
            CONTEXT_MAX_AGE_MIN, TRADE_EXPIRY_HOURS };
 }
 
@@ -803,7 +1105,7 @@ app.post('/api/test', requireAdmin, async (req, res) => {
     'Test message OK\n' +
     'Uptime: ' + Math.floor((Date.now() - startTime) / 1000) + 's\n' +
     'Symbols known: ' + symbolState.size + '\n' +
-    'Filters: score≥' + MIN_SCORE +
+    'Filters: quality≥' + MIN_QUALITY + ' (fallback score≥' + MIN_SCORE + ')' +
     ' · ctx=' + (CONTEXT_FILTER ? 'on' : 'off') +
     ' · str=' + (STRUCTURE_FILTER ? 'on' : 'off') +
     ' · liq=' + (LIQUIDITY_FILTER ? 'on' : 'off')
@@ -841,7 +1143,8 @@ const server = app.listen(PORT, async () => {
   console.log(' Webhook token:        ' + (TV_WEBHOOK_TOKEN ? 'OK' : 'NOT CONFIGURED'));
   console.log(' Admin token:          ' + (ADMIN_TOKEN ? 'OK' : 'NOT SET'));
   console.log(' Strategy:             ' + STRATEGY_NAME + ' (' + STRATEGY_TFS.join('m,') + 'm)');
-  console.log(' Min score:            ' + MIN_SCORE + '/5');
+  console.log(' Min quality:          ' + MIN_QUALITY + '/100 (grade ' + gradeFromQuality(MIN_QUALITY) + '+)');
+  console.log(' Min score (fallback): ' + MIN_SCORE + '/5');
   console.log(' Block HIGH vol:       ' + BLOCK_HIGH_VOL);
   console.log(' Context filter:       ' + (CONTEXT_FILTER   ? 'ON' : 'OFF'));
   console.log(' Structure filter:     ' + (STRUCTURE_FILTER ? 'ON' : 'OFF'));
@@ -856,9 +1159,10 @@ const server = app.listen(PORT, async () => {
   await tgSend(
     '<b>🚀 ST-EA Relay ' + VERSION + ' online</b>\n\n' +
     '<i>Architecture:</i> 1 Pine all-in-one per simbolo\n' +
-    '<i>Strategy:</i> 💥 ' + STRATEGY_NAME + ' (M15/H1)\n\n' +
+    '<i>Strategy:</i> 💥 ' + STRATEGY_NAME + ' (M15/H1)\n' +
+    '<i>Risk:</i> TP1/TP2/TP3 con BE auto · Quality 0-100\n\n' +
     '<i>Filters:</i>\n' +
-    '• Score ≥ ' + MIN_SCORE + '/5\n' +
+    '• Quality ≥ ' + MIN_QUALITY + '/100 (grade ' + gradeFromQuality(MIN_QUALITY) + '+)\n' +
     '• Context filter: ' + (CONTEXT_FILTER   ? 'on' : 'off') + '\n' +
     '• Structure filter: ' + (STRUCTURE_FILTER ? 'on' : 'off') + '\n' +
     '• Liquidity filter: ' + (LIQUIDITY_FILTER ? 'on' : 'off') + '\n\n' +
