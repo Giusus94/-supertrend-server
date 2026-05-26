@@ -209,14 +209,21 @@ button.primary:hover { background: #264c7d; }
   <table>
     <thead>
       <tr>
-        <th>ID</th><th>Simbolo</th><th>Dir</th><th>Entry</th><th>SL</th><th>TP</th>
-        <th>R:R</th><th>Score</th><th>Aperto da</th>
+        <th>ID</th><th>Simbolo</th><th>Dir</th><th>Grade</th><th>Entry</th><th>SL</th>
+        <th>TP1</th><th>TP2</th><th>TP3</th><th>R:R</th><th>Aperto da</th>
       </tr>
     </thead>
     <tbody id="open-tbody">
-      <tr><td colspan="9" class="empty">Nessun trade aperto</td></tr>
+      <tr><td colspan="11" class="empty">Nessun trade aperto</td></tr>
     </tbody>
   </table>
+</section>
+
+<section>
+  <h2>📊 Performance per Grade <span class="badge" id="grade-count">—</span></h2>
+  <div id="by-grade-cards" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px;">
+    <div class="empty" style="grid-column: 1/-1; padding: 20px;">Dati insufficienti — almeno 5 trade chiusi per grade.</div>
+  </div>
 </section>
 
 <section>
@@ -224,12 +231,12 @@ button.primary:hover { background: #264c7d; }
   <table>
     <thead>
       <tr>
-        <th>ID</th><th>Simbolo</th><th>Dir</th><th>Esito</th>
-        <th>Entry</th><th>Exit</th><th>R-mult</th><th>Durata</th><th>Chiuso</th>
+        <th>ID</th><th>Simbolo</th><th>Dir</th><th>Grade</th><th>Esito</th>
+        <th>Entry</th><th>Exit</th><th>TP progress</th><th>R-mult</th><th>Durata</th><th>Chiuso</th>
       </tr>
     </thead>
     <tbody id="closed-tbody">
-      <tr><td colspan="9" class="empty">Nessun trade chiuso ancora</td></tr>
+      <tr><td colspan="11" class="empty">Nessun trade chiuso ancora</td></tr>
     </tbody>
   </table>
 </section>
@@ -376,20 +383,29 @@ function renderOpenTrades(trades) {
   const tbody = document.getElementById('open-tbody');
   document.getElementById('open-count').textContent = trades.length;
   if (trades.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty">Nessun trade aperto</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="empty">Nessun trade aperto</td></tr>';
     return;
   }
   tbody.innerHTML = trades.map(t => {
-    const rr = Math.abs(t.entry - t.sl) > 0 ? (Math.abs(t.tp - t.entry) / Math.abs(t.entry - t.sl)).toFixed(2) : '?';
+    // tp1/tp2/tp3 sono i nuovi campi v4.2; fallback su t.tp per Pine v4.1
+    const tp1 = t.tp1 != null ? t.tp1 : t.tp;
+    const tp2 = t.tp2 != null ? t.tp2 : t.tp;
+    const tp3 = t.tp3 != null ? t.tp3 : t.tp;
+    const risk = Math.abs(t.entry - t.sl);
+    const rrMax = risk > 0 ? (Math.abs(tp3 - t.entry) / risk).toFixed(1) : '?';
+    const grade = t.grade || '—';
+    const gradeCls = grade === 'A' ? 'win' : grade === 'B' ? 'expired' : 'loss';
     return '<tr>' +
       '<td>#' + t.id + '</td>' +
       '<td><strong>' + t.instrument + '</strong></td>' +
       '<td>' + tag(t.direction === 'long' ? 'long' : 'short', t.direction.toUpperCase()) + '</td>' +
+      '<td>' + tag(gradeCls, grade) + '</td>' +
       '<td class="mono">' + fmtPrice(t.entry) + '</td>' +
       '<td class="mono r-neg">' + fmtPrice(t.sl) + '</td>' +
-      '<td class="mono r-pos">' + fmtPrice(t.tp) + '</td>' +
-      '<td>1:' + rr + '</td>' +
-      '<td>' + '⭐'.repeat(t.score) + '</td>' +
+      '<td class="mono r-pos">' + fmtPrice(tp1) + '</td>' +
+      '<td class="mono r-pos">' + fmtPrice(tp2) + '</td>' +
+      '<td class="mono r-pos">' + fmtPrice(tp3) + '</td>' +
+      '<td>1:' + rrMax + '</td>' +
       '<td class="muted">' + fmtAge(t.openedAt) + '</td>' +
     '</tr>';
   }).join('');
@@ -399,7 +415,7 @@ function renderClosedTrades(trades) {
   const tbody = document.getElementById('closed-tbody');
   document.getElementById('closed-count').textContent = trades.length;
   if (trades.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty">Nessun trade chiuso ancora</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="empty">Nessun trade chiuso ancora</td></tr>';
     return;
   }
   tbody.innerHTML = trades.slice(0, 20).map(t => {
@@ -411,17 +427,72 @@ function renderClosedTrades(trades) {
     const durTxt = t.durationMin < 60
       ? t.durationMin + 'm'
       : (Math.round(t.durationMin / 6) / 10) + 'h';
+    // TP progress v4.3: mostra quali TP sono stati raggiunti
+    let tpProg = '—';
+    if (t.tp1_reached || t.tp2_reached || t.tp3_reached) {
+      const parts = [];
+      if (t.tp1_reached) parts.push('TP1✓');
+      if (t.tp2_reached) parts.push('TP2✓');
+      if (t.tp3_reached) parts.push('TP3✓');
+      if (t.be_save) parts.push('BE🛡');
+      tpProg = parts.join(' ');
+    } else if (t.outcome === 'TP_HIT') {
+      tpProg = 'TP✓ (legacy)';
+    } else if (t.status === 'LOSS') {
+      tpProg = '—';
+    }
+    const grade = t.grade || '—';
+    const gradeCls = grade === 'A' ? 'win' : grade === 'B' ? 'expired' : 'loss';
     return '<tr>' +
       '<td>#' + t.id + '</td>' +
       '<td><strong>' + t.instrument + '</strong></td>' +
       '<td>' + tag(t.direction === 'long' ? 'long' : 'short', t.direction.toUpperCase()) + '</td>' +
+      '<td>' + tag(gradeCls, grade) + '</td>' +
       '<td>' + tag(outcomeCls, t.status) + '</td>' +
       '<td class="mono">' + fmtPrice(t.entry) + '</td>' +
       '<td class="mono">' + (t.exitPrice !== null ? fmtPrice(t.exitPrice) : '—') + '</td>' +
+      '<td class="mono">' + tpProg + '</td>' +
       '<td class="' + rCls + '">' + (r > 0 ? '+' : '') + r.toFixed(2) + 'R</td>' +
       '<td>' + durTxt + '</td>' +
       '<td class="muted">' + fmtAge(t.closedAt) + '</td>' +
     '</tr>';
+  }).join('');
+}
+
+// NEW v4.3: render Performance per Grade
+async function renderByGrade() {
+  const data = await fetchJSON('/api/stats/by-grade');
+  if (!data || !data.byGrade) return;
+  const container = document.getElementById('by-grade-cards');
+  const grades = ['A', 'B', 'C'];
+  const totalAll = grades.reduce((sum, g) => sum + data.byGrade[g].total, 0);
+  document.getElementById('grade-count').textContent =
+    totalAll === 0 ? 'nessun trade chiuso' : totalAll + ' trade chiusi totali';
+
+  if (totalAll === 0) {
+    container.innerHTML = '<div class="empty" style="grid-column: 1/-1; padding: 20px;">Nessun trade chiuso ancora. I dati per-grade compaiono dopo i primi trade.</div>';
+    return;
+  }
+
+  container.innerHTML = grades.map(g => {
+    const s = data.byGrade[g];
+    const interp = data.interpretation[g];
+    const emoji = g === 'A' ? '🥇' : g === 'B' ? '🥈' : '🥉';
+    const wrCls = s.winRate >= 60 ? 'r-pos' : s.winRate >= 40 ? '' : 'r-neg';
+    const arCls = s.avgR > 0 ? 'r-pos' : s.avgR < 0 ? 'r-neg' : 'muted';
+    const interpEmoji = interp === 'STRONG' ? '✅' : interp === 'OK' ? '🔵' : interp === 'WEAK' ? '⚠️' : '⏳';
+    const interpTxt = interp === 'STRONG' ? 'Forte' : interp === 'OK' ? 'OK' : interp === 'WEAK' ? 'Debole' : 'Servono piu\' dati';
+    return '<div style="background: #0d1117; border: 1px solid #21262d; border-radius: 6px; padding: 12px;">' +
+      '<div style="font-size: 14px; font-weight: 600; margin-bottom: 8px;">' + emoji + ' Grade ' + g + '</div>' +
+      '<div style="display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px;">' +
+        '<span class="muted">Segnali:</span><span>' + s.signalsGenerated + '</span>' +
+        '<span class="muted">Chiusi:</span><span>' + s.total + ' (' + s.win + 'W ' + s.loss + 'L)</span>' +
+        (s.beSaves > 0 ? '<span class="muted">BE saves:</span><span>' + s.beSaves + '</span>' : '') +
+        '<span class="muted">Win rate:</span><span class="' + wrCls + '">' + (s.total > 0 ? s.winRate + '%' : '—') + '</span>' +
+        '<span class="muted">Avg R:</span><span class="' + arCls + '">' + (s.total > 0 ? (s.avgR >= 0 ? '+' : '') + s.avgR.toFixed(2) + 'R' : '—') + '</span>' +
+        '<span class="muted">Stato:</span><span>' + interpEmoji + ' ' + interpTxt + '</span>' +
+      '</div>' +
+    '</div>';
   }).join('');
 }
 
@@ -466,6 +537,7 @@ async function loadAll() {
   renderOpenTrades(data.openTrades || []);
   renderClosedTrades(data.recentClosed || []);
   renderSignals(data.signals || []);
+  renderByGrade();  // NEW v4.3
   const now = new Date();
   const hh = String(now.getHours()).padStart(2, '0');
   const mm = String(now.getMinutes()).padStart(2, '0');
