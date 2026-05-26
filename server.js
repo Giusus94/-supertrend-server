@@ -41,7 +41,7 @@ app.use(express.static('public'));
 // Trade expired automaticamente dopo TRADE_EXPIRY_HOURS.
 // ══════════════════════════════════════════════════════════════════════════════
 
-const VERSION          = '4.2.0-quality-tp3';
+const VERSION          = '4.3.0-grade-analytics';
 const PORT             = process.env.PORT             || 3000;
 const TG_TOKEN         = process.env.TG_TOKEN         || '';
 const TG_CHAT_ID       = process.env.TG_CHAT_ID       || '';
@@ -121,12 +121,22 @@ const stats = {
   totalSignals: 0,
   perInstrument: {},
   perScore: { 1:0, 2:0, 3:0, 4:0, 5:0 },
-  perGrade: { A:0, B:0, C:0 },        // NEW v4.2
+  perGrade: { A:0, B:0, C:0 },        // signals tally by grade
   perDirection: { long: 0, short: 0 },
   trades: { totalOpened: 0, win: 0, loss: 0, expired: 0, openNow: 0,
             winRate: 0, avgR: 0, _rSum: 0,
-            beSaves: 0,                // NEW v4.2: WIN chiusi a BE-stop
-            tp1Hits: 0, tp2Hits: 0, tp3Hits: 0 }   // NEW v4.2
+            beSaves: 0,
+            tp1Hits: 0, tp2Hits: 0, tp3Hits: 0 },
+  // NEW v4.3: stats di CHIUSURA separate per grade.
+  // _rSum e' per calcolare avgR. winRate e avgR sono computati on-demand.
+  tradesByGrade: {
+    A: { win: 0, loss: 0, beSaves: 0, _rSum: 0 },
+    B: { win: 0, loss: 0, beSaves: 0, _rSum: 0 },
+    C: { win: 0, loss: 0, beSaves: 0, _rSum: 0 }
+  },
+  // NEW v4.3: rolling 7-day buffer per il weekly digest.
+  // Ogni trade chiuso aggiunge un record con ts. Il cron filtra per ts > now - 7d.
+  closedTrades7d: []   // [{ts, grade, isWin, isBeSave, rMultiple, instrument, direction}]
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -822,6 +832,32 @@ async function processTradeClosed(tc, instrument) {
   stats.trades.avgR    = totalClosed > 0 ? Math.round(stats.trades._rSum / totalClosed * 100) / 100 : 0;
   stats.tradeClose.matched++;
 
+  // NEW v4.3: Stats per-grade — usa grade salvato sull'open trade.
+  // Se trade aperto senza grade (legacy), defaulta a "C" per non perdere i dati.
+  const tradeGrade = (t.grade && stats.tradesByGrade[t.grade]) ? t.grade : 'C';
+  const gradeStats = stats.tradesByGrade[tradeGrade];
+  if (isWin) {
+    gradeStats.win++;
+    if (isBeSave) gradeStats.beSaves++;
+  } else {
+    gradeStats.loss++;
+  }
+  gradeStats._rSum += r;
+
+  // NEW v4.3: aggiungi al rolling 7d buffer (per weekly digest)
+  stats.closedTrades7d.push({
+    ts: Date.now(),
+    grade: tradeGrade,
+    isWin, isBeSave,
+    rMultiple: r,
+    instrument: t.instrument,
+    direction: t.direction,
+    outcome
+  });
+  // Pruning: mantieni solo gli ultimi 7 giorni (con margine: 8 giorni)
+  const cutoff8d = Date.now() - 8 * 24 * 60 * 60 * 1000;
+  stats.closedTrades7d = stats.closedTrades7d.filter(x => x.ts >= cutoff8d);
+
   // ─── Build Telegram message v4.2 ────────────────────────────────────────────
   let emoji, label;
   if (isWin) {
@@ -992,6 +1028,98 @@ function expireOldTrades() {
 }
 setInterval(expireOldTrades, 15 * 60 * 1000);
 
+// ──────────────────────────────────────────────────────────────────────────────
+// WEEKLY DIGEST (v4.3)
+// Ogni domenica alle 22:00 UTC manda un riassunto settimanale via Telegram.
+// Implementazione: setInterval di 1 minuto + check se "domenica 22:00 UTC esatto".
+// Per evitare double-send, ricordiamo l'ultimo timestamp inviato.
+// ──────────────────────────────────────────────────────────────────────────────
+
+let lastWeeklyDigestTs = 0;
+
+async function sendWeeklyDigest() {
+  const d = buildWeeklyDigestData();
+  const lines = [];
+  lines.push('<b>📊 ST-EA · Report settimanale</b>');
+  lines.push('<i>Ultimi 7 giorni · ' + new Date().toUTCString().slice(0, 16) + '</i>');
+  lines.push('');
+  if (d.total7 === 0) {
+    lines.push('<i>Nessun trade chiuso questa settimana.</i>');
+    lines.push('Possibili cause: mercati lateral, filtri stretti, festivita\'.');
+  } else {
+    lines.push('<b>Totale chiusi:</b> ' + d.total7 + ' (' + d.wins7 + 'W · ' + d.losses7 + 'L)');
+    lines.push('<b>Win rate:</b> ' + d.winRate7 + '%');
+    lines.push('<b>Avg R:</b> ' + (d.avgR7 >= 0 ? '+' : '') + d.avgR7.toFixed(2) + 'R');
+    if (d.beSaves7 > 0) lines.push('<b>BE saves:</b> ' + d.beSaves7);
+    lines.push('');
+    // Per-grade breakdown
+    lines.push('<b>Per grade:</b>');
+    for (const g of ['A', 'B', 'C']) {
+      const gs = d.grade7[g];
+      const tot = gs.w + gs.l;
+      if (tot > 0) {
+        const wr = Math.round(gs.w / tot * 1000) / 10;
+        const ar = Math.round(gs.r / tot * 100) / 100;
+        const emoji = g === 'A' ? '🥇' : g === 'B' ? '🥈' : '🥉';
+        lines.push('  ' + emoji + ' ' + g + ': ' + gs.w + 'W ' + gs.l + 'L · ' + wr + '% · ' + (ar >= 0 ? '+' : '') + ar.toFixed(2) + 'R');
+      }
+    }
+    // Top simboli
+    const symEntries = Object.entries(d.sym7)
+      .filter(([_, s]) => (s.w + s.l) > 0)
+      .sort((a, b) => (b[1].r) - (a[1].r))
+      .slice(0, 5);
+    if (symEntries.length > 0) {
+      lines.push('');
+      lines.push('<b>Top simboli (per R cumulativo):</b>');
+      for (const [sym, s] of symEntries) {
+        const ar = Math.round(s.r * 100) / 100;
+        lines.push('  ' + sym + ': ' + s.w + 'W ' + s.l + 'L · ' + (ar >= 0 ? '+' : '') + ar.toFixed(2) + 'R');
+      }
+    }
+    lines.push('');
+    // Interpretazione automatica
+    if (d.avgR7 >= 0.5 && d.winRate7 >= 50) {
+      lines.push('✅ <i>Sistema in profitto, continua cosi\'.</i>');
+    } else if (d.avgR7 < -0.3 && d.total7 >= 5) {
+      lines.push('⚠️ <i>Avg R negativo: rivedere filtri o preset.</i>');
+    } else if (d.total7 < 3) {
+      lines.push('ℹ️ <i>Pochi trade: dati insufficienti per valutare.</i>');
+    } else {
+      lines.push('🔄 <i>Performance neutra, continua a raccogliere dati.</i>');
+    }
+  }
+  lines.push('');
+  lines.push('<i>Cumulativo dall\'avvio: W/L ' + stats.trades.win + '/' + stats.trades.loss + ' · WR ' + stats.trades.winRate + '% · AvgR ' + (stats.trades.avgR >= 0 ? '+' : '') + stats.trades.avgR.toFixed(2) + 'R</i>');
+
+  await tgSend(lines.join('\n'));
+  lastWeeklyDigestTs = Date.now();
+  console.log('[WEEKLY-DIGEST] inviato, total7=' + d.total7);
+}
+
+// Check ogni minuto se e' tempo del weekly digest.
+// Trigger: domenica (getUTCDay()==0) alle 22:00 UTC (sweet-spot fine settimana,
+// prima del riapertura mercati). Cooldown 23h per evitare doppi invii.
+function weeklyDigestTick() {
+  const now = new Date();
+  const isSunday22UTC = now.getUTCDay() === 0 && now.getUTCHours() === 22 && now.getUTCMinutes() === 0;
+  const sinceLast = Date.now() - lastWeeklyDigestTs;
+  if (isSunday22UTC && sinceLast > 23 * 60 * 60 * 1000) {
+    sendWeeklyDigest().catch(e => console.error('[WEEKLY-DIGEST]', e.message));
+  }
+}
+setInterval(weeklyDigestTick, 60 * 1000);
+
+// Endpoint manuale per triggerare il digest a richiesta (utile per testing)
+app.post('/api/digest/send', requireAdmin, async (req, res) => {
+  try {
+    await sendWeeklyDigest();
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ══════════════════════════════════════════════════════════════════════════════
 // DIAGNOSTICA
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1080,6 +1208,67 @@ app.get('/api/trades/stats', (req, res) => {
     byInstrument[t.instrument][isW ? 'w' : 'l']++;
   }
   res.json({ ok: true, totals: stats.trades, byScore, byDirection, byInstrument });
+});
+
+// NEW v4.3: stats di performance separate per grade A/B/C.
+// Risponde alla domanda chiave "il grade A vale davvero piu' del B?".
+app.get('/api/stats/by-grade', (req, res) => {
+  const result = {};
+  for (const g of ['A', 'B', 'C']) {
+    const s = stats.tradesByGrade[g];
+    const total = s.win + s.loss;
+    result[g] = {
+      win: s.win,
+      loss: s.loss,
+      beSaves: s.beSaves,
+      total,
+      winRate: total > 0 ? Math.round(s.win / total * 1000) / 10 : 0,
+      avgR:    total > 0 ? Math.round(s._rSum / total * 100) / 100 : 0,
+      signalsGenerated: stats.perGrade[g]
+    };
+  }
+  res.json({
+    ok: true,
+    byGrade: result,
+    interpretation: {
+      A: result.A.total >= 5 ? (result.A.winRate >= 60 ? 'STRONG' : result.A.winRate >= 45 ? 'OK' : 'WEAK') : 'NEED_MORE_DATA',
+      B: result.B.total >= 10 ? (result.B.winRate >= 55 ? 'STRONG' : result.B.winRate >= 40 ? 'OK' : 'WEAK') : 'NEED_MORE_DATA',
+      C: result.C.total >= 10 ? (result.C.winRate >= 50 ? 'STRONG' : result.C.winRate >= 35 ? 'OK' : 'WEAK') : 'NEED_MORE_DATA'
+    },
+    note: 'Per giudicare la validita\' statistica servono almeno 10-15 trade chiusi per grade'
+  });
+});
+
+// NEW v4.3: digest delle ultime 7 days, on-demand.
+// Anche usato dal cron weekly per il Telegram digest.
+function buildWeeklyDigestData() {
+  const now = Date.now();
+  const cutoff7d = now - 7 * 24 * 60 * 60 * 1000;
+  const last7d = stats.closedTrades7d.filter(x => x.ts >= cutoff7d);
+  const total7 = last7d.length;
+  const wins7  = last7d.filter(x => x.isWin).length;
+  const losses7= total7 - wins7;
+  const beSaves7 = last7d.filter(x => x.isBeSave).length;
+  const rSum7 = last7d.reduce((a, x) => a + (x.rMultiple || 0), 0);
+  const winRate7 = total7 > 0 ? Math.round(wins7 / total7 * 1000) / 10 : 0;
+  const avgR7    = total7 > 0 ? Math.round(rSum7 / total7 * 100) / 100 : 0;
+  // Per-grade nelle ultime 7d
+  const grade7 = { A: {w:0, l:0, r:0}, B: {w:0, l:0, r:0}, C: {w:0, l:0, r:0} };
+  // Per-symbol nelle ultime 7d
+  const sym7 = {};
+  for (const x of last7d) {
+    const g = grade7[x.grade] || grade7.C;
+    if (x.isWin) g.w++; else g.l++;
+    g.r += (x.rMultiple || 0);
+    if (!sym7[x.instrument]) sym7[x.instrument] = { w:0, l:0, r:0 };
+    if (x.isWin) sym7[x.instrument].w++; else sym7[x.instrument].l++;
+    sym7[x.instrument].r += (x.rMultiple || 0);
+  }
+  return { total7, wins7, losses7, beSaves7, winRate7, avgR7, grade7, sym7 };
+}
+
+app.get('/api/stats/weekly', (req, res) => {
+  res.json({ ok: true, ...buildWeeklyDigestData() });
 });
 
 app.get('/api/rejected', requireAdmin, (req, res) => {
