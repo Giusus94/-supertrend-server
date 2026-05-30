@@ -41,7 +41,7 @@ app.use(express.static('public'));
 // Trade expired automaticamente dopo TRADE_EXPIRY_HOURS.
 // ══════════════════════════════════════════════════════════════════════════════
 
-const VERSION          = '4.3.0-grade-analytics';
+const VERSION          = '4.4.0-multi-strategy';
 const PORT             = process.env.PORT             || 3000;
 const TG_TOKEN         = process.env.TG_TOKEN         || '';
 const TG_CHAT_ID       = process.env.TG_CHAT_ID       || '';
@@ -60,7 +60,9 @@ const BLOCK_HIGH_VOL      = process.env.BLOCK_HIGH_VOL === 'true';
 const CONTEXT_FILTER      = process.env.CONTEXT_FILTER !== 'false';
 const STRUCTURE_FILTER    = process.env.STRUCTURE_FILTER !== 'false';
 const LIQUIDITY_FILTER    = process.env.LIQUIDITY_FILTER !== 'false';
-const CONTEXT_MAX_AGE_MIN = parseInt(process.env.CONTEXT_MAX_AGE_MIN || '60', 10);
+// Default 300 min (5h): allineato con heartbeat Pine ogni 4h + margine.
+// Se troppo basso (es. 60), i simboli appaiono stale per 3h tra un heartbeat e l'altro.
+const CONTEXT_MAX_AGE_MIN = parseInt(process.env.CONTEXT_MAX_AGE_MIN || '300', 10);
 const TRADE_EXPIRY_HOURS  = parseInt(process.env.TRADE_EXPIRY_HOURS  || '48', 10);
 const SEND_CONFIRMATION   = process.env.SEND_CONFIRMATION !== 'false';
 
@@ -81,7 +83,16 @@ const CONFIRMATION_DELAY_MS = 800;
 const GRADE_A_THRESHOLD = 75;
 const GRADE_B_THRESHOLD = 55;
 
-const STRATEGY_KEY  = 'breakout_hunter';
+// v4.4: catalogo strategie. breakout_hunter e mean_reversion sono ortogonali.
+// Ogni signal ha un campo "strategy" che identifica il sistema che lo ha generato.
+// Default = breakout_hunter (per backward compat con payload v4.3 che non mandano strategy).
+const ALLOWED_STRATEGIES = ['breakout_hunter', 'mean_reversion'];
+const STRATEGY_META = {
+  breakout_hunter: { name: 'Breakout Hunter',  emoji: '💥', defaultStrategy: true },
+  mean_reversion:  { name: 'Mean Reversion',   emoji: '🌊', defaultStrategy: false }
+};
+
+const STRATEGY_KEY  = 'breakout_hunter';  // legacy, manteneduto per /api/status
 const STRATEGY_NAME = 'Breakout Hunter';
 const STRATEGY_TFS  = [15, 60];
 
@@ -134,9 +145,15 @@ const stats = {
     B: { win: 0, loss: 0, beSaves: 0, _rSum: 0 },
     C: { win: 0, loss: 0, beSaves: 0, _rSum: 0 }
   },
+  // NEW v4.4: stats per strategia (per confronto Breakout vs Mean Reversion).
+  // signalsGenerated tracker il count di signal accepted; trades sono win/loss.
+  tradesByStrategy: {
+    breakout_hunter: { signalsGenerated: 0, win: 0, loss: 0, beSaves: 0, _rSum: 0 },
+    mean_reversion:  { signalsGenerated: 0, win: 0, loss: 0, beSaves: 0, _rSum: 0 }
+  },
   // NEW v4.3: rolling 7-day buffer per il weekly digest.
   // Ogni trade chiuso aggiunge un record con ts. Il cron filtra per ts > now - 7d.
-  closedTrades7d: []   // [{ts, grade, isWin, isBeSave, rMultiple, instrument, direction}]
+  closedTrades7d: []   // [{ts, grade, isWin, isBeSave, rMultiple, instrument, direction, strategy}]
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -425,6 +442,10 @@ function applyLiquidity(instrument, l) {
 async function processSignal(req, signal, instrument, timeframe) {
   stats.signal.received++;
 
+  // v4.4: strategy field — default "breakout_hunter" per backward compat con Pine v1.8.
+  const strategyRaw = String(signal.strategy || 'breakout_hunter').toLowerCase().trim();
+  const strategy = ALLOWED_STRATEGIES.includes(strategyRaw) ? strategyRaw : 'breakout_hunter';
+
   // Direction
   const direction = String(signal.direction || '').toLowerCase().trim();
   if (direction !== 'long' && direction !== 'short') {
@@ -647,8 +668,9 @@ async function processSignal(req, signal, instrument, timeframe) {
     }
   }
 
-  // Header
-  const headerLine = '<b>💥 ' + STRATEGY_NAME + '</b> · ' + dirArrow + ' · ' + grEmoji + ' <b>' + grade + '</b>\n';
+  // Header (v4.4: usa strategia per emoji + nome)
+  const stratMeta = STRATEGY_META[strategy] || STRATEGY_META.breakout_hunter;
+  const headerLine = '<b>' + stratMeta.emoji + ' ' + stratMeta.name + '</b> · ' + dirArrow + ' · ' + grEmoji + ' <b>' + grade + '</b>\n';
   const subLine = '<b>' + instrument + '</b> · M' + tfMin + ' · Quality <b>' + quality + '/100</b>\n\n';
 
   // Prezzi con R-multiple
@@ -692,7 +714,7 @@ async function processSignal(req, signal, instrument, timeframe) {
   // Signal log
   const record = {
     id: tradeId, ts: Date.now(), time: ts,
-    instrument, direction,
+    instrument, direction, strategy,    // v4.4: includo strategia nel log
     price: +price.toFixed(d), sl: +sl.toFixed(d),
     tp1: +tp1.toFixed(d), tp2: +tp2.toFixed(d), tp3: +tp3.toFixed(d),
     rrTp1: parseFloat(rrTp1) || 0, rrMax: parseFloat(rrMax) || 0,
@@ -709,7 +731,7 @@ async function processSignal(req, signal, instrument, timeframe) {
   // Tracker open trade v4.2 (con tp1/tp2/tp3)
   openTrades.push({
     id: tradeId, openedAt: Date.now(), openedTime: ts,
-    instrument, direction,
+    instrument, direction, strategy,    // v4.4
     entry: +price.toFixed(d), sl: +sl.toFixed(d),
     tp1: +tp1.toFixed(d), tp2: +tp2.toFixed(d), tp3: +tp3.toFixed(d),
     quality, grade, score, preset,
@@ -718,7 +740,12 @@ async function processSignal(req, signal, instrument, timeframe) {
   stats.trades.openNow = openTrades.length;
   stats.trades.totalOpened++;
 
-  console.log('[SIGNAL OK] #' + tradeId + ' ' + direction.toUpperCase() + ' ' + instrument +
+  // v4.4: incrementa counter per strategia
+  if (stats.tradesByStrategy[strategy]) {
+    stats.tradesByStrategy[strategy].signalsGenerated++;
+  }
+
+  console.log('[SIGNAL OK] #' + tradeId + ' ' + strategy + ' ' + direction.toUpperCase() + ' ' + instrument +
               ' @ ' + price.toFixed(d) + ' quality=' + quality + ' grade=' + grade);
 
   if (SEND_CONFIRMATION) {
@@ -844,10 +871,23 @@ async function processTradeClosed(tc, instrument) {
   }
   gradeStats._rSum += r;
 
+  // NEW v4.4: Stats per-strategy — usa strategy salvata sull'open trade.
+  // Trade legacy senza strategy → defaulta a 'breakout_hunter'.
+  const tradeStrategy = (t.strategy && stats.tradesByStrategy[t.strategy]) ? t.strategy : 'breakout_hunter';
+  const strategyStats = stats.tradesByStrategy[tradeStrategy];
+  if (isWin) {
+    strategyStats.win++;
+    if (isBeSave) strategyStats.beSaves++;
+  } else {
+    strategyStats.loss++;
+  }
+  strategyStats._rSum += r;
+
   // NEW v4.3: aggiungi al rolling 7d buffer (per weekly digest)
   stats.closedTrades7d.push({
     ts: Date.now(),
     grade: tradeGrade,
+    strategy: tradeStrategy,    // v4.4
     isWin, isBeSave,
     rMultiple: r,
     instrument: t.instrument,
@@ -881,9 +921,10 @@ async function processTradeClosed(tc, instrument) {
   }
 
   const gradeLine = t.grade ? ' · <b>' + t.grade + '</b>' : '';
+  const stratEmoji = (STRATEGY_META[tradeStrategy] || STRATEGY_META.breakout_hunter).emoji;
 
   await tgSend(
-    emoji + ' <b>Trade #' + t.id + ' ' + label + '</b>\n' +
+    emoji + ' <b>Trade #' + t.id + ' ' + label + '</b> · ' + stratEmoji + '\n' +
     '<b>' + instrument + '</b> · ' + (direction === 'long' ? '🟢 LONG' : '🔴 SHORT') + gradeLine + '\n' +
     'Entry: <code>' + t.entry.toFixed(d) + '</code> → Exit: <code>' + exitPrice.toFixed(d) + '</code>\n' +
     '<b>Result:</b> ' + rTxt + ' · <b>Durata:</b> ' + durTxt +
@@ -892,7 +933,7 @@ async function processTradeClosed(tc, instrument) {
     (stats.trades.beSaves > 0 ? ' · BE saves: ' + stats.trades.beSaves : '') + '</i>'
   );
 
-  console.log('[TRADE-CLOSE] #' + t.id + ' ' + cls.label + ' ' + rTxt + ' (' + durTxt + ') outcome=' + outcome);
+  console.log('[TRADE-CLOSE] #' + t.id + ' ' + tradeStrategy + ' ' + cls.label + ' ' + rTxt + ' (' + durTxt + ') outcome=' + outcome);
   return { ok: true, matched: true, trade: closed };
 }
 
@@ -1237,6 +1278,28 @@ app.get('/api/stats/by-grade', (req, res) => {
     },
     note: 'Per giudicare la validita\' statistica servono almeno 10-15 trade chiusi per grade'
   });
+});
+
+// v4.4: stats per strategia (per confronto Breakout vs Mean Reversion)
+app.get('/api/stats/by-strategy', (req, res) => {
+  const result = {};
+  for (const k of ALLOWED_STRATEGIES) {
+    const s = stats.tradesByStrategy[k];
+    const total = s.win + s.loss;
+    result[k] = {
+      name: STRATEGY_META[k].name,
+      emoji: STRATEGY_META[k].emoji,
+      signalsGenerated: s.signalsGenerated,
+      win: s.win,
+      loss: s.loss,
+      beSaves: s.beSaves,
+      total,
+      winRate: total > 0 ? Math.round(s.win / total * 1000) / 10 : 0,
+      avgR:    total > 0 ? Math.round(s._rSum / total * 100) / 100 : 0
+    };
+  }
+  res.json({ ok: true, byStrategy: result,
+    note: 'Per confronto Breakout vs Mean Reversion. Servono 10+ trade per strategia per giudicare.' });
 });
 
 // NEW v4.3: digest delle ultime 7 days, on-demand.
